@@ -5,8 +5,6 @@ mod commands;
 mod macros;
 mod utils;
 
-use macros::*;
-
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Cli {
@@ -19,7 +17,7 @@ define_commands! {
     B => commands::backup::Backup,
 }
 
-fn main() -> Result<(), std::process::ExitCode> {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     cli.command.execute()
 }

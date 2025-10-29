@@ -7,7 +7,7 @@ macro_rules! define_commands {
         }
 
         impl Commands {
-            fn execute(self) -> Result<(), std::process::ExitCode> {
+            fn execute(self) -> anyhow::Result<()> {
                 use crate::commands::Command;
 
                 fn _type_check<F: crate::commands::Command>(_a: &F) {}
