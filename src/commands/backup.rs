@@ -1,8 +1,8 @@
-use std::fs::{copy, exists, File};
+use std::fs::{File, copy, exists};
 
 use anyhow::Context;
 use clap::Parser;
-use flate2::{write::GzEncoder, Compression};
+use flate2::{Compression, write::GzEncoder};
 use tar::Builder;
 
 use crate::strvec;

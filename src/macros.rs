@@ -25,9 +25,7 @@ macro_rules! define_commands {
 
 #[macro_export]
 macro_rules! ownstr {
-    ($v:expr) => {{
-        $v.to_string()
-    }};
+    ($v:expr) => {{ $v.to_string() }};
 }
 
 #[macro_export]

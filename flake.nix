@@ -52,6 +52,15 @@
             man-pages-posix
           ];
 
+          busybox-gzipped = pkgs.runCommand "busybox-gzipped" { } ''
+            TEMP="$(mktemp -d)"
+
+            cp ${busybox} "$TEMP/busybox"
+            ${pkgs.busybox}/bin/gzip "$TEMP/busybox"
+
+            cp "$TEMP/busybox.gz" $out
+          '';
+
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
             p.rust-bin.stable.latest.default.override {
               extensions = [ "rust-src" ];
@@ -65,6 +74,8 @@
 
             CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+
+            BUSYBOX_GZIPPED = busybox-gzipped;
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
@@ -72,23 +83,12 @@
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
           });
 
-          busybox-gzipped = pkgs.runCommand "busybox-gzipped" { } ''
-            TEMP="$(mktemp -d)"
-
-            cp ${busybox} "$TEMP/busybox"
-            ${pkgs.busybox}/bin/gzip "$TEMP/busybox"
-
-            cp "$TEMP/busybox.gz" $out
-          '';
-
           jiujitsu = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
 
             name = "jiujitsu";
 
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
-
-            BUSYBOX_GZIPPED = busybox-gzipped;
           });
         in {
           _module.args.pkgs = pkgs;
