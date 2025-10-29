@@ -10,9 +10,15 @@
     };
     crane.url = "github:ipetkov/crane";
     flake-parts.url = "github:hercules-ci/flake-parts";
+
+    busybox = {
+      url =
+        "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox";
+      flake = false;
+    };
   };
 
-  outputs = inputs@{ self, flake-parts, crane, rust-overlay, ... }:
+  outputs = inputs@{ self, flake-parts, crane, rust-overlay, busybox, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [ ];
 
@@ -66,12 +72,23 @@
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
           });
 
+          busybox-gzipped = pkgs.runCommand "busybox-gzipped" { } ''
+            TEMP="$(mktemp -d)"
+
+            cp ${busybox} "$TEMP/busybox"
+            ${pkgs.busybox}/bin/gzip "$TEMP/busybox"
+
+            cp "$TEMP/busybox.gz" $out
+          '';
+
           jiujitsu = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
 
             name = "jiujitsu";
 
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
+
+            BUSYBOX_GZIPPED = busybox-gzipped;
           });
         in {
           _module.args.pkgs = pkgs;
@@ -96,7 +113,11 @@
             });
           };
 
-          packages.default = jiujitsu;
+          packages = {
+            default = jiujitsu;
+
+            inherit jiujitsu busybox-gzipped;
+          };
 
           devShells.default = craneLib.devShell ({
             name = "jj";
@@ -105,6 +126,8 @@
 
             CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+
+            BUSYBOX_GZIPPED = busybox-gzipped;
           });
         };
     };

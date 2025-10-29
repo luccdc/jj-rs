@@ -14,7 +14,7 @@ struct Cli {
 
 define_commands! {
     Backup => commands::backup::Backup,
-    B => commands::backup::Backup,
+    Busybox => commands::busybox::Busybox,
 }
 
 fn main() -> anyhow::Result<()> {

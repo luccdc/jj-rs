@@ -7,6 +7,7 @@ use tar::Builder;
 
 use crate::strvec;
 
+/// Perform system backups
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct Backup {

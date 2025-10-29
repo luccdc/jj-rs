@@ -1,5 +1,17 @@
 {
   "nodes": {
+    "busybox": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-coXkVSN9kgRTtwvLmkiZI8KmSXn2z8ChsEYfC0/pRFE=",
+        "type": "file",
+        "url": "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox"
+      }
+    },
     "crane": {
       "locked": {
         "lastModified": 1760924934,
@@ -66,6 +78,7 @@
     },
     "root": {
       "inputs": {
+        "busybox": "busybox",
         "crane": "crane",
         "flake-parts": "flake-parts",
         "nixpkgs": "nixpkgs",
