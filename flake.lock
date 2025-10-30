@@ -45,6 +45,18 @@
         "type": "github"
       }
     },
+    "jq": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-wK/7yC5MNTYLg+AJ4uRjnFNsQJPrsSBMs62euOgnlNc=",
+        "type": "file",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1761373498,
@@ -81,6 +93,7 @@
         "busybox": "busybox",
         "crane": "crane",
         "flake-parts": "flake-parts",
+        "jq": "jq",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"
       }

@@ -1,8 +1,12 @@
 use std::{
-    ffi::CString,
+    ffi::{CString, OsStr},
     fs::File,
     io::prelude::*,
-    os::fd::{AsRawFd, FromRawFd, IntoRawFd},
+    os::{
+        fd::{AsRawFd, FromRawFd, IntoRawFd},
+        unix::process::CommandExt,
+    },
+    process::{Command, Stdio},
     str::FromStr,
 };
 
@@ -22,7 +26,6 @@ fn str_to_cstr<R: AsRef<str>>(args: &[R]) -> anyhow::Result<Vec<CString>> {
         .context("Could not convert arguments for busybox")
 }
 
-/// Represents a copy of busybox loaded and ready to execute shell commands
 pub struct Busybox {
     busybox_file: File,
 }
@@ -30,7 +33,7 @@ pub struct Busybox {
 impl Busybox {
     pub fn new() -> anyhow::Result<Self> {
         let temp_fd =
-            memfd_create("", MFdFlags::MFD_CLOEXEC).context("Could not create memory file")?;
+            memfd_create("", MFdFlags::empty()).context("Could not create memory file")?;
 
         let fd = temp_fd.into_raw_fd();
 
@@ -62,5 +65,33 @@ impl Busybox {
         .context("Failed to perform execv")?;
 
         Ok(())
+    }
+
+    /// Executes a command and returns the result as a string. Shorthand for
+    /// `system`
+    ///
+    /// Alias of Perl's qx
+    ///
+    /// Not as safe as using execute, since this will shell out and
+    /// use system level utilities in $PATH instead of the embedded busybox
+    /// utilities. Useful if doing things with systemd or curl, stuff
+    /// not supported by busybox, but for portability prefer to use
+    /// execute instead
+    pub fn qx(&self, command: &str) -> anyhow::Result<String> {
+        let output = self
+            .command("sh")
+            .args(&["-c", command])
+            .stderr(Stdio::piped())
+            .output()?;
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Constructs a std::process::Command object that makes use of the
+    /// internal Busybox implementation
+    pub fn command<R: AsRef<OsStr>>(&self, cmd: R) -> Command {
+        let mut cmd_obj = Command::new(&format!("/proc/self/fd/{}", self.busybox_file.as_raw_fd()));
+        cmd_obj.arg0(cmd);
+        cmd_obj
     }
 }

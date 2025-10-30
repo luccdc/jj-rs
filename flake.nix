@@ -16,9 +16,15 @@
         "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox";
       flake = false;
     };
+
+    jq = {
+      url =
+        "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64";
+      flake = false;
+    };
   };
 
-  outputs = inputs@{ self, flake-parts, crane, rust-overlay, busybox, ... }:
+  outputs = inputs@{ self, flake-parts, crane, rust-overlay, busybox, jq, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [ ];
 
@@ -61,6 +67,15 @@
             cp "$TEMP/busybox.gz" $out
           '';
 
+          jq-gzipped = pkgs.runCommand "jq-gzipped" { } ''
+            TEMP="$(mktemp -d)"
+
+            cp ${jq} "$TEMP/jq"
+            ${pkgs.busybox}/bin/gzip "$TEMP/jq"
+
+            cp "$TEMP/jq.gz" $out
+          '';
+
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
             p.rust-bin.stable.latest.default.override {
               extensions = [ "rust-src" ];
@@ -76,6 +91,7 @@
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
             BUSYBOX_GZIPPED = busybox-gzipped;
+            JQ_GZIPPED = jq-gzipped;
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
@@ -128,6 +144,7 @@
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
             BUSYBOX_GZIPPED = busybox-gzipped;
+            JQ_GZIPPED = jq-gzipped;
           });
         };
     };
