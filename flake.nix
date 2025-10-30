@@ -56,6 +56,8 @@
             # Docs
             man-pages
             man-pages-posix
+
+            cargo-expand
           ];
 
           busybox-gzipped = pkgs.runCommand "busybox-gzipped" { } ''
@@ -77,7 +79,7 @@
           '';
 
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
-            p.rust-bin.stable.latest.default.override {
+            p.rust-bin.nightly.latest.default.override {
               extensions = [ "rust-src" ];
               targets = [ "x86_64-unknown-linux-musl" ];
             });
@@ -105,6 +107,7 @@
             name = "jiujitsu";
 
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
+            cargoTestExtraArgs = "--all";
           });
         in {
           _module.args.pkgs = pkgs;
