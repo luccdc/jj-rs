@@ -19,7 +19,9 @@ define_commands! {
     Ports, p => commands::ports::Ports,
     DownloadShell, ds => commands::download_shell::DownloadShell,
     Stat => commands::stat::Stat,
-    Useradd, ua => commands::useradd::Useradd
+    Useradd, ua => commands::useradd::Useradd,
+    Nft => commands::nft::Nft,
+    Jq => commands::jq::Jq
 }
 
 #[derive(Parser, Debug)]

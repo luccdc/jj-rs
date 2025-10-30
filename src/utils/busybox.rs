@@ -10,16 +10,16 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use flate2::write::GzDecoder;
 use nix::{
-    sys::memfd::{MFdFlags, memfd_create},
+    sys::memfd::{memfd_create, MFdFlags},
     unistd::execv,
 };
 
 const BUSYBOX_BYTES: &'static [u8] = include_bytes!(std::env!("BUSYBOX_GZIPPED"));
 
-fn str_to_cstr<R: AsRef<str>>(args: &[R]) -> anyhow::Result<Vec<CString>> {
+pub fn str_to_cstr<R: AsRef<str>>(args: &[R]) -> anyhow::Result<Vec<CString>> {
     args.iter()
         .map(|arg| CString::from_str(&arg.as_ref()))
         .collect::<Result<Vec<CString>, _>>()

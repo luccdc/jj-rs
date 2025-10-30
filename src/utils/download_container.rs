@@ -1,15 +1,15 @@
 use std::{net::Ipv4Addr, os::fd::OwnedFd, process::Stdio};
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use nix::{
-    fcntl::{OFlag, open},
-    sched::{CloneFlags, setns},
+    fcntl::{open, OFlag},
+    sched::{setns, CloneFlags},
     sys::{
-        signal::{Signal::SIGTERM, kill},
+        signal::{kill, Signal::SIGTERM},
         stat::Mode,
         wait::waitpid,
     },
-    unistd::{ForkResult, Pid, fork, geteuid, getpid},
+    unistd::{fork, geteuid, getpid, ForkResult, Pid},
 };
 
 use crate::{
@@ -192,14 +192,15 @@ impl DownloadContainer {
                 )
                 .context("Could not enable proxy arp")?;
             }
-            None => nft
-                .exec(
+            None => {
+                nft.exec(
                     format!(
                         "add rule inet {ns_name} postrouting oifname \"{public_if}\" masquerade"
                     ),
                     None,
                 )
-                .context("Could not add rule to masquerade traffic")?,
+                .context("Could not add rule to masquerade traffic")?;
+            }
         }
 
         Ok(DownloadContainer {

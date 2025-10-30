@@ -1,13 +1,14 @@
 use std::{
+    ffi::OsStr,
     fs::File,
     io::prelude::*,
     os::fd::{AsRawFd, FromRawFd, IntoRawFd},
-    process::{Command, Stdio},
+    process::{Command, ExitStatus, Stdio},
 };
 
 use anyhow::Context;
 use flate2::write::GzDecoder;
-use nix::sys::memfd::{MFdFlags, memfd_create};
+use nix::sys::memfd::{memfd_create, MFdFlags};
 
 const NFT_BYTES: &'static [u8] = include_bytes!(std::env!("NFT_GZIPPED"));
 
@@ -40,14 +41,29 @@ impl Nft {
         &self,
         command: R,
         stderr: S,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<ExitStatus> {
         Command::new(&format!("/proc/self/fd/{}", self.nft_file.as_raw_fd()))
             .arg(command.as_ref())
             .stderr(stderr.into().unwrap_or_else(Stdio::inherit))
             .stdout(Stdio::inherit())
-            .spawn()?
-            .wait()?;
+            .spawn()
+            .context("Could not spawn nft")?
+            .wait()
+            .context("Could not wait for NFT to finish execution")
+    }
 
-        Ok(())
+    pub fn command<R: AsRef<OsStr>, S: Into<Option<Stdio>>>(
+        &self,
+        args: &[R],
+        stderr: S,
+    ) -> anyhow::Result<ExitStatus> {
+        Command::new(&format!("/proc/self/fd/{}", self.nft_file.as_raw_fd()))
+            .args(args)
+            .stderr(stderr.into().unwrap_or_else(Stdio::inherit))
+            .stdout(Stdio::inherit())
+            .spawn()
+            .context("Could not spawn nft")?
+            .wait()
+            .context("Could not wait for NFT to finish execution")
     }
 }
