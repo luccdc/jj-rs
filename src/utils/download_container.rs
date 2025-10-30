@@ -1,8 +1,4 @@
-use std::{
-    net::Ipv4Addr,
-    os::fd::{AsFd, AsRawFd, OwnedFd},
-    process::Stdio,
-};
+use std::{net::Ipv4Addr, os::fd::OwnedFd, process::Stdio};
 
 use anyhow::{anyhow, bail, Context};
 use nix::{
@@ -13,7 +9,7 @@ use nix::{
         stat::Mode,
         wait::waitpid,
     },
-    unistd::{close, fork, geteuid, getpid, ForkResult, Pid},
+    unistd::{fork, geteuid, getpid, ForkResult, Pid},
 };
 
 use crate::{
@@ -116,7 +112,7 @@ impl DownloadContainer {
             "netns",
             &format!("{child}"),
         ])
-        .context("Could not move link to child namespace")?;
+        .context("Could not move interface to child namespace")?;
 
         let tunnel_net = find_tunnel_net(&bb)?;
 
@@ -175,9 +171,9 @@ impl DownloadContainer {
 
         nft.exec(format!("delete table inet {ns_name}"), Stdio::null())
             .context("Could not delete previous sneaky table")?;
-        nft.exec(format!("nft add table inet {ns_name}"), None)
+        nft.exec(format!("add table inet {ns_name}"), None)
             .context("Could not add new sneaky table")?;
-        nft.exec(format!("nft add chain inet {ns_name} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}"), None)
+        nft.exec(format!("add chain inet {ns_name} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}"), None)
             .context("Could not add sneaky chain")?;
 
         match &sneaky_ip {
@@ -226,6 +222,10 @@ impl DownloadContainer {
 
         Ok(v)
     }
+
+    pub fn name(&self) -> &str {
+        &self.ns_name
+    }
 }
 
 impl Drop for DownloadContainer {
@@ -242,14 +242,6 @@ impl Drop for DownloadContainer {
                 "Could not wait for download container child with pid {} to die: {}",
                 self.child, e
             );
-        }
-
-        if let Err(e) = close(self.original_ns.as_raw_fd()) {
-            return eprintln!("Could not close original namespace: {e}");
-        }
-
-        if let Err(e) = close(self.child_ns.as_raw_fd()) {
-            return eprintln!("Could not close child namespace: {e}");
         }
 
         if let Err(e) = self

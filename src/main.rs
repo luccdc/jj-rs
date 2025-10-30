@@ -15,8 +15,7 @@ struct Cli {
 define_commands! {
     Backup => commands::backup::Backup,
     Busybox => commands::busybox::Busybox,
-    Enum => commands::r#enum::Enum,
-    Ports => commands::ports::Ports
+    DownloadShell => commands::download_shell::DownloadShell
 }
 
 fn main() -> anyhow::Result<()> {
