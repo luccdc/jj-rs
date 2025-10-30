@@ -1,20 +1,24 @@
-use std::{io, net::Ipv4Addr, path::PathBuf};
+use std::{io, net::Ipv4Addr, path::PathBuf, thread};
 
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use nix::unistd::chdir;
+
+use crate::utils::{download_file, system};
 
 use crate::{
     pcre,
     utils::{
         busybox::Busybox,
         distro::{Distro, get_distro},
+        download_container::DownloadContainer,
         qx,
     },
 };
 
-#[derive(Parser, Debug)]
-#[command(version, about)]
+#[derive(Parser, Clone, Debug)]
+#[command(about)]
 pub struct ElkSubcommandArgs {
     #[arg(long, short = 'V', default_value = "9.2.0")]
     elastic_version: String,
@@ -120,11 +124,11 @@ impl super::Command for Elk {
         }
 
         if let EC::Install(args) | EC::DownloadPackages(args) = &self.command {
-            download_packages(&busybox, &distro, args)?;
+            download_packages(&distro, args)?;
         }
 
         if let EC::Install(args) | EC::InstallPackages(args) = &self.command {
-            install_packages(&busybox, &distro, args)?;
+            install_packages(&distro, args)?;
         }
 
         if let EC::Install(args) | EC::SetupElastic(args) = &self.command {
@@ -204,62 +208,201 @@ fn setup_zram() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn download_packages(
-    bb: &Busybox,
-    distro: &Distro,
-    args: &ElkSubcommandArgs,
-) -> anyhow::Result<()> {
-    todo!()
+fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result<()> {
+    let download_packages_internal = || -> anyhow::Result<()> {
+        std::fs::create_dir_all(&args.elasticsearch_share_directory)?;
+
+        let mut download_threads = vec![];
+
+        println!("{}", "--- Downloading elastic packages...".green());
+
+        if *distro == Distro::Debian {
+            for pkg in ["elasticsearch", "logstash", "kibana"] {
+                let args = args.clone();
+                let pkg = pkg.to_string();
+                download_threads.push(thread::spawn(move || {
+                    let mut dest_path = args.elasticsearch_share_directory.clone();
+                    dest_path.push(format!("{pkg}.deb"));
+                    let res = download_file(
+                        &format!(
+                            "{}/{}/{}-{}-amd64.deb",
+                            args.download_url, pkg, pkg, args.elastic_version
+                        ),
+                        dest_path,
+                    );
+                    println!("Done downloading {pkg}!");
+                    res
+                }));
+            }
+        } else {
+            for pkg in ["elasticsearch", "logstash", "kibana"] {
+                let args = args.clone();
+                let pkg = pkg.to_string();
+                download_threads.push(thread::spawn(move || {
+                    let mut dest_path = args.elasticsearch_share_directory.clone();
+                    dest_path.push(format!("{pkg}.rpm"));
+                    let res = download_file(
+                        &format!(
+                            "{}/{}/{}-{}-x86_64.rpm",
+                            args.download_url, pkg, pkg, args.elastic_version
+                        ),
+                        dest_path,
+                    );
+                    println!("Done downloading {pkg}!");
+                    res
+                }));
+            }
+        }
+
+        for beat in ["auditbeat", "filebeat", "packetbeat"] {
+            download_threads.push(thread::spawn({
+                let args = args.clone();
+                let beat = beat.to_string();
+
+                move || {
+                    let mut dest_path = args.elasticsearch_share_directory.clone();
+                    dest_path.push(format!("{beat}.deb"));
+                    let res = download_file(
+                        &format!(
+                            "{}/{}/{}-{}-amd64.deb",
+                            args.beats_download_url, beat, beat, args.elastic_version
+                        ),
+                        dest_path,
+                    );
+                    println!("Done downloading {beat} deb!");
+                    res
+                }
+            }));
+
+            download_threads.push(thread::spawn({
+                let args = args.clone();
+                let beat = beat.to_string();
+
+                move || {
+                    let mut dest_path = args.elasticsearch_share_directory.clone();
+                    dest_path.push(format!("{beat}.rpm"));
+                    let res = download_file(
+                        &format!(
+                            "{}/{}/{}-{}-x86_64.rpm",
+                            args.beats_download_url, beat, beat, args.elastic_version
+                        ),
+                        dest_path,
+                    );
+                    println!("Done downloading {beat} rpm!");
+                    res
+                }
+            }));
+        }
+
+        for thread in download_threads {
+            match thread.join() {
+                Ok(r) => r?,
+                Err(_) => {
+                    eprintln!(
+                        "{}",
+                        "!!! Could not join download thread due to panic!".red()
+                    );
+                }
+            };
+        }
+
+        Ok(())
+    };
+
+    if args.use_download_shell {
+        let container = DownloadContainer::new(None, args.sneaky_ip)?;
+
+        container.run(|| download_packages_internal())??;
+    } else {
+        download_packages_internal()?;
+    }
+
+    println!(
+        "{}",
+        "--- Successfully downloaded elastic packages!".green()
+    );
+
+    Ok(())
 }
 
-fn install_packages(bb: &Busybox, distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result<()> {
-    todo!()
+fn install_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result<()> {
+    chdir(&args.elasticsearch_share_directory)?;
+
+    println!("{}", "--- Installing elastic packages...".green());
+
+    if *distro == Distro::Debian {
+        for pkg in [
+            "elasticsearch",
+            "logstash",
+            "kibana",
+            "filebeat",
+            "auditbeat",
+            "packetbeat",
+        ] {
+            system(&format!("dpkg -i {pkg}.deb"))?;
+        }
+    } else {
+        for pkg in [
+            "elasticsearch",
+            "logstash",
+            "kibana",
+            "filebeat",
+            "auditbeat",
+            "packetbeat",
+        ] {
+            system(&format!("rpm -i {pkg}.rpm"))?;
+        }
+    }
+
+    println!("{}", "--- Installed elastic packages!".green());
+
+    Ok(())
 }
 
 fn setup_elasticsearch(
-    bb: &Busybox,
-    password: &mut Option<String>,
-    args: &ElkSubcommandArgs,
+    _bb: &Busybox,
+    _password: &mut Option<String>,
+    _args: &ElkSubcommandArgs,
 ) -> anyhow::Result<()> {
     todo!()
 }
 
-fn setup_kibana(bb: &Busybox, args: &ElkSubcommandArgs) -> anyhow::Result<()> {
+fn setup_kibana(_bb: &Busybox, _args: &ElkSubcommandArgs) -> anyhow::Result<()> {
     todo!()
 }
 
 fn setup_logstash(
-    bb: &Busybox,
-    password: &mut Option<String>,
-    args: &ElkSubcommandArgs,
+    _bb: &Busybox,
+    _password: &mut Option<String>,
+    _args: &ElkSubcommandArgs,
 ) -> anyhow::Result<()> {
     todo!()
 }
 
 fn setup_auditbeat(
-    bb: &Busybox,
-    password: &mut Option<String>,
-    args: &ElkSubcommandArgs,
+    _bb: &Busybox,
+    _password: &mut Option<String>,
+    _args: &ElkSubcommandArgs,
 ) -> anyhow::Result<()> {
     todo!()
 }
 
 fn setup_filebeat(
-    bb: &Busybox,
-    password: &mut Option<String>,
-    args: &ElkSubcommandArgs,
+    _bb: &Busybox,
+    _password: &mut Option<String>,
+    _args: &ElkSubcommandArgs,
 ) -> anyhow::Result<()> {
     todo!()
 }
 
 fn setup_packetbeat(
-    bb: &Busybox,
-    password: &mut Option<String>,
-    args: &ElkSubcommandArgs,
+    _bb: &Busybox,
+    _password: &mut Option<String>,
+    _args: &ElkSubcommandArgs,
 ) -> anyhow::Result<()> {
     todo!()
 }
 
-fn install_beats(bb: &Busybox, distro: Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
+fn install_beats(_bb: &Busybox, _distro: Distro, _args: &ElkBeatsArgs) -> anyhow::Result<()> {
     todo!()
 }

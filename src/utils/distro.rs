@@ -12,6 +12,10 @@ pub enum Distro {
 
 impl From<&str> for Distro {
     fn from(s: &str) -> Self {
+        if s.contains("rhel") {
+            return Distro::RedHat;
+        }
+
         match s {
             "debian" => Distro::Debian,
             "redhat" => Distro::RedHat,
