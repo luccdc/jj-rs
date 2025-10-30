@@ -4,7 +4,7 @@ macro_rules! define_commands {
         #[derive(::clap::Subcommand, Debug)]
         enum Commands {
             $(
-                $(#[command(alias = stringify!($alias))])?
+                $(#[command(visible_alias(stringify!($alias)))])?
                 $cmd($($struct)::+)
             ),+,
         }
