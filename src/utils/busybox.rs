@@ -10,10 +10,10 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use flate2::write::GzDecoder;
 use nix::{
-    sys::memfd::{memfd_create, MFdFlags},
+    sys::memfd::{MFdFlags, memfd_create},
     unistd::execv,
 };
 
@@ -77,6 +77,7 @@ impl Busybox {
     /// utilities. Useful if doing things with systemd or curl, stuff
     /// not supported by busybox, but for portability prefer to use
     /// execute instead
+    #[allow(dead_code)]
     pub fn qx(&self, command: &str) -> anyhow::Result<String> {
         let output = self
             .command("sh")

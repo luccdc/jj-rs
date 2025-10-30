@@ -5,17 +5,25 @@ mod commands;
 mod macros;
 mod utils;
 
+// Add commands here
+//
+// Format:
+// name, alias => reference::to::Command,
+//
+// Name should be in camel case
+define_commands! {
+    Backup, bu => commands::backup::Backup,
+    Busybox, bb => commands::busybox::Busybox,
+    Enum, e => commands::r#enum::Enum,
+    Ports, p => commands::ports::Ports,
+    DownloadShell, ds => commands::download_shell::DownloadShell,
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-}
-
-define_commands! {
-    Backup => commands::backup::Backup,
-    Busybox => commands::busybox::Busybox,
-    DownloadShell => commands::download_shell::DownloadShell
 }
 
 fn main() -> anyhow::Result<()> {

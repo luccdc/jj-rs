@@ -1,9 +1,12 @@
 #[macro_export]
 macro_rules! define_commands {
-    ($($cmd:ident => $($struct:ident)::+),+$(,)?) => {
+    ($($cmd:ident$(, $alias:ident)? => $($struct:ident)::+),+$(,)?) => {
         #[derive(::clap::Subcommand, Debug)]
         enum Commands {
-            $($cmd($($struct)::+)),+,
+            $(
+                $(#[command(alias = stringify!($alias))])?
+                $cmd($($struct)::+)
+            ),+,
         }
 
         impl Commands {
@@ -25,9 +28,7 @@ macro_rules! define_commands {
 
 #[macro_export]
 macro_rules! ownstr {
-    ($v:expr) => {{
-        $v.to_string()
-    }};
+    ($v:expr) => {{ $v.to_string() }};
 }
 
 #[macro_export]
@@ -134,14 +135,15 @@ macro_rules! pcre_regex {
 #[macro_export]
 macro_rules! pcre_format_regex {
     ($($tt:tt)*) => {{
-        let (global, other_flags, regex, _) = $crate::pcre_regex!($($tt)*);
+        let (global, other_flags, regex, replace_with) = $crate::pcre_regex!($($tt)*);
         (
             global,
             if other_flags.is_empty() {
                 ::regex::Regex::new(&regex)
             } else {
                 ::regex::Regex::new(&format!("(?{other_flags}){}", &regex))
-            }.expect(&format!("Regex provided is invalid: {}", &regex))
+            }.expect(&format!("Regex provided is invalid: {}", &regex)),
+            replace_with
         )
     }};
 }
@@ -184,7 +186,7 @@ macro_rules! pcre_format_regex {
 #[macro_export]
 macro_rules! pcre {
     (dbg; ($inp:expr) =~ s $($tt:tt)*) => {{
-        let (global, re) = $crate::pcre_format_regex!($($tt)*);
+        let (global, re, replace_with) = $crate::pcre_format_regex!($($tt)*);
 
         dbg!(&re);
         if global {
@@ -195,13 +197,13 @@ macro_rules! pcre {
     }};
 
     (dbg; ($inp:expr) =~ m $($tt:tt)*) => {{
-        let (_, re) = $crate::pcre_format_regex!($($tt)*);
+        let (_, re, _) = $crate::pcre_format_regex!($($tt)*);
         dbg!(&re);
         dbg!(re.captures_iter($inp).collect::<Vec<_>>())
     }};
 
     (dbg; ($inp:expr) =~ qr $($tt:tt)*) => {{
-        let (_, re) = $crate::pcre_format_regex!($($tt)*);
+        let (_, re, _) = $crate::pcre_format_regex!($($tt)*);
         dbg!(&re);
         dbg!(re.is_match($inp))
     }};
@@ -211,17 +213,17 @@ macro_rules! pcre {
     }};
 
     (($inp:expr) =~ s $($tt:tt)*) => {{
-        let (global, re) = $crate::pcre_format_regex!($($tt)*);
+        let (global, re, replace_with) = $crate::pcre_format_regex!($($tt)*);
 
         if global {
-            re.replace_all($inp, replace_with)
+            re.replace_all($inp, replace_with).to_string()
         } else {
-            re.replace($inp, replace_with)
+            re.replace($inp, replace_with).to_string()
         }
     }};
 
     (($inp:expr) =~ m $($tt:tt)*) => {{
-        let (global, re) = $crate::pcre_format_regex!($($tt)*);
+        let (global, re, _) = $crate::pcre_format_regex!($($tt)*);
 
         if global {
             re.captures_iter($inp).collect::<Vec<_>>()
@@ -231,7 +233,7 @@ macro_rules! pcre {
     }};
 
     (($inp:expr) =~ qr $($tt:tt)*) => {{
-        let (_, re) = $crate::pcre_format_regex!($($tt)*);
+        let (_, re, _) = $crate::pcre_format_regex!($($tt)*);
         re.is_match($inp)
     }};
 
