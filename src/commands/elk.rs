@@ -1,6 +1,13 @@
-use std::{io, net::Ipv4Addr, path::PathBuf, thread};
+use std::process::{Command, Stdio};
+use std::{
+    io::{self, Write},
+    net::Ipv4Addr,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    thread,
+};
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use nix::unistd::chdir;
@@ -11,7 +18,7 @@ use crate::{
     pcre,
     utils::{
         busybox::Busybox,
-        distro::{Distro, get_distro},
+        distro::{get_distro, Distro},
         download_container::DownloadContainer,
         qx,
     },
@@ -115,7 +122,20 @@ impl super::Command for Elk {
             return install_beats(&busybox, distro, &args);
         }
 
+        let hostname = qx("hostnamectl")?.1;
+        if pcre!(&hostname =~ qr/r"Static\+hostname:\s+\(unset\)"/xms) {
+            eprintln!(
+                "{}",
+                "!!! ELK requires a hostname explicitly set to work correctly"
+            );
+            return Ok(());
+        }
+
         let mut elastic_password = None;
+
+        if let EC::Install(_) = &self.command {
+            get_elastic_password(&mut elastic_password)?;
+        }
 
         if let EC::Install(_) | EC::SetupZram(_) = &self.command {
             if let Err(e) = setup_zram() {
@@ -159,20 +179,21 @@ impl super::Command for Elk {
     }
 }
 
-fn get_elastic_password(bb: &Busybox, password: &mut Option<String>) -> anyhow::Result<String> {
+fn get_elastic_password(password: &mut Option<String>) -> anyhow::Result<String> {
     if let Some(pass) = password.clone() {
         return Ok(pass);
     }
 
     let mut new_pass = String::new();
 
-    let _ = bb.execute(&["stty", "-echo"]);
     print!("Enter the password for the elastic user: ");
+    io::stdout()
+        .flush()
+        .context("Could not display password prompt")?;
     io::stdin()
         .read_line(&mut new_pass)
         .context("Could not read password from user")?;
     new_pass = new_pass.trim().to_string();
-    let _ = bb.execute(&["stty", "echo"]);
 
     *password = Some(new_pass.clone());
 
@@ -360,11 +381,52 @@ fn install_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result
 }
 
 fn setup_elasticsearch(
-    _bb: &Busybox,
-    _password: &mut Option<String>,
-    _args: &ElkSubcommandArgs,
+    bb: &Busybox,
+    password: &mut Option<String>,
+    args: &ElkSubcommandArgs,
 ) -> anyhow::Result<()> {
-    todo!()
+    println!("{}", "--- Configuring Elasticsearch".green());
+
+    system("systemctl enable elasticsearch")?;
+    system("systemctl start elasticsearch")?;
+
+    let elastic_password = get_elastic_password(password)?;
+
+    let mut password_change =
+        Command::new("/usr/share/elasticsearch/bin/elasticsearch-reset-password")
+            .args(&["-u", "elastic", "-i"])
+            .stdin(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .spawn()?;
+
+    if let Some(ref mut stdin) = password_change.stdin {
+        write!(stdin, "y\n")?;
+        write!(stdin, "{}\n", elastic_password)?;
+        write!(stdin, "{}\n", elastic_password)?;
+    }
+
+    password_change.wait()?;
+
+    std::fs::create_dir_all("/etc/es_certs")?;
+
+    let mut perms = std::fs::metadata("/etc/elasticsearch/certs/http_ca.crt")?.permissions();
+    perms.set_mode(0o444);
+
+    std::fs::copy(
+        "/etc/elasticsearch/certs/http_ca.crt",
+        "/etc/es_certs/http_ca.crt",
+    )?;
+    let mut share_dir = args.elasticsearch_share_directory.clone();
+    share_dir.push("http_ca.crt");
+    std::fs::copy("/etc/elasticsearch/certs/http_ca.crt", &share_dir)?;
+
+    std::fs::set_permissions("/etc/es_certs/http_ca.crt", perms.clone())?;
+    std::fs::set_permissions(share_dir, perms)?;
+
+    println!("{}", "--- Elasticsearch configured!".green());
+
+    Ok(())
 }
 
 fn setup_kibana(_bb: &Busybox, _args: &ElkSubcommandArgs) -> anyhow::Result<()> {
