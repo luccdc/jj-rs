@@ -10,7 +10,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use flate2::write::GzDecoder;
 use nix::{
     sys::memfd::{memfd_create, MFdFlags},
@@ -54,7 +54,7 @@ impl Busybox {
     /// Replaces the current process with busybox
     ///
     /// In the happy path, good case, this function will fail to return
-    pub fn execv<R: AsRef<str>>(self, args: &[R]) -> anyhow::Result<()> {
+    pub fn execv<R: AsRef<str>>(&self, args: &[R]) -> anyhow::Result<()> {
         let args = str_to_cstr(args)?;
 
         execv(
@@ -81,6 +81,21 @@ impl Busybox {
         let output = self
             .command("sh")
             .args(&["-c", command])
+            .stderr(Stdio::piped())
+            .output()?;
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Executes a command and returns the result as a string.
+    pub fn execute<R: AsRef<OsStr>>(&self, command: &[R]) -> anyhow::Result<String> {
+        let Some(cmd) = command.get(0) else {
+            bail!("Command not fully specified; empty list provided to Busybox::execute");
+        };
+
+        let output = self
+            .command(cmd)
+            .args(&command[1..])
             .stderr(Stdio::piped())
             .output()?;
 

@@ -16,7 +16,6 @@
         "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox";
       flake = false;
     };
-
     jq = {
       url =
         "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64";
@@ -30,7 +29,7 @@
 
       systems = [ "x86_64-linux" ];
 
-      perSystem = { config, pkgs, lib, system, ... }:
+      perSystem = { config, lib, system, ... }:
         let
           pkgs = import self.inputs.nixpkgs {
             inherit system;
@@ -38,6 +37,8 @@
             config.allowUnfreePredicate = pkg:
               builtins.elem (lib.getName pkg) [ "vagrant" ];
           };
+
+          pkgsStatic = pkgs.pkgsStatic;
 
           devShellTools = with pkgs; [
             rust-analyzer
@@ -60,23 +61,20 @@
             cargo-expand
           ];
 
-          busybox-gzipped = pkgs.runCommand "busybox-gzipped" { } ''
-            TEMP="$(mktemp -d)"
+          gzip-binary = name: binary:
+            pkgs.runCommand "${name}-gzipped" { } ''
+              TEMP="$(mktemp -d)"
 
-            cp ${busybox} "$TEMP/busybox"
-            ${pkgs.busybox}/bin/gzip "$TEMP/busybox"
+              cp ${binary} "$TEMP/${name}"
+              ${pkgs.busybox}/bin/gzip "$TEMP/${name}"
 
-            cp "$TEMP/busybox.gz" $out
-          '';
+              cp "$TEMP/${name}.gz" $out
+            '';
 
-          jq-gzipped = pkgs.runCommand "jq-gzipped" { } ''
-            TEMP="$(mktemp -d)"
-
-            cp ${jq} "$TEMP/jq"
-            ${pkgs.busybox}/bin/gzip "$TEMP/jq"
-
-            cp "$TEMP/jq.gz" $out
-          '';
+          busybox-gzipped = gzip-binary "busybox" busybox;
+          jq-gzipped = gzip-binary "jq" jq;
+          nft-gzipped = gzip-binary "nft"
+            ("${pkgsStatic.nftables.override { withCli = false; }}/bin/nft");
 
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
             p.rust-bin.nightly.latest.default.override {
@@ -94,6 +92,7 @@
 
             BUSYBOX_GZIPPED = busybox-gzipped;
             JQ_GZIPPED = jq-gzipped;
+            NFT_GZIPPED = nft-gzipped;
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
@@ -148,6 +147,7 @@
 
             BUSYBOX_GZIPPED = busybox-gzipped;
             JQ_GZIPPED = jq-gzipped;
+            NFT_GZIPPED = nft-gzipped;
           });
         };
     };

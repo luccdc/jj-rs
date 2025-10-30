@@ -131,6 +131,21 @@ macro_rules! pcre_regex {
     }};
 }
 
+#[macro_export]
+macro_rules! pcre_format_regex {
+    ($($tt:tt)*) => {{
+        let (global, other_flags, regex, _) = $crate::pcre_regex!($($tt)*);
+        (
+            global,
+            if other_flags.is_empty() {
+                ::regex::Regex::new(&regex)
+            } else {
+                ::regex::Regex::new(&format!("(?{other_flags}){}", &regex))
+            }.expect(&format!("Regex provided is invalid: {}", &regex))
+        )
+    }};
+}
+
 /// This implementation is built out of a contest of which is better for the task, Perl or Rust?
 ///
 /// This macro allows for using the following syntaxes:
@@ -164,16 +179,39 @@ macro_rules! pcre_regex {
 /// });
 /// ```
 ///
-/// It does function a little differently in that:
-/// 1. Parts of the regular expression have to be in quotes
-/// 2. If the variable the regular expression is operating on is not an identifier, it has to be wrapped in quotes
-/// 3. If using xms, all have to be used in that order
+/// By adding `dbg; ` to the start of the macro invocation, you can see debug information including
+/// the resulting regular expression and all the results of using the regular expression
 #[macro_export]
 macro_rules! pcre {
+    (dbg; ($inp:expr) =~ s $($tt:tt)*) => {{
+        let (global, re) = $crate::pcre_format_regex!($($tt)*);
+
+        dbg!(&re);
+        if global {
+            dbg!(re.replace_all($inp, replace_with))
+        } else {
+            dbg!(re.replace($inp, replace_with))
+        }
+    }};
+
+    (dbg; ($inp:expr) =~ m $($tt:tt)*) => {{
+        let (_, re) = $crate::pcre_format_regex!($($tt)*);
+        dbg!(&re);
+        dbg!(re.captures_iter($inp).collect::<Vec<_>>())
+    }};
+
+    (dbg; ($inp:expr) =~ qr $($tt:tt)*) => {{
+        let (_, re) = $crate::pcre_format_regex!($($tt)*);
+        dbg!(&re);
+        dbg!(re.is_match($inp))
+    }};
+
+    (dbg; & $inp:tt $($tt:tt)*) => {{
+        $crate::pcre!(dbg; (&$inp) $($tt)*)
+    }};
+
     (($inp:expr) =~ s $($tt:tt)*) => {{
-        let (global, other_flags, regex, replace_with) = $crate::pcre_regex!($($tt)*);
-        let re = ::regex::Regex::new(&format!("(?{other_flags}){}", &regex))
-            .expect(&format!("Regex provided is invalid: {}", &regex));
+        let (global, re) = $crate::pcre_format_regex!($($tt)*);
 
         if global {
             re.replace_all($inp, replace_with)
@@ -183,23 +221,22 @@ macro_rules! pcre {
     }};
 
     (($inp:expr) =~ m $($tt:tt)*) => {{
-        let (global, other_flags, regex, _) = $crate::pcre_regex!($($tt)*);
-        let re = ::regex::Regex::new(&format!("(?{other_flags}){}", &regex))
-            .expect(&format!("Regex provided is invalid: {}", &regex));
+        let (global, re) = $crate::pcre_format_regex!($($tt)*);
 
         if global {
-            re.captures_iter($inp)
+            re.captures_iter($inp).collect::<Vec<_>>()
         } else {
-            re.captures($inp)
+            re.captures_iter($inp).take(1).collect()
         }
     }};
 
     (($inp:expr) =~ qr $($tt:tt)*) => {{
-        let (_, other_flags, regex, _) = $crate::pcre_regex!($($tt)*);
-        let re = ::regex::Regex::new(&format!("(?{other_flags}){}", regex))
-            .expect(&format!("Regex provided is invalid: {}", &regex));
-
+        let (_, re) = $crate::pcre_format_regex!($($tt)*);
         re.is_match($inp)
+    }};
+
+    (& $inp:tt $($tt:tt)*) => {{
+        $crate::pcre!((&$inp) $($tt)*)
     }};
 
     ($inp:tt $($tt:tt)*) => {{
