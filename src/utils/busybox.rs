@@ -10,10 +10,10 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use flate2::write::GzDecoder;
 use nix::{
-    sys::memfd::{memfd_create, MFdFlags},
+    sys::memfd::{MFdFlags, memfd_create},
     unistd::execv,
 };
 

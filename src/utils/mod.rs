@@ -8,7 +8,6 @@ pub mod ports;
 #[allow(dead_code)]
 pub mod regex;
 
-#[allow(dead_code)]
 pub fn qx(command: &str) -> anyhow::Result<(ExitStatus, String)> {
     let output = std::process::Command::new("sh")
         .args(&["-c", command])

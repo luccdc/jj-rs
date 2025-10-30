@@ -1,6 +1,6 @@
 use std::{io, net::Ipv4Addr, path::PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
@@ -8,7 +8,7 @@ use crate::{
     pcre,
     utils::{
         busybox::Busybox,
-        distro::{get_distro, Distro},
+        distro::{Distro, get_distro},
         qx,
     },
 };

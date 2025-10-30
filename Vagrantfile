@@ -16,6 +16,11 @@ Vagrant.configure("2") do |config|
     rocky.vm.synced_folder ".", "/vagrant", disabled: true
     rocky.vm.synced_folder "./target", "/jj", type: "nfs", nfs_version: 4
     rocky.vm.network "private_network", ip: "192.168.56.2"
+
+    rocky.vm.provider :virtualbox do |vb|
+      vb.memory = 4096
+      vb.cpus = 4
+    end
   end
 
   config.vm.define "debian12" do |debian|
