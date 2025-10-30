@@ -18,7 +18,8 @@ define_commands! {
     Enum, e => commands::r#enum::Enum,
     Ports, p => commands::ports::Ports,
     DownloadShell, ds => commands::download_shell::DownloadShell,
-    Stat => commands::stat::Stat
+    Stat => commands::stat::Stat,
+    Useradd, ua => commands::useradd::Useradd
 }
 
 #[derive(Parser, Debug)]
