@@ -75,6 +75,7 @@
           jq-gzipped = gzip-binary "jq" jq;
           nft-gzipped = gzip-binary "nft"
             ("${pkgsStatic.nftables.override { withCli = false; }}/bin/nft");
+          tmux-gzipped = gzip-binary "tmux" "${pkgsStatic.tmux}/bin/tmux";
 
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
             p.rust-bin.nightly.latest.default.override {
@@ -93,6 +94,7 @@
             BUSYBOX_GZIPPED = busybox-gzipped;
             JQ_GZIPPED = jq-gzipped;
             NFT_GZIPPED = nft-gzipped;
+            TMUX_GZIPPED = tmux-gzipped;
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
@@ -148,6 +150,7 @@
             BUSYBOX_GZIPPED = busybox-gzipped;
             JQ_GZIPPED = jq-gzipped;
             NFT_GZIPPED = nft-gzipped;
+            TMUX_GZIPPED = tmux-gzipped;
           });
         };
     };

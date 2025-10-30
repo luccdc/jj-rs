@@ -23,6 +23,7 @@ define_commands! {
     Nft => commands::nft::Nft,
     Jq => commands::jq::Jq,
     Elk => commands::elk::Elk,
+    Tmux => commands::tmux::Tmux,
 }
 
 #[derive(Parser, Debug)]

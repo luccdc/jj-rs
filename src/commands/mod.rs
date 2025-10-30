@@ -7,6 +7,7 @@ pub mod jq;
 pub mod nft;
 pub mod ports;
 pub mod stat;
+pub mod tmux;
 pub mod useradd;
 
 pub trait Command: clap::Parser {
