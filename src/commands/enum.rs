@@ -14,6 +14,7 @@ impl super::Command for Enum {
         println!(
             "{}",
             qx(r"lscpu | grep -E '^(Core|Thread|CPU)\(s\)'")
+                .map(|(_, lscpu)| lscpu)
                 .unwrap_or("(unable to query cpu info)".to_string())
         );
 

@@ -21,7 +21,8 @@ define_commands! {
     Stat => commands::stat::Stat,
     Useradd, ua => commands::useradd::Useradd,
     Nft => commands::nft::Nft,
-    Jq => commands::jq::Jq
+    Jq => commands::jq::Jq,
+    Elk => commands::elk::Elk,
 }
 
 #[derive(Parser, Debug)]

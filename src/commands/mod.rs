@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod busybox;
 pub mod download_shell;
+pub mod elk;
 pub mod r#enum;
 pub mod jq;
 pub mod nft;
