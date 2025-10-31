@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context;
 use flate2::write::GzDecoder;
-use nix::sys::memfd::{memfd_create, MFdFlags};
+use nix::sys::memfd::{MFdFlags, memfd_create};
 
 const TCPDUMP_BYTES: &'static [u8] = include_bytes!(std::env!("TCPDUMP_GZIPPED"));
 
@@ -37,19 +37,9 @@ impl Tcpdump {
         Ok(Self { tcpdump_file })
     }
 
-    pub fn exec<R: AsRef<str>, S: Into<Option<Stdio>>>(
-        &self,
-        command: R,
-        stderr: S,
-    ) -> anyhow::Result<ExitStatus> {
+    #[allow(dead_code)]
+    pub fn command_inst(&self) -> Command {
         Command::new(&format!("/proc/self/fd/{}", self.tcpdump_file.as_raw_fd()))
-            .arg(command.as_ref())
-            .stderr(stderr.into().unwrap_or_else(Stdio::inherit))
-            .stdout(Stdio::inherit())
-            .spawn()
-            .context("Could not spawn tcpdump")?
-            .wait()
-            .context("Could not wait for TCPDUMP to finish execution")
     }
 
     pub fn command<R: AsRef<OsStr>, S: Into<Option<Stdio>>>(

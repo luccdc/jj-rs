@@ -10,7 +10,7 @@ use anyhow::Context;
 use clap::Parser;
 use flate2::write::GzDecoder;
 use nix::{
-    sys::memfd::{memfd_create, MFdFlags},
+    sys::memfd::{MFdFlags, memfd_create},
     unistd::execv,
 };
 

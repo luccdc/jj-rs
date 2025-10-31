@@ -7,7 +7,7 @@ use std::{
     thread,
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use nix::unistd::chdir;
@@ -17,8 +17,7 @@ use crate::utils::{download_file, system};
 use crate::{
     pcre,
     utils::{
-        busybox::Busybox,
-        distro::{get_distro, Distro},
+        distro::{Distro, get_distro},
         download_container::DownloadContainer,
         qx,
     },
@@ -55,7 +54,7 @@ pub struct ElkSubcommandArgs {
     sneaky_ip: Option<Ipv4Addr>,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug)]
 #[command(version, about)]
 pub struct ElkBeatsArgs {
     #[arg(long, short = 'i', default_value = "127.0.0.1")]
@@ -63,6 +62,12 @@ pub struct ElkBeatsArgs {
 
     #[arg(long, short = 'p', default_value_t = 8080)]
     elk_share_port: u16,
+
+    #[arg(long, short = 'd')]
+    use_download_shell: bool,
+
+    #[arg(long, short = 'I')]
+    sneaky_ip: Option<Ipv4Addr>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -123,12 +128,10 @@ impl super::Command for Elk {
             return Ok(());
         }
 
-        let busybox = Busybox::new()?;
-
         use ElkCommands as EC;
 
         if let EC::InstallBeats(args) = &self.command {
-            return install_beats(&busybox, distro, &args);
+            return install_beats(distro, &args);
         }
 
         let hostname = qx("hostnamectl")?.1;
@@ -439,8 +442,8 @@ fn setup_elasticsearch(
 
 fn setup_kibana(password: &mut Option<String>) -> anyhow::Result<()> {
     use reqwest::blocking::{
-        multipart::{Form, Part},
         Client,
+        multipart::{Form, Part},
     };
     use serde::Deserialize;
 
@@ -588,7 +591,7 @@ Environment="ES_API_KEY={}:{}"
 }
 
 fn setup_auditbeat(password: &mut Option<String>) -> anyhow::Result<()> {
-    println!("{}", "--- Setting up auditbeat");
+    println!("{}", "--- Setting up auditbeat".green());
 
     let es_password = get_elastic_password(password)?;
 
@@ -635,7 +638,7 @@ output.logstash:
 }
 
 fn setup_filebeat(password: &mut Option<String>) -> anyhow::Result<()> {
-    println!("{}", "--- Setting up filebeat");
+    println!("{}", "--- Setting up filebeat".green());
 
     let es_password = get_elastic_password(password)?;
 
@@ -728,7 +731,7 @@ output.logstash:
 }
 
 fn setup_packetbeat(password: &mut Option<String>) -> anyhow::Result<()> {
-    println!("{}", "--- Setting up packetbeat");
+    println!("{}", "--- Setting up packetbeat".green());
 
     let es_password = get_elastic_password(password)?;
 
@@ -774,10 +777,138 @@ output.logstash:
     Ok(())
 }
 
-fn download_beats(distro: Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
-    todo!()
+fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
+    println!("{}", "--- Downloading beats...".green());
+
+    let mut download_threads = vec![];
+
+    if *distro == Distro::Debian {
+        for beat in ["auditbeat", "filebeat", "packetbeat"] {
+            let args = args.clone();
+            download_threads.push(thread::spawn(move || {
+                let res = download_file(
+                    &format!(
+                        "http://{}:{}/{}.deb",
+                        args.elk_ip, args.elk_share_port, beat
+                    ),
+                    format!("/tmp/{beat}.deb"),
+                );
+                println!("Done downloading {beat}!");
+                res
+            }));
+        }
+    } else {
+        for beat in ["auditbeat", "filebeat", "packetbeat"] {
+            let args = args.clone();
+            download_threads.push(thread::spawn(move || {
+                let res = download_file(
+                    &format!(
+                        "http://{}:{}/{}.rpm",
+                        args.elk_ip, args.elk_share_port, beat
+                    ),
+                    format!("/tmp/{beat}.rpm"),
+                );
+                println!("Done downloading {beat}!");
+                res
+            }));
+        }
+    }
+
+    for thread in download_threads {
+        match thread.join() {
+            Ok(r) => r?,
+            Err(_) => {
+                eprintln!(
+                    "{}",
+                    "!!! Could not join download thread due to panic!".red()
+                );
+            }
+        };
+    }
+
+    Ok(())
 }
 
-fn install_beats(_bb: &Busybox, _distro: Distro, _args: &ElkBeatsArgs) -> anyhow::Result<()> {
-    todo!()
+fn install_beats(distro: Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
+    if args.use_download_shell {
+        let container = DownloadContainer::new(None, args.sneaky_ip)?;
+
+        container.run(|| download_beats(&distro, args))??;
+    } else {
+        download_beats(&distro, args)?;
+    }
+
+    println!(
+        "{}",
+        "--- Done downloading beats packages! Installing beats packages..."
+    );
+
+    for beat in ["auditbeat", "filebeat", "packetbeat"] {
+        if distro == Distro::Debian {
+            system(&format!("dpkg -i /tmp/{beat}.deb"))?;
+        } else {
+            system(&format!("rpm -i /tmp/{beat}.rpm"))?;
+        }
+    }
+
+    println!(
+        "{}",
+        "--- Done installing beats! Configuring now...".green()
+    );
+
+    std::fs::write(
+        "/etc/auditbeat/auditbeat.yml",
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+            AUDITBEAT_YML, args.elk_ip
+        ),
+    )?;
+
+    std::fs::write(
+        "/etc/filebeat/filebeat.yml",
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+            FILEBEAT_YML, args.elk_ip
+        ),
+    )?;
+
+    std::fs::write(
+        "/etc/packetbeat/packetbeat.yml",
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+            PACKETBEAT_YML, args.elk_ip
+        ),
+    )?;
+
+    system("systemctl enable auditbeat")?;
+    system("systemctl restart auditbeat")?;
+    system("systemctl enable filebeat")?;
+    system("systemctl restart filebeat")?;
+    system("systemctl enable packetbeat")?;
+    system("systemctl restart packetbeat")?;
+
+    println!("{}", "--- Done configuring beats! Verifying output".green());
+
+    system("auditbeat test output")?;
+    system("filebeat test output")?;
+    system("packetbeat test output")?;
+
+    println!("{}", "--- All set up!");
+
+    Ok(())
 }
