@@ -172,16 +172,16 @@ impl super::Command for Elk {
             setup_logstash(&mut elastic_password)?;
         }
 
-        if let EC::Install(args) | EC::SetupAuditbeat(args) = &self.command {
-            setup_auditbeat(&busybox, &mut elastic_password, args)?;
+        if let EC::Install(_) | EC::SetupAuditbeat(_) = &self.command {
+            setup_auditbeat(&mut elastic_password)?;
         }
 
-        if let EC::Install(args) | EC::SetupFilebeat(args) = &self.command {
-            setup_filebeat(&busybox, &mut elastic_password, args)?;
+        if let EC::Install(_) | EC::SetupFilebeat(_) = &self.command {
+            setup_filebeat(&mut elastic_password)?;
         }
 
-        if let EC::Install(args) | EC::SetupPacketbeat(args) = &self.command {
-            setup_packetbeat(&busybox, &mut elastic_password, args)?;
+        if let EC::Install(_) | EC::SetupPacketbeat(_) = &self.command {
+            setup_packetbeat(&mut elastic_password)?;
         }
 
         Ok(())
@@ -587,27 +587,194 @@ Environment="ES_API_KEY={}:{}"
     Ok(())
 }
 
-fn setup_auditbeat(
-    _bb: &Busybox,
-    _password: &mut Option<String>,
-    _args: &ElkSubcommandArgs,
-) -> anyhow::Result<()> {
-    todo!()
+fn setup_auditbeat(password: &mut Option<String>) -> anyhow::Result<()> {
+    println!("{}", "--- Setting up auditbeat");
+
+    let es_password = get_elastic_password(password)?;
+
+    std::fs::write(
+        "/etc/auditbeat/auditbeat.yml",
+        format!(
+            r#"
+{}
+
+output.elasticsearch:
+  hosts: ["https://localhost:9200"]
+  transport: https
+  username: elastic
+  password: "{}"
+  ssl:
+    enabled: true
+    certificate_authorities: "/etc/es_certs/http_ca.crt"
+"#,
+            AUDITBEAT_YML, es_password
+        ),
+    )?;
+
+    system("auditbeat setup")?;
+
+    std::fs::write(
+        "/etc/auditbeat/auditbeat.yml",
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["localhost:5044"]
+"#,
+            AUDITBEAT_YML
+        ),
+    )?;
+
+    system("systemctl enable auditbeat")?;
+    system("systemctl restart auditbeat")?;
+
+    println!("{}", "--- Auditbeat is set up".green());
+
+    Ok(())
 }
 
-fn setup_filebeat(
-    _bb: &Busybox,
-    _password: &mut Option<String>,
-    _args: &ElkSubcommandArgs,
-) -> anyhow::Result<()> {
-    todo!()
+fn setup_filebeat(password: &mut Option<String>) -> anyhow::Result<()> {
+    println!("{}", "--- Setting up filebeat");
+
+    let es_password = get_elastic_password(password)?;
+
+    std::fs::write(
+        "/etc/filebeat/filebeat.yml",
+        format!(
+            r#"
+{}
+
+  - module: netflow
+    log:
+      enabled: true
+      var:
+        netflow_host: localhost
+        netflow_port: 2055
+        internal_networks:
+          - private
+
+  - module: panw
+    panos:
+      enabled: true
+      var.syslog_host: 0.0.0.0
+      var.syslog_port: 9001
+      var.log_level: 5
+
+  - module: cisco
+    ftd:
+      enabled: true
+      var.syslog_host: 0.0.0.0
+      var.syslog_port: 9002
+      var.log_level: 5
+
+output.elasticsearch:
+  hosts: ["https://localhost:9200"]
+  transport: https
+  username: elastic
+  password: "{}"
+  ssl:
+    enabled: true
+    certificate_authorities: "/etc/es_certs/http_ca.crt"
+"#,
+            FILEBEAT_YML, es_password
+        ),
+    )?;
+
+    system("filebeat setup")?;
+
+    std::fs::write(
+        "/etc/filebeat/filebeat.yml",
+        format!(
+            r#"
+{}
+
+  - module: netflow
+    log:
+      enabled: true
+      var:
+        netflow_host: localhost
+        netflow_port: 2055
+        internal_networks:
+          - private
+
+  - module: panw
+    panos:
+      enabled: true
+      var.syslog_host: 0.0.0.0
+      var.syslog_port: 9001
+      var.log_level: 5
+
+  - module: cisco
+    ftd:
+      enabled: true
+      var.syslog_host: 0.0.0.0
+      var.syslog_port: 9002
+      var.log_level: 5
+
+output.logstash:
+  hosts: ["localhost:5044"]
+"#,
+            FILEBEAT_YML
+        ),
+    )?;
+
+    system("systemctl enable filebeat")?;
+    system("systemctl restart filebeat")?;
+
+    println!("{}", "--- Filebeat is set up".green());
+
+    Ok(())
 }
 
-fn setup_packetbeat(
-    _bb: &Busybox,
-    _password: &mut Option<String>,
-    _args: &ElkSubcommandArgs,
-) -> anyhow::Result<()> {
+fn setup_packetbeat(password: &mut Option<String>) -> anyhow::Result<()> {
+    println!("{}", "--- Setting up packetbeat");
+
+    let es_password = get_elastic_password(password)?;
+
+    std::fs::write(
+        "/etc/packetbeat/packetbeat.yml",
+        format!(
+            r#"
+{}
+
+output.elasticsearch:
+  hosts: ["https://localhost:9200"]
+  transport: https
+  username: elastic
+  password: "{}"
+  ssl:
+    enabled: true
+    certificate_authorities: "/etc/es_certs/http_ca.crt"
+"#,
+            PACKETBEAT_YML, es_password
+        ),
+    )?;
+
+    system("packetbeat setup")?;
+
+    std::fs::write(
+        "/etc/packetbeat/packetbeat.yml",
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["localhost:5044"]
+"#,
+            PACKETBEAT_YML
+        ),
+    )?;
+
+    system("systemctl enable packetbeat")?;
+    system("systemctl restart packetbeat")?;
+
+    println!("{}", "--- Packetbeat is set up".green());
+
+    Ok(())
+}
+
+fn download_beats(distro: Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
     todo!()
 }
 
