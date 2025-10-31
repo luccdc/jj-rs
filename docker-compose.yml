@@ -1,0 +1,41 @@
+services:
+  rocky9:
+    image: rockylinux:9.3
+    volumes:
+      - .:/jj
+      - ./docker-env.sh:/etc/profile.d/docker-env.sh
+    privileged: true # necessary for testing things like firewall
+
+  debian12:
+    image: debian:bookworm
+    volumes:
+      - .:/jj
+      - ./docker-env.sh:/etc/profile.d/docker-env.sh
+    privileged: true # necessary for testing things like firewall
+    command: bash --login -i
+
+  ubuntu22.04:
+    image: ubuntu:22.04
+    volumes:
+      - .:/jj
+      - ./docker-env.sh:/etc/profile.d/docker-env.sh
+    privileged: true # necessary for testing things like firewall
+    command: bash --login -i
+
+  alpine:
+    build:
+      dockerfile: Dockerfile.alpine
+    volumes:
+      - .:/jj
+      - ./docker-env.sh:/etc/profile.d/docker-env.sh
+    privileged: true # necessary for testing things like firewall
+    command: bash --login -i
+
+  scratch:
+    image: scratch
+    volumes:
+      - .:/jj
+    privileged: true
+    command: /jj/target/x86_64-unknown-linux-musl/debug/jj-rs busybox sh
+    environment:
+      PATH: /jj/target/x86_64-unknown-linux-musl/debug/
