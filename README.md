@@ -7,7 +7,7 @@
    1. Use a package manager to install git lfs, e.g. `sudo apt install git-lfs`
    2. Run `git lfs install`
 3. From a Linux system, install the [Nix package manager](https://nixos.org/download/).
-4. Enable [Flake support](https://nixos.wiki/wiki/Flakes), usually by adding `experimental-features = nix-command flakes` to either `~/.config/nix/nix.conf` or `/etc/nix/nix.conf`
+4. Enable [Flake support](https://nixos.wiki/wiki/Flakes), usually by adding `experimental-features = nix-command flakes` to either `~/.config/nix/nix.conf` or `/etc/nix/nix.conf` and restarting the `nix` daemon
 5. Run `nix develop` in this folder (should take about 4 or 5 minutes the first time as it downloads dependencies, and 5-10 seconds afterwards)
 
 ## Building and testing
