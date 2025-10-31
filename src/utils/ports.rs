@@ -195,14 +195,17 @@ pub fn parse_ip4_stats<P: AsRef<Path>>(
     Ok(results)
 }
 
+/// Shortcut to parse statistics from /proc/net/tcp
 pub fn parse_net_tcp() -> anyhow::Result<Vec<SocketRecord>> {
     parse_ip4_stats("/proc/net/tcp", SocketType::Tcp)
 }
 
+/// Shortcut to parse statistics from /proc/net/udp
 pub fn parse_net_udp() -> anyhow::Result<Vec<SocketRecord>> {
     parse_ip4_stats("/proc/net/udp", SocketType::Udp)
 }
 
+/// Shortcut to parse statistics from both /proc/net/tcp and /proc/net/udp
 pub fn parse_net_tcp_udp() -> anyhow::Result<Vec<SocketRecord>> {
     let mut tcp = parse_net_tcp()?;
     let udp = parse_net_udp()?;

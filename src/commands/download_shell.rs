@@ -1,23 +1,26 @@
 use std::{
     net::Ipv4Addr,
-    process::{Command, exit},
+    process::{exit, Command},
 };
 
 use anyhow::Context;
 use clap::Parser;
 use nix::{
     sys::wait::waitpid,
-    unistd::{ForkResult, fork},
+    unistd::{fork, ForkResult},
 };
 
 use crate::utils::{busybox::Busybox, download_container::DownloadContainer};
 
+/// Spawns a download shell to circumvent the local outbound firewall
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct DownloadShell {
+    /// The sneaky IP address to use for outbound traffic
     #[arg(long, short)]
     sneaky_ip: Option<Ipv4Addr>,
 
+    /// Specify a name for the container, compared to auto generated names
     #[arg(long, short)]
     name: Option<String>,
 
@@ -26,6 +29,7 @@ pub struct DownloadShell {
     #[arg(long, short)]
     use_sh: bool,
 
+    /// A command to run in the container instead of providing a shell
     command: Vec<String>,
 }
 

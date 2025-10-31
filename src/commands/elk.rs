@@ -7,7 +7,7 @@ use std::{
     thread,
 };
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use nix::unistd::chdir;
@@ -17,7 +17,7 @@ use crate::utils::{download_file, system};
 use crate::{
     pcre,
     utils::{
-        distro::{Distro, get_distro},
+        distro::{get_distro, Distro},
         download_container::DownloadContainer,
         qx,
     },
@@ -35,21 +35,27 @@ const LOGSTASH_CONF: &'static str = include_str!("elk/pipeline.conf");
 #[derive(Parser, Clone, Debug)]
 #[command(about)]
 pub struct ElkSubcommandArgs {
+    /// Version to use for Elasticsearch, Logstash, Kibana, Auditbeat, Filebeat, and Packetbeat
     #[arg(long, short = 'V', default_value = "9.2.0")]
     elastic_version: String,
 
+    /// URL to download Elasticsearch, Logstash, and Kibana from
     #[arg(long, default_value = "https://artifacts.elastic.co/downloads")]
     download_url: String,
 
+    /// URL to download Auditbeat, Filebeat, and Packetbeat from
     #[arg(long, default_value = "https://artifacts.elastic.co/downloads/beats")]
     beats_download_url: String,
 
+    /// Where to put files to be shared on the network
     #[arg(long, short = 'S', default_value = "/opt/es")]
     elasticsearch_share_directory: PathBuf,
 
+    /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
     use_download_shell: bool,
 
+    /// Use a specific IP address for source NAT when downloading through the container
     #[arg(long, short = 'I')]
     sneaky_ip: Option<Ipv4Addr>,
 }
@@ -57,55 +63,71 @@ pub struct ElkSubcommandArgs {
 #[derive(Parser, Clone, Debug)]
 #[command(version, about)]
 pub struct ElkBeatsArgs {
+    /// The IP address of the ELK server to download resources from and send logs to
     #[arg(long, short = 'i', default_value = "127.0.0.1")]
     elk_ip: Ipv4Addr,
 
+    /// The port of the share on the ELK server
     #[arg(long, short = 'p', default_value_t = 8080)]
     elk_share_port: u16,
 
+    /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
     use_download_shell: bool,
 
+    /// Use a specific IP address for source NAT when downloading through the container
     #[arg(long, short = 'I')]
     sneaky_ip: Option<Ipv4Addr>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum ElkCommands {
+    /// Install Elasticsearch completely, running all other subcommands except beats
     #[command(visible_alias = "in")]
     Install(ElkSubcommandArgs),
 
+    /// Setup ZRAM to provide 4G of swap based on compressed RAM
     #[command(visible_alias = "zr")]
     SetupZram(ElkSubcommandArgs),
 
+    /// Download packages to install ELK for the current distribution and beats for both Debian and RHEL based distributions
     #[command(visible_alias = "dpkg")]
     DownloadPackages(ElkSubcommandArgs),
 
+    /// Install ELK and beats on the current host
     #[command(visible_alias = "ipkg")]
     InstallPackages(ElkSubcommandArgs),
 
+    /// Start and configure elasticsearch
     #[command(visible_alias = "es")]
     SetupElastic(ElkSubcommandArgs),
 
+    /// Configure Kibana to be able to access Elasticsearch and load dashboards
     #[command(visible_alias = "ki")]
     SetupKibana(ElkSubcommandArgs),
 
+    /// Configure Logstash to be able to store to Elasticsearch and configure a pipeline for beats
     #[command(visible_alias = "lo")]
     SetupLogstash(ElkSubcommandArgs),
 
+    /// Configure auditbeat locally and optimize Elasticsearch to handle auditbeat logs
     #[command(visible_alias = "ab")]
     SetupAuditbeat(ElkSubcommandArgs),
 
+    /// Configure packetbeat locally and optimize Elasticsearch to handle packetbeat logs
     #[command(visible_alias = "pb")]
     SetupPacketbeat(ElkSubcommandArgs),
 
+    /// Configure filebeat locally and optimize Elasticsearch to handle filebeat logs. Also configures filebeat to handle ingest for generic rsyslog, netflow, cisco syslog, and palo syslog
     #[command(visible_alias = "fb")]
     SetupFilebeat(ElkSubcommandArgs),
 
+    /// Install beats and configure the system to send logs to the ELK stack
     #[command(visible_alias = "beats")]
     InstallBeats(ElkBeatsArgs),
 }
 
+/// Install, configure, and manage ELK and beats locally and assist across the network
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct Elk {
@@ -442,8 +464,8 @@ fn setup_elasticsearch(
 
 fn setup_kibana(password: &mut Option<String>) -> anyhow::Result<()> {
     use reqwest::blocking::{
-        Client,
         multipart::{Form, Part},
+        Client,
     };
     use serde::Deserialize;
 

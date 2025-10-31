@@ -1,20 +1,22 @@
 use std::{
     fs::OpenOptions,
-    io::{Write, stdout},
+    io::{stdout, Write},
     net::Ipv4Addr,
     path::PathBuf,
 };
 
 use clap::{Parser, Subcommand};
 
-use crate::utils::ports::{SocketState, SocketType, parse_net_tcp_udp};
+use crate::utils::ports::{parse_net_tcp_udp, SocketState, SocketType};
 
 #[derive(Subcommand, Debug)]
 enum FirewallCmd {
+    /// Generate an NFT configuration file based on the current open ports
     #[command(visible_alias = "qs")]
     QuickSetup(QuickSetup),
 }
 
+/// Firewall management
 #[derive(Parser, Debug)]
 #[command(about, version)]
 pub struct Firewall {
@@ -32,15 +34,19 @@ impl super::Command for Firewall {
 
 #[derive(Parser, Debug)]
 struct QuickSetup {
+    /// Specify an ELK IP to allow downloading resources from and uploading logs to. Allows ports 5044, 5601, and 8080 to the ELK IP
     #[arg(short, long)]
     elk_ip: Option<Ipv4Addr>,
 
+    /// Where to save the resulting firewall configuration. Leave unconfigured or use `-` to print to standard out
     #[arg(short, long)]
     output_file: Option<PathBuf>,
 
+    /// Add firewall rules to allow currently established connections. Useful for web servers connecting to a central database
     #[arg(short, long)]
     allow_established_connections: bool,
 
+    /// Add firewall rules to allow outbound DNS, HTTP, and HTTPS
     #[arg(short, long)]
     allow_outbound: bool,
 }
@@ -126,6 +132,16 @@ impl QuickSetup {
 
         if let Some(elk_ip) = self.elk_ip {
             writeln!(ob, "        #### ELK ####")?;
+            writeln!(
+                ob,
+                "        ip daddr {} tcp dport 5601 ct state new accept",
+                elk_ip
+            )?;
+            writeln!(
+                ob,
+                "        ip daddr {} tcp dport 8080 ct state new accept",
+                elk_ip
+            )?;
             writeln!(
                 ob,
                 "        ip daddr {} tcp dport 5040 ct state new accept",

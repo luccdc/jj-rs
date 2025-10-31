@@ -12,6 +12,7 @@ pub struct Stat {
 
 #[derive(Subcommand, Debug)]
 pub enum StatCommands {
+    /// Print the current CPU statistics based on `/proc/stat`
     Cpu,
 }
 

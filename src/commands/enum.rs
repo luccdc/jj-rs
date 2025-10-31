@@ -2,6 +2,7 @@ use clap::Parser;
 
 use crate::utils::{busybox::Busybox, qx};
 
+/// Perform basic enumeration of the system
 #[derive(Parser, Debug)]
 pub struct Enum;
 

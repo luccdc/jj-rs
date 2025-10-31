@@ -5,13 +5,15 @@ use crate::{
     strvec,
     utils::{
         busybox::Busybox,
-        distro::{Distro, get_distro},
+        distro::{get_distro, Distro},
     },
 };
 
+/// Add backup users to the system
 #[derive(clap::Parser, Debug)]
 #[command(version, about)]
 pub struct Useradd {
+    /// Backup users to add
     #[arg(
         short, long,
         default_values_t = strvec!["redboi", "blueguy"]

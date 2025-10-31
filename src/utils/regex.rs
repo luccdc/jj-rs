@@ -1,3 +1,5 @@
+//! Useful Regex constants for use with `pcre!`
+
 pub const DEC: &'static str = "[0-9]+";
 pub const HEX: &'static str = "[0-9A-F]+";
 pub const HEX4: &'static str = "[0-9A-F]{4}";
