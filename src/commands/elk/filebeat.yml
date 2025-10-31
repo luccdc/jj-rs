@@ -1,0 +1,21 @@
+filebeat.inputs:
+- type: udp
+  max_message_size: 10KiB
+  host: "0.0.0.0:514"
+  processors:
+    - syslog:
+        field: message
+
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_docker_metadata: ~
+
+setup.template.settings.index.number_of_shards: 1
+
+filebeat.modules:
+  - module: system
+    syslog:
+      enabled: true
+    auth:
+      enabled: true

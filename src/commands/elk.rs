@@ -1,7 +1,10 @@
+use std::fs::File;
+use std::os::fd::OwnedFd;
 use std::process::{Command, Stdio};
 use std::{
     io::{self, Write},
     net::Ipv4Addr,
+    os::fd::{FromRawFd, IntoRawFd},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     thread,
@@ -10,6 +13,7 @@ use std::{
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use nix::sys::memfd::{memfd_create, MFdFlags};
 use nix::unistd::chdir;
 
 use crate::utils::{download_file, system};
@@ -23,6 +27,15 @@ use crate::{
         qx,
     },
 };
+
+// Defines a variable called KIBANA_DASHBOARDS of type &'static [&'static str]
+// It includes all the ndjson files for kibana dashboards
+include!(concat!(env!("OUT_DIR"), "/kibana_dashboards.rs"));
+
+const FILEBEAT_YML: &'static str = include_str!("elk/filebeat.yml");
+const AUDITBEAT_YML: &'static str = include_str!("elk/auditbeat.yml");
+const PACKETBEAT_YML: &'static str = include_str!("elk/packetbeat.yml");
+const LOGSTASH_CONF: &'static str = include_str!("elk/pipeline.conf");
 
 #[derive(Parser, Clone, Debug)]
 #[command(about)]
@@ -152,11 +165,11 @@ impl super::Command for Elk {
         }
 
         if let EC::Install(args) | EC::SetupElastic(args) = &self.command {
-            setup_elasticsearch(&busybox, &mut elastic_password, args)?;
+            setup_elasticsearch(&mut elastic_password, args)?;
         }
 
-        if let EC::Install(args) | EC::SetupKibana(args) = &self.command {
-            setup_kibana(&busybox, args)?;
+        if let EC::Install(_) | EC::SetupKibana(_) = &self.command {
+            setup_kibana(&mut elastic_password)?;
         }
 
         if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
@@ -381,7 +394,6 @@ fn install_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result
 }
 
 fn setup_elasticsearch(
-    bb: &Busybox,
     password: &mut Option<String>,
     args: &ElkSubcommandArgs,
 ) -> anyhow::Result<()> {
@@ -429,8 +441,86 @@ fn setup_elasticsearch(
     Ok(())
 }
 
-fn setup_kibana(_bb: &Busybox, _args: &ElkSubcommandArgs) -> anyhow::Result<()> {
-    todo!()
+fn setup_kibana(password: &mut Option<String>) -> anyhow::Result<()> {
+    use reqwest::blocking::{
+        multipart::{Form, Part},
+        Client,
+    };
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct Level {
+        level: String,
+    }
+
+    #[derive(Deserialize)]
+    struct Overall {
+        overall: Level,
+    }
+
+    #[derive(Deserialize)]
+    struct KibanaStatus {
+        status: Overall,
+    }
+
+    println!("{}", "--- Configuring Kibana".green());
+
+    let elastic_password = get_elastic_password(password)?;
+
+    let token =
+        qx("/usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s kibana")?.1;
+
+    system(&format!(
+        "sudo -u kibana /usr/share/kibana/bin/kibana-setup -t {token}"
+    ))?;
+
+    let kibana_yml = std::fs::read_to_string("/etc/kibana/kibana.yml")?;
+    let new_kibana_yml =
+        pcre!(&kibana_yml =~ s/r"^[^\n]server.host:[^\n]+"/r#"server.host: "0.0.0.0""#/xms);
+    std::fs::write("/etc/kibana/kibana.yml", new_kibana_yml)?;
+
+    system("systemctl enable kibana")?;
+    system("systemctl start kibana")?;
+
+    println!("{}", "--- Waiting for Kibana...".green());
+
+    let client = Client::new();
+
+    loop {
+        println!("Waiting for Kibana...");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let Ok(res) = client.get("http://localhost:5601/api/status").send() else {
+            continue;
+        };
+        let Ok(json) = res.json::<KibanaStatus>() else {
+            continue;
+        };
+
+        if json.status.overall.level == "available" {
+            break;
+        }
+    }
+
+    println!("{}", "--- Kibana online! Importing dashboards...".green());
+
+    for (i, dash) in KIBANA_DASHBOARDS.iter().enumerate() {
+        println!("Importing dashboard {}...", i + 1);
+
+        let part = Part::bytes(*dash).file_name("input.ndjson");
+        let form = Form::new().part("file", part);
+
+        client
+            .post("http://localhost:5601/api/saved_objects/_import?overwrite=true")
+            .basic_auth("elastic", Some(elastic_password.clone()))
+            .header("kbn-xsrf", "true")
+            .multipart(form)
+            .send()?;
+    }
+
+    println!("{}", "--- Kibana configured!".green());
+
+    Ok(())
 }
 
 fn setup_logstash(

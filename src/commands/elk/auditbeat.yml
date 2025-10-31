@@ -1,0 +1,50 @@
+auditbeat.modules:
+- module: auditd
+  audit_rules: |
+    # Executions
+    -a always,exit -F arch=b64 -S execve,execveat -k exec
+    -a always,exit -F arch=b64 -S clone,clone3 -k clones
+
+    # Identity changes
+    -w /etc/group -p wa -k identity
+    -w /etc/passwd -p wa -k identity
+    -w /etc/gshadow -p wa -k identity
+    -w /etc/shadow -p wa -k identity
+
+    # Unauthorized access attempts/enumeration
+    -a always,exit -F arch=b64 -S open,creat,truncate,ftruncate,openat,open_by_handle_at -F exit=-EACCES -k access
+    -a always,exit -F arch=b64 -S open,creat,truncate,ftruncate,openat,open_by_handle_at -F exit=-EPERM -k access
+    -a always,exit -F arch=b64 -S geteuid,getuid,getegid,getgid -k potential_enum
+
+    # Networking info
+    -a always,exit -F arch=b64 -S socket -k sockets
+    -a always,exit -F arch=b64 -S socket -F a0=17 -F a1=3 -k raw_sockets
+
+    # Process injection
+    -a always,exit -F arch=b64 -S ptrace -k ptrace
+
+- module: file_integrity
+  paths:
+  - /bin
+  - /usr/bin
+  - /sbin
+  - /usr/sbin
+  - /etc
+
+- module: system
+  datasets:
+  - host
+  - login
+  - process
+  - socket
+  - user
+  state.period: 12h
+  user.detect_password_changes: true
+  login.wtmp_file_pattern: /var/log/wtmp*
+  login.btmp_file_pattern: /var/log/btmp*
+
+setup.template.settings.index.number_of_shards: 1
+
+processors:
+  - add_host_metadata: ~
+  - add_docker_metadata: ~
