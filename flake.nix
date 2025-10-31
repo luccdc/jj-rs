@@ -76,6 +76,8 @@
           nft-gzipped = gzip-binary "nft"
             ("${pkgsStatic.nftables.override { withCli = false; }}/bin/nft");
           tmux-gzipped = gzip-binary "tmux" "${pkgsStatic.tmux}/bin/tmux";
+          tcpdump-gzipped =
+            gzip-binary "tcpdump" "${pkgsStatic.tcpdump}/bin/tcpdump";
 
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
             p.rust-bin.nightly.latest.default.override {
@@ -83,7 +85,7 @@
               targets = [ "x86_64-unknown-linux-musl" ];
             });
 
-          src = craneLib.cleanCargoSource ./.;
+          src = ./.;
 
           commonArgs = {
             inherit src;
@@ -95,6 +97,7 @@
             JQ_GZIPPED = jq-gzipped;
             NFT_GZIPPED = nft-gzipped;
             TMUX_GZIPPED = tmux-gzipped;
+            TCPDUMP_GZIPPED = tcpdump-gzipped;
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
@@ -151,6 +154,7 @@
             JQ_GZIPPED = jq-gzipped;
             NFT_GZIPPED = nft-gzipped;
             TMUX_GZIPPED = tmux-gzipped;
+            TCPDUMP_GZIPPED = tcpdump-gzipped;
           });
         };
     };

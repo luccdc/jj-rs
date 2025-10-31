@@ -9,6 +9,7 @@ pub mod nft;
 pub mod ports;
 #[allow(dead_code)]
 pub mod regex;
+pub mod tcpdump;
 
 pub fn qx(command: &str) -> anyhow::Result<(ExitStatus, String)> {
     let output = std::process::Command::new("sh")

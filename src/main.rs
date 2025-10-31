@@ -24,6 +24,7 @@ define_commands! {
     Jq => commands::jq::Jq,
     Elk => commands::elk::Elk,
     Tmux => commands::tmux::Tmux,
+    Tcpdump => commands::tcpdump::Tcpdump,
 }
 
 #[derive(Parser, Debug)]
