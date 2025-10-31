@@ -1,10 +1,7 @@
-use std::fs::File;
-use std::os::fd::OwnedFd;
 use std::process::{Command, Stdio};
 use std::{
     io::{self, Write},
     net::Ipv4Addr,
-    os::fd::{FromRawFd, IntoRawFd},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     thread,
@@ -13,7 +10,6 @@ use std::{
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use nix::sys::memfd::{memfd_create, MFdFlags};
 use nix::unistd::chdir;
 
 use crate::utils::{download_file, system};
@@ -172,8 +168,8 @@ impl super::Command for Elk {
             setup_kibana(&mut elastic_password)?;
         }
 
-        if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
-            setup_logstash(&busybox, &mut elastic_password, args)?;
+        if let EC::Install(_) | EC::SetupLogstash(_) = &self.command {
+            setup_logstash(&mut elastic_password)?;
         }
 
         if let EC::Install(args) | EC::SetupAuditbeat(args) = &self.command {
@@ -523,12 +519,72 @@ fn setup_kibana(password: &mut Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn setup_logstash(
-    _bb: &Busybox,
-    _password: &mut Option<String>,
-    _args: &ElkSubcommandArgs,
-) -> anyhow::Result<()> {
-    todo!()
+fn setup_logstash(password: &mut Option<String>) -> anyhow::Result<()> {
+    println!("{}", "--- Configuring Logstash...".green());
+
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct ElasticApiKeys {
+        id: String,
+        name: String,
+        api_key: String,
+        encoded: String,
+    }
+
+    std::fs::create_dir_all("/etc/systemd/system/logstash.service.d")?;
+
+    if std::fs::metadata("/etc/systemd/system/logstash.service.d/api_key.conf").is_err() {
+        let es_password = get_elastic_password(password)?;
+
+        let api_key_permissions_body = r#"
+{
+    "name": "logstash-api-key",
+    "role_descriptors": {
+        "logstash_writer": {
+            "cluster": ["monitor","manage_index_templates","manage_ilm"],
+            "index": [{
+                "names": ["filebeat-*","winlogbeat-*","auditbeat-*","packetbeat-*","logs-*"],
+                "privileges": ["view_index_metadata","read","create","manage","manage_ilm"]
+            }]
+        }
+    }
+}
+"#;
+
+        let cert = std::fs::read_to_string("/etc/es_certs/http_ca.crt")?;
+        let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
+
+        let api_keys = reqwest::blocking::Client::builder()
+            .add_root_certificate(cert)
+            .build()?
+            .post("https://localhost:9200/_security/api_key")
+            .basic_auth("elastic", Some(es_password))
+            .header("kbn-xsrf", "true")
+            .header("content-type", "application/json")
+            .body(api_key_permissions_body)
+            .send()?
+            .json::<ElasticApiKeys>()?;
+
+        std::fs::write(
+            "/etc/systemd/system/logstash.service.d/api_key.conf",
+            format!(
+                r#"[Service]
+Environment="ES_API_KEY={}:{}"
+"#,
+                api_keys.id, api_keys.api_key
+            ),
+        )?;
+    }
+
+    std::fs::write("/etc/logstash/conf.d/pipeline.conf", LOGSTASH_CONF)?;
+
+    system("systemctl daemon-reload")?;
+    system("systemctl enable logstash")?;
+    system("systemctl restart logstash")?;
+
+    println!("{}", "--- Logstash configured!".green());
+
+    Ok(())
 }
 
 fn setup_auditbeat(
