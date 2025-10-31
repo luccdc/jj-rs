@@ -9,6 +9,7 @@ pub mod nft;
 pub mod ports;
 #[allow(dead_code)]
 pub mod regex;
+pub mod systemd;
 pub mod tcpdump;
 
 pub fn qx(command: &str) -> anyhow::Result<(ExitStatus, String)> {
