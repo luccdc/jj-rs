@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::utils::ports::{self, TcpStates};
+use crate::utils::ports::{self, SocketState};
 
 /// Enumerate open ports and services on the system
 #[derive(Parser, Debug)]
@@ -17,7 +17,7 @@ impl super::Command for Ports {
         );
 
         for port in tcp_ports {
-            if port.state != TcpStates::LISTEN {
+            if port.state != SocketState::LISTEN {
                 continue;
             }
 

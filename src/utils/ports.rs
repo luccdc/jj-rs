@@ -1,12 +1,18 @@
-use std::{collections::HashMap, net::Ipv4Addr};
+use std::{collections::HashMap, net::Ipv4Addr, path::Path};
 
 use anyhow::Context;
 use nix::fcntl::readlink;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SocketType {
+    Tcp,
+    Udp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
-pub enum TcpStates {
+pub enum SocketState {
     UNKNOWN,
     ESTABLISHED,
     SYN_SENT,
@@ -24,7 +30,7 @@ pub enum TcpStates {
     MAX_STATES,
 }
 
-impl From<u8> for TcpStates {
+impl From<u8> for SocketState {
     fn from(value: u8) -> Self {
         match value {
             1 => Self::ESTABLISHED,
@@ -49,12 +55,13 @@ impl From<u8> for TcpStates {
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct TcpSocketRecord {
+pub struct SocketRecord {
+    pub socket_type: SocketType,
     pub local_address: Ipv4Addr,
     pub local_port: u16,
     pub remote_address: Ipv4Addr,
     pub remote_port: u16,
-    pub state: TcpStates,
+    pub state: SocketState,
     pub inode: u64,
     pub pid: Option<u64>,
     pub cmdline: Option<String>,
@@ -98,9 +105,13 @@ pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
         .collect())
 }
 
-pub fn parse_net_tcp() -> anyhow::Result<Vec<TcpSocketRecord>> {
+pub fn parse_ip4_stats<P: AsRef<Path>>(
+    path: P,
+    socket_type: SocketType,
+) -> anyhow::Result<Vec<SocketRecord>> {
     let inode_pids = socket_inodes()?;
-    let tcp_sockets = std::fs::read_to_string("/proc/net/tcp")?;
+
+    let tcp_sockets = std::fs::read_to_string(path)?;
 
     let regex = regex::Regex::new(
         r"(?xms)
@@ -137,7 +148,7 @@ pub fn parse_net_tcp() -> anyhow::Result<Vec<TcpSocketRecord>> {
                 _timeout,
                 inode,
             ]|
-             -> anyhow::Result<TcpSocketRecord> {
+             -> anyhow::Result<SocketRecord> {
                 let inode = inode.parse()?;
                 let pid = inode_pids.get(&inode).cloned();
 
@@ -152,7 +163,8 @@ pub fn parse_net_tcp() -> anyhow::Result<Vec<TcpSocketRecord>> {
                 let local_address: u32 = u32::from_be(u32::from_str_radix(loc_addr, 16)?);
                 let remote_address: u32 = u32::from_be(u32::from_str_radix(rem_addr, 16)?);
 
-                Ok(TcpSocketRecord {
+                Ok(SocketRecord {
+                    socket_type,
                     local_address: local_address.into(),
                     local_port: u16::from_str_radix(loc_port, 16)?,
                     remote_address: remote_address.into(),
@@ -168,4 +180,21 @@ pub fn parse_net_tcp() -> anyhow::Result<Vec<TcpSocketRecord>> {
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(results)
+}
+
+pub fn parse_net_tcp() -> anyhow::Result<Vec<SocketRecord>> {
+    parse_ip4_stats("/proc/net/tcp", SocketType::Tcp)
+}
+
+pub fn parse_net_udp() -> anyhow::Result<Vec<SocketRecord>> {
+    parse_ip4_stats("/proc/net/udp", SocketType::Udp)
+}
+
+pub fn parse_net_tcp_udp() -> anyhow::Result<Vec<SocketRecord>> {
+    let mut tcp = parse_net_tcp()?;
+    let udp = parse_net_udp()?;
+
+    tcp.extend(udp);
+
+    Ok(tcp)
 }

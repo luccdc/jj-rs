@@ -25,6 +25,7 @@ define_commands! {
     Elk => commands::elk::Elk,
     Tmux => commands::tmux::Tmux,
     Tcpdump, td => commands::tcpdump::Tcpdump,
+    Firewall, fw => commands::firewall::Firewall
 }
 
 #[derive(Parser, Debug)]
