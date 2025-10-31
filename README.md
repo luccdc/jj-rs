@@ -102,7 +102,18 @@ fn do_the_thing() -> anyhow::Result<()> {
 
 ## Documentation
 
-All functions in `src/utils` and macros in `src/macros.rs` should be documented. To view and search this documentation, run `cargo doc` from the `nix develop` shell, and then go to `target/x86_64-unknown-linux-musl/doc/jj_rs/index.html` in a web browser
+All functions in `src/utils` and macros in `src/macros.rs` should be documented. To view and search this documentation, run `cargo doc` from the `nix develop` shell, and then go to `target/x86_64-unknown-linux-musl/doc/jj_rs/index.html` in a web browser.
+
+Standard library documentation can be found online: https://doc.rust-lang.org/std/
+
+Documentation for libraries can be found at: https://docs.rs/
+
+Documentation for libraries frequently used:
+- regex: https://docs.rs/regex/latest/regex/
+- reqwest (blocking): https://docs.rs/reqwest/latest/reqwest/blocking/index.html
+- serde: https://docs.rs/serde/latest/serde/
+- serde_json: https://docs.rs/serde_json/latest/serde_json/
+- clap: https://docs.rs/clap/latest/clap/
 
 ## Kibana dashboards
 

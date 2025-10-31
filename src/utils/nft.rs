@@ -1,5 +1,18 @@
+//! Provides a handle for a bundled copy of nft, allowing jj to manipulate firewall rules
+//! regardless of the host firewall utility in use
+//!
+//! ```no_run
+//! # // don't run the unit test to delete the firewall...
+//! # use jj_rs::utils::nft::Nft;
+//! # fn test_nft() -> anyhow::Result<()> {
+//! let nft = Nft::new()?;
+//!
+//! nft.exec("flush ruleset")?;
+//! # Ok()
+//! # }
+//! # test_nft().expect("could not run nft test");
+//! ```
 use std::{
-    ffi::OsStr,
     fs::File,
     io::prelude::*,
     os::fd::{AsRawFd, FromRawFd, IntoRawFd},
@@ -8,15 +21,17 @@ use std::{
 
 use anyhow::Context;
 use flate2::write::GzDecoder;
-use nix::sys::memfd::{MFdFlags, memfd_create};
+use nix::sys::memfd::{memfd_create, MFdFlags};
 
 const NFT_BYTES: &'static [u8] = include_bytes!(std::env!("NFT_GZIPPED"));
 
+/// Handle around the `nft` binary
 pub struct Nft {
     nft_file: File,
 }
 
 impl Nft {
+    /// Create a new nft handle that can be used later to manipulate firewall rules
     pub fn new() -> anyhow::Result<Self> {
         let temp_fd =
             memfd_create("", MFdFlags::empty()).context("Could not create memory file")?;
@@ -37,6 +52,19 @@ impl Nft {
         Ok(Self { nft_file })
     }
 
+    /// Actually execute an NFT command
+    ///
+    /// ```no_run
+    /// # // don't run the unit test to add a chain called "sneaky_ip"...
+    /// # use jj_rs::utils::nft::Nft;
+    /// # fn test_nft() -> anyhow::Result<()> {
+    /// let nft = Nft::new()?;
+    ///
+    /// nft.exec("add table inet sneaky_shell")?;
+    /// # Ok(())
+    /// # }
+    /// # test_nft().expect("could not run nft test");
+    /// ```
     pub fn exec<R: AsRef<str>, S: Into<Option<Stdio>>>(
         &self,
         command: R,
@@ -52,18 +80,9 @@ impl Nft {
             .context("Could not wait for NFT to finish execution")
     }
 
-    pub fn command<R: AsRef<OsStr>, S: Into<Option<Stdio>>>(
-        &self,
-        args: &[R],
-        stderr: S,
-    ) -> anyhow::Result<ExitStatus> {
+    /// Create a new [`std::process::Command`] object to perform further
+    /// customization around later
+    pub fn command(&self) -> Command {
         Command::new(&format!("/proc/self/fd/{}", self.nft_file.as_raw_fd()))
-            .args(args)
-            .stderr(stderr.into().unwrap_or_else(Stdio::inherit))
-            .stdout(Stdio::inherit())
-            .spawn()
-            .context("Could not spawn nft")?
-            .wait()
-            .context("Could not wait for NFT to finish execution")
     }
 }

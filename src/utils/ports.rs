@@ -1,14 +1,22 @@
+//! A collection of utilities designed around querying open ports
+//!
+//! The `ss -peanut` command loads data from the /proc filesystem,
+//! and the utilities in this module do so as well.
+
 use std::{collections::HashMap, net::Ipv4Addr, path::Path};
 
 use anyhow::Context;
 use nix::fcntl::readlink;
 
+/// Used to differentiate socket records, as records from multiple
+/// files in /proc might be mixed together
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SocketType {
     Tcp,
     Udp,
 }
 
+/// Mirrors the states [used internally](https://github.com/iproute2/iproute2/blob/ca756f36a0c6d24ab60657f8d14312c17443e5f0/misc/ss.c#L222-L238) for `ss`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
@@ -53,6 +61,9 @@ impl From<u8> for SocketState {
     }
 }
 
+/// Represents fields selected from `/proc/net/tcp` and `/proc/net/udp`
+///
+/// https://www.kernel.org/doc/Documentation/networking/proc_net_tcp.txt
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SocketRecord {
@@ -68,6 +79,7 @@ pub struct SocketRecord {
     pub cgroup: Option<String>,
 }
 
+/// Returns a mapping of inodes to the process ID that has the inode
 pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
     let dir_re = regex::Regex::new(r"[0-9]+")?;
     let socket_re = regex::Regex::new(r"socket:\[([0-9]+)\]")?;
@@ -105,6 +117,7 @@ pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
         .collect())
 }
 
+/// Parse statistics from a file such as /proc/net/tcp or /proc/net/udp
 pub fn parse_ip4_stats<P: AsRef<Path>>(
     path: P,
     socket_type: SocketType,

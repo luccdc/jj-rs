@@ -20,7 +20,7 @@ impl super::Command for Nft {
     fn execute(self) -> anyhow::Result<()> {
         let nft = nft::Nft::new()?;
 
-        nft.command(&self.args, None)?;
+        nft.command().args(self.args).spawn()?.wait()?;
 
         Ok(())
     }

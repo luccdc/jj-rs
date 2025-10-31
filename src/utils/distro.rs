@@ -1,7 +1,12 @@
+//! Some actions have to change their behavior based on which Linux
+//! distribution it's running on. Utilities in this module provide
+//! the ability to determine which Linux distribution is being used
 use std::collections::HashMap;
 
 use crate::pcre;
 
+/// Cover the most important Linux distributions we come across
+/// in competition
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Distro {
     RedHat,
@@ -18,13 +23,15 @@ impl From<&str> for Distro {
 
         match s {
             "debian" => Distro::Debian,
-            "redhat" => Distro::RedHat,
+            "redhat" | "rhel" => Distro::RedHat,
             "alpine" => Distro::Alpine,
             _ => Distro::Other(s.to_string()),
         }
     }
 }
 
+/// Load the current distribution. May fail if there is a malformed
+/// /etc/os-release file
 pub fn get_distro() -> anyhow::Result<Option<Distro>> {
     let env = std::fs::read_to_string("/etc/os-release")?;
 
