@@ -38,7 +38,7 @@ use std::{
 
 use anyhow::Context;
 use flate2::write::GzDecoder;
-use nix::sys::memfd::{memfd_create, MFdFlags};
+use nix::sys::memfd::{MFdFlags, memfd_create};
 
 const TCPDUMP_BYTES: &'static [u8] = include_bytes!(std::env!("TCPDUMP_GZIPPED"));
 

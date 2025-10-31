@@ -7,7 +7,7 @@ use std::{
     thread,
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use nix::unistd::chdir;
@@ -17,7 +17,7 @@ use crate::utils::{download_file, system};
 use crate::{
     pcre,
     utils::{
-        distro::{get_distro, Distro},
+        distro::{Distro, get_distro},
         download_container::DownloadContainer,
         qx,
     },
@@ -464,8 +464,8 @@ fn setup_elasticsearch(
 
 fn setup_kibana(password: &mut Option<String>) -> anyhow::Result<()> {
     use reqwest::blocking::{
-        multipart::{Form, Part},
         Client,
+        multipart::{Form, Part},
     };
     use serde::Deserialize;
 

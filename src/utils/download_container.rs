@@ -24,16 +24,16 @@
 
 use std::{net::Ipv4Addr, os::fd::OwnedFd, process::Stdio};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use nix::{
-    fcntl::{open, OFlag},
-    sched::{setns, CloneFlags},
+    fcntl::{OFlag, open},
+    sched::{CloneFlags, setns},
     sys::{
-        signal::{kill, Signal::SIGTERM},
+        signal::{Signal::SIGTERM, kill},
         stat::Mode,
         wait::waitpid,
     },
-    unistd::{fork, geteuid, getpid, ForkResult, Pid},
+    unistd::{ForkResult, Pid, fork, geteuid, getpid},
 };
 
 use crate::{

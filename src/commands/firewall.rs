@@ -1,13 +1,13 @@
 use std::{
     fs::OpenOptions,
-    io::{stdout, Write},
+    io::{Write, stdout},
     net::Ipv4Addr,
     path::PathBuf,
 };
 
 use clap::{Parser, Subcommand};
 
-use crate::utils::ports::{parse_net_tcp_udp, SocketState, SocketType};
+use crate::utils::ports::{SocketState, SocketType, parse_net_tcp_udp};
 
 #[derive(Subcommand, Debug)]
 enum FirewallCmd {

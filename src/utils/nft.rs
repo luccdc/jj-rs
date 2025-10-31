@@ -8,7 +8,7 @@
 //! let nft = Nft::new()?;
 //!
 //! nft.exec("flush ruleset")?;
-//! # Ok()
+//! # Ok(())
 //! # }
 //! # test_nft().expect("could not run nft test");
 //! ```
@@ -21,7 +21,7 @@ use std::{
 
 use anyhow::Context;
 use flate2::write::GzDecoder;
-use nix::sys::memfd::{memfd_create, MFdFlags};
+use nix::sys::memfd::{MFdFlags, memfd_create};
 
 const NFT_BYTES: &'static [u8] = include_bytes!(std::env!("NFT_GZIPPED"));
 

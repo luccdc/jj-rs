@@ -5,7 +5,7 @@ use crate::{
     strvec,
     utils::{
         busybox::Busybox,
-        distro::{get_distro, Distro},
+        distro::{Distro, get_distro},
     },
 };
 

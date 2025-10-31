@@ -1,13 +1,13 @@
 use std::{
     net::Ipv4Addr,
-    process::{exit, Command},
+    process::{Command, exit},
 };
 
 use anyhow::Context;
 use clap::Parser;
 use nix::{
     sys::wait::waitpid,
-    unistd::{fork, ForkResult},
+    unistd::{ForkResult, fork},
 };
 
 use crate::utils::{busybox::Busybox, download_container::DownloadContainer};
