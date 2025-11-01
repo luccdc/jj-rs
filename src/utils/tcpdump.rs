@@ -11,9 +11,9 @@
 //! # use jj_rs::utils::tcpdump::Tcpdump;
 //! # fn test_tcpdump() -> anyhow::Result<()> {
 //! let tcpdump = Tcpdump::new()?;
-//! let command: std::process::Command = tcpdump.command_inst();
+//! let mut command: std::process::Command = tcpdump.command_inst();
 //!
-//! let child = command
+//! let mut child = command
 //!     .stdout(Stdio::inherit())
 //!     .spawn()?;
 //!

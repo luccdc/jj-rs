@@ -7,6 +7,7 @@ pub mod firewall;
 pub mod jq;
 pub mod nft;
 pub mod ports;
+pub mod serve;
 pub mod stat;
 pub mod tcpdump;
 pub mod tmux;

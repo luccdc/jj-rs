@@ -7,7 +7,7 @@
 //! # fn test_nft() -> anyhow::Result<()> {
 //! let nft = Nft::new()?;
 //!
-//! nft.exec("flush ruleset")?;
+//! nft.exec("flush ruleset", None)?;
 //! # Ok(())
 //! # }
 //! # test_nft().expect("could not run nft test");
@@ -60,7 +60,7 @@ impl Nft {
     /// # fn test_nft() -> anyhow::Result<()> {
     /// let nft = Nft::new()?;
     ///
-    /// nft.exec("add table inet sneaky_shell")?;
+    /// nft.exec("add table inet sneaky_shell", None)?;
     /// # Ok(())
     /// # }
     /// # test_nft().expect("could not run nft test");
