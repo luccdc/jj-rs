@@ -10,6 +10,7 @@ jobs:
     permissions:
       id-token: "write"
       contents: "read"
+      contents: "write"
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
@@ -17,11 +18,6 @@ jobs:
       # - uses: DeterminateSystems/flake-checker-action@main
       - name: Run `nix build`
         run: nix build .
-
-  publish:
-    permissions:
-      contents: write
-    steps:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
