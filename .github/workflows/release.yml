@@ -1,0 +1,28 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      id-token: "write"
+      contents: "read"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # - uses: DeterminateSystems/flake-checker-action@main
+      - name: Run `nix build`
+        run: nix build .
+
+  publish:
+    permissions:
+      contents: write
+    steps:
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: result/bin/jj-rs
