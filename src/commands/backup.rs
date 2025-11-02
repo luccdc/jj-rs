@@ -1,9 +1,14 @@
-use std::fs::{File, copy, exists};
+use std::{
+    fs::{File, copy, exists},
+    path::PathBuf,
+};
 
 use anyhow::Context;
 use clap::Parser;
+use colored::Colorize;
 use flate2::{Compression, write::GzEncoder};
 use tar::Builder;
+use walkdir::WalkDir;
 
 use crate::strvec;
 
@@ -52,17 +57,35 @@ impl super::Command for Backup {
                     continue;
                 }
 
-                archive
-                    .append_dir_all(&path[1..], &path)
-                    .with_context(|| format!("Could not add path: {path}"))?;
+                println!("{} {}", "--- Adding ".green(), path.green());
+
+                for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
+                    let Ok(mut file) = File::open(entry.path()) else {
+                        continue;
+                    };
+                    let path =
+                        PathBuf::from(entry.path().to_string_lossy().trim_start_matches("/"));
+                    let Ok(_) = archive.append_file(path, &mut file) else {
+                        continue;
+                    };
+                    println!("{}", entry.path().display());
+                }
             }
 
             for path in &self.paths {
-                let offset = if path.starts_with("/") { 1 } else { 0 };
+                println!("{} {}", "--- Adding ".green(), path.green());
 
-                archive
-                    .append_dir_all(&path[offset..], &path)
-                    .with_context(|| format!("Could not add path: {path}"))?;
+                for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
+                    let Ok(mut file) = File::open(entry.path()) else {
+                        continue;
+                    };
+                    let path =
+                        PathBuf::from(entry.path().to_string_lossy().trim_start_matches("/"));
+                    let Ok(_) = archive.append_file(path, &mut file) else {
+                        continue;
+                    };
+                    println!("{}", entry.path().display());
+                }
             }
             println!("Done creating initial backup!");
         }
