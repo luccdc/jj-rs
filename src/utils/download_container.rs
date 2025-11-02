@@ -268,7 +268,7 @@ impl DownloadContainer {
     /// # test_download_container().expect("could not run download container");
     /// ```
     pub fn run<T, F: FnOnce() -> T>(&self, f: F) -> anyhow::Result<T> {
-        setns(&self.child_ns, CloneFlags::empty())
+        setns(&self.child_ns, CloneFlags::CLONE_NEWNET)
             .context("Could not change to child namespace to set up local networking")?;
 
         let v = f();
