@@ -12,6 +12,7 @@ pub mod stat;
 pub mod tcpdump;
 pub mod tmux;
 pub mod useradd;
+pub mod zsh;
 
 pub trait Command: clap::Parser {
     fn execute(self) -> anyhow::Result<()>;

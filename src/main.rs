@@ -26,7 +26,8 @@ define_commands! {
     Tmux => commands::tmux::Tmux,
     Tcpdump, td => commands::tcpdump::Tcpdump,
     Firewall, fw => commands::firewall::Firewall,
-    Serve, s => commands::serve::Serve
+    Serve, s => commands::serve::Serve,
+    Zsh => commands::zsh::Zsh
 }
 
 #[derive(Parser, Debug)]
