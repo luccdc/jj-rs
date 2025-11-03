@@ -110,6 +110,7 @@ impl QuickSetup {
         writeln!(ob)?;
 
         writeln!(ob, "        ct state established,related accept")?;
+        writeln!(ob, r#"        log prefix "inbound-drop: " drop"#)?;
         writeln!(ob, "    }}\n")?;
         writeln!(ob, "    chain output {{")?;
         writeln!(
@@ -159,6 +160,7 @@ impl QuickSetup {
         }
 
         writeln!(ob, "        ct state established,related accept")?;
+        writeln!(ob, r#"        log prefix "outbound-drop: " reject"#)?;
         writeln!(ob, "    }}")?;
         writeln!(ob, "}}")?;
 
