@@ -3,10 +3,15 @@
 //! The `ss -peanut` command loads data from the /proc filesystem,
 //! and the utilities in this module do so as well.
 
-use std::{collections::HashMap, net::Ipv4Addr, path::Path};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    path::Path,
+};
 
 use anyhow::Context;
 use nix::fcntl::readlink;
+use num_traits::{Num, PrimInt};
 
 /// Used to differentiate socket records, as records from multiple
 /// files in /proc might be mixed together
@@ -68,9 +73,9 @@ impl From<u8> for SocketState {
 #[allow(dead_code)]
 pub struct SocketRecord {
     pub socket_type: SocketType,
-    pub local_address: Ipv4Addr,
+    pub local_address: IpAddr,
     pub local_port: u16,
-    pub remote_address: Ipv4Addr,
+    pub remote_address: IpAddr,
     pub remote_port: u16,
     pub state: SocketState,
     pub inode: u64,
@@ -117,30 +122,49 @@ pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
         .collect())
 }
 
+trait IpSize: From<Self::Size> {
+    type Size: Num + PrimInt + std::fmt::Debug;
+    const HEX_COUNT: &str;
+}
+
+impl IpSize for Ipv4Addr {
+    type Size = u32;
+    const HEX_COUNT: &str = "8";
+}
+
+impl IpSize for Ipv6Addr {
+    type Size = u128;
+    const HEX_COUNT: &str = "32";
+}
+
 /// Parse statistics from a file such as /proc/net/tcp or /proc/net/udp
-pub fn parse_ip4_stats<P: AsRef<Path>>(
-    path: P,
-    socket_type: SocketType,
-) -> anyhow::Result<Vec<SocketRecord>> {
+fn parse_ip_stats<P, A>(path: P, socket_type: SocketType) -> anyhow::Result<Vec<SocketRecord>>
+where
+    P: AsRef<Path>,
+    A: IpSize + Into<IpAddr>,
+    <<A as IpSize>::Size as Num>::FromStrRadixErr: 'static + std::error::Error + Send + Sync,
+{
     let inode_pids = socket_inodes()?;
 
     let tcp_sockets = std::fs::read_to_string(path)?;
 
-    let regex = regex::Regex::new(
+    let regex = regex::Regex::new(&format!(
         r"(?xms)
         \s+
         [0-9]+: \s+
-        ([0-9A-F]{8}):([0-9A-F]{4}) \s+
-        ([0-9A-F]{8}):([0-9A-F]{4}) \s+
-        ([0-9A-F]{2}) \s+
-        ([0-9A-F]{8}):([0-9A-F]{8}) \s+
-        ([0-9A-F]{2}):([0-9A-F]{8}) \s+
-        ([0-9A-F]{8}) \s+
+        ([0-9A-F]{{{}}}):([0-9A-F]{{4}}) \s+
+        ([0-9A-F]{{{}}}):([0-9A-F]{{4}}) \s+
+        ([0-9A-F]{{2}}) \s+
+        ([0-9A-F]{{8}}):([0-9A-F]{{8}}) \s+
+        ([0-9A-F]{{2}}):([0-9A-F]{{8}}) \s+
+        ([0-9A-F]{{8}}) \s+
         ([0-9]+) \s+
         ([0-9]+) \s+
         ([0-9]+) \s+
     ",
-    )?;
+        A::HEX_COUNT,
+        A::HEX_COUNT
+    ))?;
 
     let results = regex
         .captures_iter(&tcp_sockets)
@@ -173,14 +197,14 @@ pub fn parse_ip4_stats<P: AsRef<Path>>(
                     .and_then(|p| std::fs::read_to_string(format!("/proc/{p}/cgroup")).ok())
                     .map(|cg| cg.trim_end().to_string());
 
-                let local_address: u32 = u32::from_be(u32::from_str_radix(loc_addr, 16)?);
-                let remote_address: u32 = u32::from_be(u32::from_str_radix(rem_addr, 16)?);
+                let local_address = A::Size::from_be(A::Size::from_str_radix(loc_addr, 16)?);
+                let remote_address = A::Size::from_be(A::Size::from_str_radix(rem_addr, 16)?);
 
                 Ok(SocketRecord {
                     socket_type,
-                    local_address: local_address.into(),
+                    local_address: A::from(local_address).into(),
                     local_port: u16::from_str_radix(loc_port, 16)?,
-                    remote_address: remote_address.into(),
+                    remote_address: A::from(remote_address).into(),
                     remote_port: u16::from_str_radix(rem_port, 16)?,
                     state: u8::from_str_radix(stat, 16)?.into(),
                     inode,
@@ -196,21 +220,32 @@ pub fn parse_ip4_stats<P: AsRef<Path>>(
 }
 
 /// Shortcut to parse statistics from /proc/net/tcp
+#[allow(dead_code)]
 pub fn parse_net_tcp() -> anyhow::Result<Vec<SocketRecord>> {
-    parse_ip4_stats("/proc/net/tcp", SocketType::Tcp)
+    Ok([
+        parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp)?,
+        parse_ip_stats::<_, Ipv6Addr>("/proc/net/tcp6", SocketType::Tcp)?,
+    ]
+    .concat())
 }
 
 /// Shortcut to parse statistics from /proc/net/udp
+#[allow(dead_code)]
 pub fn parse_net_udp() -> anyhow::Result<Vec<SocketRecord>> {
-    parse_ip4_stats("/proc/net/udp", SocketType::Udp)
+    Ok([
+        parse_ip_stats::<_, Ipv4Addr>("/proc/net/udp", SocketType::Udp)?,
+        parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp6", SocketType::Udp)?,
+    ]
+    .concat())
 }
 
 /// Shortcut to parse statistics from both /proc/net/tcp and /proc/net/udp
-pub fn parse_net_tcp_udp() -> anyhow::Result<Vec<SocketRecord>> {
-    let mut tcp = parse_net_tcp()?;
-    let udp = parse_net_udp()?;
-
-    tcp.extend(udp);
-
-    Ok(tcp)
+pub fn parse_ports() -> anyhow::Result<Vec<SocketRecord>> {
+    Ok([
+        parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp)?,
+        parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp", SocketType::Udp)?,
+        parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp6", SocketType::Tcp)?,
+        parse_ip_stats::<_, Ipv6Addr>("/proc/net/tcp6", SocketType::Udp)?,
+    ]
+    .concat())
 }

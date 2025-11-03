@@ -7,7 +7,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use crate::utils::ports::{SocketState, SocketType, parse_net_tcp_udp};
+use crate::utils::ports::{SocketState, SocketType, parse_ports};
 
 #[derive(Subcommand, Debug)]
 enum FirewallCmd {
@@ -39,7 +39,7 @@ struct QuickSetup {
     elk_ip: Option<Ipv4Addr>,
 
     /// Where to save the resulting firewall configuration. Leave unconfigured or use `-` to print to standard out
-    #[arg(short, long)]
+    #[arg(short = 'f', long)]
     output_file: Option<PathBuf>,
 
     /// Add firewall rules to allow currently established connections. Useful for web servers connecting to a central database
@@ -47,13 +47,13 @@ struct QuickSetup {
     allow_established_connections: bool,
 
     /// Add firewall rules to allow outbound DNS, HTTP, and HTTPS
-    #[arg(short, long)]
+    #[arg(short = 'o', long)]
     allow_outbound: bool,
 }
 
 impl QuickSetup {
     fn execute(self) -> anyhow::Result<()> {
-        let sockets = parse_net_tcp_udp()?;
+        let sockets = parse_ports()?;
 
         let mut ob: Box<dyn Write> = match self.output_file {
             None => Box::new(stdout()),
