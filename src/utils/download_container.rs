@@ -22,7 +22,11 @@
 //! # test_download_container().expect("could not run download container");
 //! ```
 
-use std::{net::Ipv4Addr, os::fd::OwnedFd, process::Stdio};
+use std::{
+    net::Ipv4Addr,
+    os::{fd::OwnedFd, unix::fs::PermissionsExt},
+    process::Stdio,
+};
 
 use anyhow::{Context, anyhow, bail};
 use nix::{
@@ -55,8 +59,10 @@ const IP_ADDR_REGEX: &'static str = concat!(
 pub struct DownloadContainer {
     ns_name: String,
     child: Pid,
-    original_ns: OwnedFd,
-    child_ns: OwnedFd,
+    original_net_ns: OwnedFd,
+    child_net_ns: OwnedFd,
+    original_mnt_ns: OwnedFd,
+    child_mnt_ns: OwnedFd,
     nft: Nft,
 }
 
@@ -103,18 +109,30 @@ impl DownloadContainer {
         .context("Could not add veth pair")?;
         let child = get_namespace(&bb)?;
 
-        let original_ns = open(
+        let original_net_ns = open(
             &*format!("/proc/{}/ns/net", getpid()),
             OFlag::O_RDONLY,
             Mode::empty(),
         )
         .context("Could not open parent net namespace")?;
-        let child_ns = open(
+        let original_mnt_ns = open(
+            &*format!("/proc/{}/ns/mnt", getpid()),
+            OFlag::O_RDONLY,
+            Mode::empty(),
+        )
+        .context("Could not open parent mount namespace")?;
+        let child_net_ns = open(
             &*format!("/proc/{}/ns/net", child),
             OFlag::O_RDONLY,
             Mode::empty(),
         )
         .context("Could not open child net namespace")?;
+        let child_mnt_ns = open(
+            &*format!("/proc/{}/ns/mnt", child),
+            OFlag::O_RDONLY,
+            Mode::empty(),
+        )
+        .context("Could not open child mount namespace")?;
 
         bb.execute(&["ip", "link", "set", &format!("{ns_name}.0"), "up"])
             .context("Could not set host link up")?;
@@ -169,7 +187,7 @@ impl DownloadContainer {
         ])
         .context("Could not add IP address to WAN interface")?;
 
-        setns(&child_ns, CloneFlags::empty())
+        setns(&child_net_ns, CloneFlags::CLONE_NEWNET)
             .context("Could not change to child namespace to set up local networking")?;
 
         bb.execute(&["ip", "link", "set", "lo", "up"])
@@ -191,7 +209,7 @@ impl DownloadContainer {
         bb.execute(&["ip", "route", "add", "default", "via", &format!("{wan_ip}")])
             .context("Could not create default route in container")?;
 
-        setns(&original_ns, CloneFlags::empty())
+        setns(&original_net_ns, CloneFlags::CLONE_NEWNET)
             .context("Could not change back to host namespace")?;
 
         let routes = bb
@@ -247,8 +265,10 @@ impl DownloadContainer {
             child,
             nft,
             ns_name,
-            child_ns,
-            original_ns,
+            child_net_ns,
+            child_mnt_ns,
+            original_net_ns,
+            original_mnt_ns,
         })
     }
 
@@ -268,12 +288,17 @@ impl DownloadContainer {
     /// # test_download_container().expect("could not run download container");
     /// ```
     pub fn run<T, F: FnOnce() -> T>(&self, f: F) -> anyhow::Result<T> {
-        setns(&self.child_ns, CloneFlags::CLONE_NEWNET)
+        setns(&self.child_net_ns, CloneFlags::CLONE_NEWNET)
+            .context("Could not change to child namespace to set up local networking")?;
+        setns(&self.child_mnt_ns, CloneFlags::CLONE_NEWNS)
             .context("Could not change to child namespace to set up local networking")?;
 
         let v = f();
 
-        setns(&self.original_ns, CloneFlags::empty())
+        setns(&self.original_net_ns, CloneFlags::CLONE_NEWNET)
+            .context("Could not change back to host namespace")?;
+
+        setns(&self.original_mnt_ns, CloneFlags::CLONE_NEWNS)
             .context("Could not change back to host namespace")?;
 
         Ok(v)
@@ -314,6 +339,9 @@ impl Drop for DownloadContainer {
 /// Instead, you can specify a pid of a process and move the link to their namespace
 /// So, a process that just sleeps repeatedly until killed, allowing us to repeatedly
 /// enter their namespace based on the /proc/pid/ns/net file
+/// This will also create a new mount namespace that bind mounts a new file over
+/// /etc/resolv.conf to enable outbound, external DNS that doesn't depend on the domain
+/// controller
 fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
     // Semaphores are nasty but one of the simplest ways to communicate across
     // processes. We have to wait for the process to finish initializing, hence
@@ -322,10 +350,38 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
 
     struct Sync {
         semaphore: sem_t,
-        err: nix::Result<()>,
+        err: anyhow::Result<()>,
     }
 
     const SYNC_SIZE: usize = std::mem::size_of::<Sync>();
+
+    let setup_child = || -> anyhow::Result<()> {
+        nix::sched::unshare(CloneFlags::CLONE_NEWNET | CloneFlags::CLONE_NEWNS)
+            .context("Could not unshare as child")?;
+
+        let file_raw = bb.execute(&["mktemp"])?;
+        let file = file_raw.trim();
+        std::fs::write(file, "nameserver 1.1.1.1\n")?;
+        std::fs::set_permissions(file, PermissionsExt::from_mode(0o555))?;
+
+        nix::mount::mount(
+            None::<&str>,
+            "/",
+            None::<&str>,
+            nix::mount::MsFlags::MS_REC | nix::mount::MsFlags::MS_PRIVATE,
+            None::<&str>,
+        )?;
+
+        nix::mount::mount(
+            Some(file),
+            "/etc/resolv.conf",
+            None::<&str>,
+            nix::mount::MsFlags::MS_BIND,
+            None::<&str>,
+        )?;
+
+        Ok(())
+    };
 
     unsafe {
         let sync: *mut Sync = libc::mmap(
@@ -342,7 +398,7 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
 
         match fork()? {
             ForkResult::Child => {
-                (*sync).err = nix::sched::unshare(CloneFlags::CLONE_NEWNET);
+                (*sync).err = setup_child();
 
                 libc::msync(sync as *mut _, SYNC_SIZE, libc::MS_SYNC);
                 libc::sem_post(semaphore);
@@ -354,7 +410,7 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
                 libc::sem_wait(semaphore);
                 libc::sem_destroy(semaphore);
 
-                (*sync).err?;
+                std::ptr::read(sync).err?;
 
                 libc::munmap(semaphore as *mut _, SYNC_SIZE);
 
