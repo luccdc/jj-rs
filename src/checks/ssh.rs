@@ -73,7 +73,7 @@ impl SshTroubleshooter {
         let _pass = self
             .password
             .clone()
-            .unwrap_or(CheckValue::Stdin)
+            .unwrap_or(CheckValue::stdin())
             .resolve_prompt(
                 tr,
                 "Enter a password to sign into the SSH server with: ".to_string(),

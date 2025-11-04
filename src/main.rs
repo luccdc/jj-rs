@@ -16,23 +16,30 @@ mod utils;
 //
 // Name should be in camel case
 define_commands! {
-    Backup, bu => commands::backup::Backup,
-    Busybox, bb => commands::busybox::Busybox,
+    // utility commands
+    DownloadShell, ds => commands::download_shell::DownloadShell,
+    Check, c => commands::check::Check,
+    Elk => commands::elk::Elk,
+    Serve, s => commands::serve::Serve,
+
+    // sysinfo commands
     Enum, e => commands::r#enum::Enum,
     Ports, p => commands::ports::Ports,
-    DownloadShell, ds => commands::download_shell::DownloadShell,
     Stat => commands::stat::Stat,
+
+    // admin commands
+    Backup, bu => commands::backup::Backup,
     Useradd, ua => commands::useradd::Useradd,
+    Firewall, fw => commands::firewall::Firewall,
+    Ssh => commands::ssh::Ssh,
+
+    // Embedded binaries
     Nft => commands::nft::Nft,
     Jq => commands::jq::Jq,
-    Elk => commands::elk::Elk,
     Tmux => commands::tmux::Tmux,
     Tcpdump, td => commands::tcpdump::Tcpdump,
-    Firewall, fw => commands::firewall::Firewall,
-    Serve, s => commands::serve::Serve,
     Zsh => commands::zsh::Zsh,
-    Ssh => commands::ssh::Ssh,
-    Check => commands::check::Check,
+    Busybox, bb => commands::busybox::Busybox,
 }
 
 #[derive(Parser, Debug)]

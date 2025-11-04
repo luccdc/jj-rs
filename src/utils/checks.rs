@@ -1,4 +1,5 @@
-//!
+//! Checks are used to assist with debugging a service, and for identifying
+//! when the scored services goes down hopefully before it gets scored as going down
 
 use std::{
     fmt,
@@ -7,46 +8,42 @@ use std::{
     ops::BitAndAssign,
     path::PathBuf,
     str::FromStr,
+    sync::{Arc, Mutex},
 };
 
 use chrono::prelude::*;
 use colored::Colorize;
 use serde::{Deserialize, de::Visitor};
 
+/// Represents a value that can be used as a richer parameter type
+/// than just String for checks. This enum provides the [`resolve_value`]
+/// and [`resolve_prompt`] functions, which when called allows for collapsing
+/// this to a String. It allows the operator to specify :STDIN:, :FILE:/path,
+/// or any other value and resolve it by either prompting the operator, reading
+/// a file path, or using the value as it is provided
 #[derive(Debug, Clone)]
-pub enum CheckValue {
+pub struct CheckValue {
+    original: CheckValueInternal,
+    internal: Arc<Mutex<CheckValueInternal>>,
+}
+
+#[derive(Clone, Debug)]
+enum CheckValueInternal {
     Value(String),
     Stdin,
     File(PathBuf),
 }
 
-impl CheckValue {
-    #[allow(dead_code)] // to be used in later checks
-    pub fn resolve_value(self) -> anyhow::Result<String> {
-        match self {
-            CheckValue::Value(s) => Ok(s),
-            CheckValue::Stdin => {
-                let mut input = String::new();
-                std::io::stdin().lock().read_line(&mut input)?;
-                Ok(input)
-            }
-            CheckValue::File(p) => {
-                let bytes = std::fs::read(p)?;
-                Ok(String::from_utf8_lossy(&bytes).to_string())
-            }
-        }
-    }
-
-    pub fn resolve_prompt(
-        self,
-        tr: &mut TroubleshooterRunner,
-        prompt: String,
-    ) -> anyhow::Result<String> {
-        match self {
-            CheckValue::Value(s) => Ok(s),
-            CheckValue::Stdin => {
+fn resolve_value(
+    internal: &CheckValueInternal,
+    prompt: Option<(&str, &mut TroubleshooterRunner)>,
+) -> anyhow::Result<String> {
+    match internal {
+        CheckValueInternal::Value(s) => Ok(s.to_string()),
+        CheckValueInternal::Stdin => {
+            if let Some((p, tr)) = prompt {
                 print!(
-                    "{}{prompt}",
+                    "{}{p}",
                     if tr.has_rendered_newline_for_step {
                         ""
                     } else {
@@ -55,15 +52,76 @@ impl CheckValue {
                 );
                 tr.has_rendered_newline_for_step = true;
                 std::io::stdout().lock().flush()?;
-                let mut input = String::new();
-                std::io::stdin().lock().read_line(&mut input)?;
-                Ok(input)
             }
-            CheckValue::File(p) => {
-                let bytes = std::fs::read(p)?;
-                Ok(String::from_utf8_lossy(&bytes).to_string())
-            }
+
+            let mut input = String::new();
+            std::io::stdin().lock().read_line(&mut input)?;
+            Ok(input)
         }
+        CheckValueInternal::File(f) => {
+            let bytes = std::fs::read(f)?;
+            Ok(String::from_utf8_lossy(&bytes).trim().to_string())
+        }
+    }
+}
+
+impl CheckValue {
+    pub fn stdin() -> Self {
+        Self {
+            original: CheckValueInternal::Stdin,
+            internal: Arc::new(Mutex::new(CheckValueInternal::Stdin)),
+        }
+    }
+
+    #[allow(dead_code)] // to be used in later checks
+    pub fn resolve_value(&self) -> anyhow::Result<String> {
+        if let CheckValueInternal::Value(s) = &self.original {
+            return Ok(s.to_string());
+        };
+
+        let lock = self.internal.lock();
+        let mut internal_ref = match lock {
+            Ok(r) => r,
+            Err(_) => {
+                return resolve_value(&self.original, None);
+            }
+        };
+
+        if let CheckValueInternal::Value(s) = &*internal_ref {
+            return Ok(s.to_string());
+        }
+
+        let value = resolve_value(&*internal_ref, None)?;
+        *internal_ref = CheckValueInternal::Value(value.clone());
+
+        Ok(value)
+    }
+
+    pub fn resolve_prompt(
+        &self,
+        tr: &mut TroubleshooterRunner,
+        prompt: String,
+    ) -> anyhow::Result<String> {
+        if let CheckValueInternal::Value(s) = &self.original {
+            return Ok(s.to_string());
+        };
+
+        let lock = self.internal.lock();
+        let mut internal_ref = match lock {
+            Ok(r) => r,
+            Err(_) => {
+                return resolve_value(&self.original, Some((&prompt, tr)));
+            }
+        };
+
+        if let CheckValueInternal::Value(s) = &*internal_ref {
+            return Ok(s.to_string());
+        }
+
+        let value = resolve_value(&*internal_ref, Some((&prompt, tr)))?;
+        *internal_ref = CheckValueInternal::Value(value.clone());
+
+        Ok(value)
     }
 }
 
@@ -72,14 +130,23 @@ impl FromStr for CheckValue {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == ":STDIN:" {
-            return Ok(CheckValue::Stdin);
+            return Ok(CheckValue {
+                original: CheckValueInternal::Stdin,
+                internal: Mutex::new(CheckValueInternal::Stdin).into(),
+            });
         }
 
         if s.starts_with(":FILE:") {
-            return Ok(CheckValue::File(PathBuf::from(&s[6..])));
+            return Ok(CheckValue {
+                original: CheckValueInternal::File(PathBuf::from(&s[6..])),
+                internal: Mutex::new(CheckValueInternal::File(PathBuf::from(&s[6..]))).into(),
+            });
         }
 
-        return Ok(CheckValue::Value(s.to_string()));
+        return Ok(CheckValue {
+            original: CheckValueInternal::Value(s.to_string()),
+            internal: Mutex::new(CheckValueInternal::Value(s.to_string())).into(),
+        });
     }
 }
 
