@@ -1,3 +1,6 @@
+#![feature(unwrap_infallible)]
+#![feature(never_type)]
+
 use clap::Parser;
 
 mod checks;
@@ -27,7 +30,9 @@ define_commands! {
     Tcpdump, td => commands::tcpdump::Tcpdump,
     Firewall, fw => commands::firewall::Firewall,
     Serve, s => commands::serve::Serve,
-    Zsh => commands::zsh::Zsh
+    Zsh => commands::zsh::Zsh,
+    Ssh => commands::ssh::Ssh,
+    Check => commands::check::Check,
 }
 
 #[derive(Parser, Debug)]

@@ -3,10 +3,7 @@ use nix::unistd::geteuid;
 
 use crate::{
     strvec,
-    utils::{
-        busybox::Busybox,
-        distro::{Distro, get_distro},
-    },
+    utils::{busybox::Busybox, distro::get_distro},
 };
 
 /// Add backup users to the system
@@ -30,7 +27,7 @@ impl super::Command for Useradd {
         let bb = Busybox::new()?;
 
         let sudo_group = match get_distro()? {
-            Some(Distro::Debian) => "sudo",
+            Some(d) if d.is_deb_based() => "sudo",
             _ => "wheel",
         };
 

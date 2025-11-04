@@ -8,11 +8,11 @@ use anyhow::Context;
 use crate::{pcre, utils::qx};
 
 /// Check to see if a service is currently active
-pub fn is_service_active(service: &str) -> anyhow::Result<bool> {
-    Ok(get_service_info(service)?
+pub fn is_service_active(service_info: &HashMap<String, String>) -> bool {
+    service_info
         .get("ActiveState")
         .map(|field| field == "active")
-        .unwrap_or(false))
+        .unwrap_or(false)
 }
 
 /// Pull state and configuration information about a systemd unit

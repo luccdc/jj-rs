@@ -142,7 +142,7 @@ impl super::Command for Elk {
             return Ok(());
         };
 
-        if !matches!(distro, Distro::Debian | Distro::RedHat) {
+        if !distro.is_rhel_or_deb_based() {
             eprintln!(
                 "{}",
                 "!!! ELK utilities can only be run on RHEL or Debian based distributions".red()
@@ -271,7 +271,7 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Resul
 
         println!("{}", "--- Downloading elastic packages...".green());
 
-        if *distro == Distro::Debian {
+        if distro.is_deb_based() {
             for pkg in ["elasticsearch", "logstash", "kibana"] {
                 let args = args.clone();
                 let pkg = pkg.to_string();
@@ -385,7 +385,7 @@ fn install_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result
 
     println!("{}", "--- Installing elastic packages...".green());
 
-    if *distro == Distro::Debian {
+    if distro.is_deb_based() {
         for pkg in [
             "elasticsearch",
             "logstash",
@@ -804,7 +804,7 @@ fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
 
     let mut download_threads = vec![];
 
-    if *distro == Distro::Debian {
+    if distro.is_deb_based() {
         for beat in ["auditbeat", "filebeat", "packetbeat"] {
             let args = args.clone();
             download_threads.push(thread::spawn(move || {
@@ -866,7 +866,7 @@ fn install_beats(distro: Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
     );
 
     for beat in ["auditbeat", "filebeat", "packetbeat"] {
-        if distro == Distro::Debian {
+        if distro.is_deb_based() {
             system(&format!("dpkg -i /tmp/{beat}.deb"))?;
         } else {
             system(&format!("rpm -i /tmp/{beat}.rpm"))?;

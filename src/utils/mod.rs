@@ -10,6 +10,7 @@ use anyhow::Context;
 use std::{fs::OpenOptions, path::Path, process::ExitStatus};
 
 pub mod busybox;
+pub mod checks;
 pub mod distro;
 pub mod download_container;
 pub mod nft;

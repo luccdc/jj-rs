@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod busybox;
+pub mod check;
 pub mod download_shell;
 pub mod elk;
 pub mod r#enum;
@@ -8,6 +9,7 @@ pub mod jq;
 pub mod nft;
 pub mod ports;
 pub mod serve;
+pub mod ssh;
 pub mod stat;
 pub mod tcpdump;
 pub mod tmux;
