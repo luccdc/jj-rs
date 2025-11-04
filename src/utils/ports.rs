@@ -68,7 +68,7 @@ impl From<u8> for SocketState {
 
 /// Represents fields selected from `/proc/net/tcp` and `/proc/net/udp`
 ///
-/// https://www.kernel.org/doc/Documentation/networking/proc_net_tcp.txt
+/// <https://www.kernel.org/doc/Documentation/networking/proc_net_tcp.txt>
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SocketRecord {

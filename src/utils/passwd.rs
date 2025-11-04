@@ -21,10 +21,11 @@ pub struct Passwd {
 /// # use jj_rs::utils::passwd::load_users;
 /// # fn test_load_users() -> anyhow::Result<()> {
 /// // load all users
-/// let users = load_users(None)?;
+/// let users = load_users::<_, &str>(None)?;
 /// for user in users {
 ///     println!("Found user {}: {}", user.uid, &user.user);
 /// }
+/// # Ok(())
 /// # }
 /// # test_load_users().expect("could not load root");
 /// ```
@@ -33,12 +34,13 @@ pub struct Passwd {
 /// # use jj_rs::utils::passwd::load_users;
 /// # fn test_load_users() -> anyhow::Result<()> {
 /// // load a specific user
-/// let root = load_users("root")?[0];
+/// let root = &load_users("root")?[0];
 /// assert_eq!(&root.user, "root");
 /// assert_eq!(root.uid, 0);
-/// let root = load_users("root")?[0];
+/// let root = &load_users("root")?[0];
 /// assert_eq!(&root.user, "root");
 /// assert_eq!(root.uid, 0);
+/// # Ok(())
 /// # }
 /// # test_load_users().expect("could not load root");
 /// ```

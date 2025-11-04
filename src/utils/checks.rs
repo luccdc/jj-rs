@@ -1,10 +1,85 @@
 //! Checks are used to assist with debugging a service, and for identifying
 //! when the scored services goes down hopefully before it gets scored as going down
+//!
+//! The basic idea surrounds a Troubleshooter and its Checks. A Troubleshooter will
+//! require configuration to make, so it is defined as a struct with the required
+//! configuration options. This will usually derive both [`serde::Deserialize`] and
+//! [`clap::Parser`] so that it can be used by the `jj-rs check` command as well as
+//! the the daemon reading from a configuration file. As an example, here is a
+//! configuration for an SSH troubleshooter
+//!
+//! ```
+//! # use jj_rs::utils::checks::CheckValue;
+//! use clap::Parser;
+//! use serde::Deserialize;
+//!
+//! #[derive(Parser, Deserialize)]
+//! pub struct SshTroubleshooter {
+//!     #[arg(long, short, default_value_t = Default::default())]
+//!     password: CheckValue
+//! }
+//! ```
+//!
+//! This SshTroubleshooter can then implement [`Troubleshooter`], which requires
+//! implementing a function that returns a list of checks. For simple checks,
+//! use [`check_fn`] like below:
+//!
+//! ```
+//! # use jj_rs::utils::checks::{CheckValue, Troubleshooter, check_fn, CheckStep, CheckResult, TroubleshooterRunner};
+//! # use clap::Parser;
+//! # use serde::Deserialize;
+//! # #[derive(Parser, Deserialize)]
+//! # pub struct SshTroubleshooter {
+//! #     #[arg(long, short, default_value_t = Default::default())]
+//! #     password: CheckValue
+//! # }
+//! use serde_json::json;
+//!
+//! fn check_service_is_up() -> anyhow::Result<()> { unimplemented!() }
+//! fn check_login(password: String) -> anyhow::Result<()> { unimplemented!() }
+//!
+//! impl Troubleshooter for SshTroubleshooter {
+//!     fn checks<'a>(&'a self) -> anyhow::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
+//!         Ok(vec![
+//!             check_fn("Check systemd service", |_| {
+//!                 match check_service_is_up() {
+//!                     Ok(_) => Ok(CheckResult::succeed(
+//!                         "systemd service is active",
+//!                         json!(null)
+//!                     )),
+//!                     Err(e) => Ok(CheckResult::fail(
+//!                         format!("systemd service is not active: {e}"),
+//!                         json!(null)
+//!                     ))
+//!                 }
+//!             }),
+//!             check_fn("Check login", |tr| {
+//!                 let pass = self
+//!                     .password
+//!                     .clone()
+//!                     .resolve_prompt(tr, "Enter password to sign into SSH with: ")?;
+//!
+//!                 match check_login(pass) {
+//!                     Ok(_) => Ok(CheckResult::succeed(
+//!                         "login succeeded",
+//!                         json!(null)
+//!                     )),
+//!                     Err(e) => Ok(CheckResult::fail(
+//!                         format!("login failed: {e}"),
+//!                         json!(null)
+//!                     ))
+//!                 }
+//!             })
+//!         ])
+//!     }
+//! }
+//! ```
+//!
+//! See [`check_fns`] for more check utility functions
 
 use std::{
     fmt,
     io::{BufRead, Write},
-    marker::PhantomData,
     ops::BitAndAssign,
     path::PathBuf,
     str::FromStr,
@@ -15,16 +90,81 @@ use chrono::prelude::*;
 use colored::Colorize;
 use serde::{Deserialize, de::Visitor};
 
+pub mod check_fns;
+pub use check_fns::*;
+
 /// Represents a value that can be used as a richer parameter type
-/// than just String for checks. This enum provides the [`resolve_value`]
-/// and [`resolve_prompt`] functions, which when called allows for collapsing
-/// this to a String. It allows the operator to specify :STDIN:, :FILE:/path,
-/// or any other value and resolve it by either prompting the operator, reading
+/// than just String for checks. This struct provides the
+/// [`CheckValue::resolve_value`] and [`CheckValue::resolve_prompt`]
+/// functions, which when called allows for collapsing this to a String.
+/// It allows the operator to specify `:STDIN:`, `:FILE:/path`, or any other
+/// value and resolve it by either prompting the operator, reading
 /// a file path, or using the value as it is provided
+///
+/// It can be used directly as a part of a Troubleshooter as an option, e.g.:
+///
+/// ```no_run
+/// # use jj_rs::utils::checks::CheckValue;
+/// use clap::Parser;
+/// use serde::Deserialize;
+/// #[derive(Parser, Deserialize, Debug)]
+/// pub struct SshTroubleshooter {
+///     #[arg(short, long)]
+///     password: CheckValue
+/// }
+/// ```
+///
+/// This will allow specifying a value in a config file, such as the following:
+///
+/// ```toml
+/// [tarpit.ssh]
+/// password = ":STDIN:"
+/// ```
+///
+/// Or as an argument to a check:
+///
+/// ```bash
+/// jj-rs check ssh -p :FILE:/var/password
+/// ```
+///
+/// Then, in source code you can use the following:
+///
+/// ```no_run
+/// # use jj_rs::utils::checks::{CheckValue, TroubleshooterRunner};
+/// # struct SshTs { password: CheckValue }
+/// # impl SshTs { fn dummy_check(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<()> {
+/// let pass = self.password
+///     .clone()
+///     .resolve_prompt(tr, "Enter a password to sign into the SSH server with: ")?;
+/// # Ok(())
+/// # } }
+/// ```
 #[derive(Debug, Clone)]
 pub struct CheckValue {
     original: CheckValueInternal,
     internal: Arc<Mutex<CheckValueInternal>>,
+}
+
+impl fmt::Display for CheckValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.original {
+            CheckValueInternal::File(p) => {
+                write!(f, ":FILE:{}", p.display())
+            }
+            CheckValueInternal::Stdin => {
+                write!(f, ":STDIN:")
+            }
+            CheckValueInternal::Value(_) => {
+                write!(f, ":REDACTED:")
+            }
+        }
+    }
+}
+
+impl Default for CheckValue {
+    fn default() -> Self {
+        Self::stdin()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +206,7 @@ fn resolve_value(
 }
 
 impl CheckValue {
+    /// Provide a default value of "read from stdin"
     pub fn stdin() -> Self {
         Self {
             original: CheckValueInternal::Stdin,
@@ -73,8 +214,35 @@ impl CheckValue {
         }
     }
 
+    /// Provide a default value
+    #[allow(dead_code)] // to be used in later checks
+    pub fn string(s: String) -> Self {
+        Self {
+            original: CheckValueInternal::Value(s.clone()),
+            internal: Arc::new(Mutex::new(CheckValueInternal::Value(s))),
+        }
+    }
+
+    /// Provide a default value of "read from the specified file"
+    #[allow(dead_code)] // to be used in later checks
+    pub fn file(p: PathBuf) -> Self {
+        Self {
+            original: CheckValueInternal::File(p.clone()),
+            internal: Arc::new(Mutex::new(CheckValueInternal::File(p))),
+        }
+    }
+
+    /// Takes the current value and reduces it to a string
+    ///
+    /// - If the internal value represents `:STDIN:`, it reads from stdin
+    /// - If the internal value represents `:FILE:<PATH>`, it reads from the file path
+    /// - Otherwise, it just reads the internal value
     #[allow(dead_code)] // to be used in later checks
     pub fn resolve_value(&self) -> anyhow::Result<String> {
+        // Yes, this function returns a Result, and yes it deals with Mutexes
+        // However, the results are actually based on file system and TTY
+        // I/O; if the Mutex fails to lock, this function will resort to using
+        // the original input provided
         if let CheckValueInternal::Value(s) = &self.original {
             return Ok(s.to_string());
         };
@@ -97,11 +265,21 @@ impl CheckValue {
         Ok(value)
     }
 
-    pub fn resolve_prompt(
+    /// Takes the current value and reduces it to a string
+    ///
+    /// - If the internal value represents `:STDIN:`, it reads from stdin after
+    /// prompting the user
+    /// - If the internal value represents `:FILE:<PATH>`, it reads from the file path
+    /// - Otherwise, it just reads the internal value
+    pub fn resolve_prompt<I: AsRef<str>>(
         &self,
         tr: &mut TroubleshooterRunner,
-        prompt: String,
+        prompt: I,
     ) -> anyhow::Result<String> {
+        // Yes, this function returns a Result, and yes it deals with Mutexes
+        // However, the results are actually based on file system and TTY
+        // I/O; if the Mutex fails to lock, this function will resort to using
+        // the original input provided
         if let CheckValueInternal::Value(s) = &self.original {
             return Ok(s.to_string());
         };
@@ -110,7 +288,7 @@ impl CheckValue {
         let mut internal_ref = match lock {
             Ok(r) => r,
             Err(_) => {
-                return resolve_value(&self.original, Some((&prompt, tr)));
+                return resolve_value(&self.original, Some((prompt.as_ref(), tr)));
             }
         };
 
@@ -118,7 +296,7 @@ impl CheckValue {
             return Ok(s.to_string());
         }
 
-        let value = resolve_value(&*internal_ref, Some((&prompt, tr)))?;
+        let value = resolve_value(&*internal_ref, Some((prompt.as_ref(), tr)))?;
         *internal_ref = CheckValueInternal::Value(value.clone());
 
         Ok(value)
@@ -150,6 +328,8 @@ impl FromStr for CheckValue {
     }
 }
 
+// Implemented to allow CheckValue to be used directly as a deserialized value in
+// a Troubleshooter
 impl<'de> Deserialize<'de> for CheckValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -183,6 +363,7 @@ impl<'de> Deserialize<'de> for CheckValue {
     }
 }
 
+/// Represents whether a check failed, succeeded, or was not run
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum CheckResultType {
     Success,
@@ -211,6 +392,8 @@ impl BitAndAssign for CheckResultType {
     }
 }
 
+/// Contains data about the results of running a check, including
+/// when it happeend, what happened, a brief summary, and any extra useful information
 pub struct CheckResult {
     #[allow(dead_code)] // to be used for the daemon
     timestamp: DateTime<Utc>,
@@ -220,77 +403,69 @@ pub struct CheckResult {
 }
 
 impl CheckResult {
-    pub fn fail(log_item: String, extra_details: serde_json::Value) -> Self {
+    /// Utility function to quickly fail a check
+    pub fn fail<I: Into<String>>(log_item: I, extra_details: serde_json::Value) -> Self {
         Self {
             timestamp: Utc::now(),
             result_type: CheckResultType::Failure,
-            log_item,
+            log_item: log_item.into(),
             extra_details,
         }
     }
 
-    pub fn not_run(log_item: String, extra_details: serde_json::Value) -> Self {
+    /// Utility function to quickly mark a check as not being run
+    pub fn not_run<I: Into<String>>(log_item: I, extra_details: serde_json::Value) -> Self {
         Self {
             timestamp: Utc::now(),
             result_type: CheckResultType::NotRun,
-            log_item,
+            log_item: log_item.into(),
             extra_details,
         }
     }
 
-    pub fn succeed(log_item: String, extra_details: serde_json::Value) -> Self {
+    /// Utility function to quickly mark a check as successful
+    pub fn succeed<I: Into<String>>(log_item: I, extra_details: serde_json::Value) -> Self {
         Self {
             timestamp: Utc::now(),
             result_type: CheckResultType::Success,
-            log_item,
+            log_item: log_item.into(),
             extra_details,
         }
     }
 }
 
+/// Marks a struct as a valid Troubleshooter
+///
+/// Merely used to return a list of checks that constitute a troubleshooting process
+///
+/// See [`crate::utils::checks`] for a description of how to make use of this trait
 pub trait Troubleshooter: for<'de> Deserialize<'de> {
-    fn checks<'a>(&'a self) -> Vec<Box<dyn CheckStep<'a> + 'a>>;
+    fn checks<'a>(&'a self) -> anyhow::Result<Vec<Box<dyn CheckStep<'a> + 'a>>>;
 }
 
+/// A check step identifies a part of the troubleshooting process that could potentially
+/// identify the underlying issue with the system or service. Most checks are implemented
+/// using functions in [`check_fns`]
 pub trait CheckStep<'a> {
     fn name(&self) -> &'static str;
 
     fn run_check(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult>;
 }
 
-pub struct CheckFn<'a, F>
+impl<'a, T> CheckStep<'a> for Box<T>
 where
-    F: Fn(&mut TroubleshooterRunner) -> anyhow::Result<CheckResult> + 'a,
-{
-    name: &'static str,
-    check_fn: F,
-    _lifetime: PhantomData<&'a F>,
-}
-
-impl<'a, F> CheckStep<'a> for CheckFn<'a, F>
-where
-    F: Fn(&mut TroubleshooterRunner) -> anyhow::Result<CheckResult> + 'a,
+    T: CheckStep<'a>,
 {
     fn name(&self) -> &'static str {
-        self.name
+        T::name(self)
     }
 
     fn run_check(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        (self.check_fn)(tr)
+        T::run_check(self, tr)
     }
 }
 
-pub fn check_fn<'a, F>(name: &'static str, f: F) -> Box<CheckFn<'a, F>>
-where
-    F: Fn(&mut TroubleshooterRunner) -> anyhow::Result<CheckResult> + 'a,
-{
-    Box::new(CheckFn {
-        name,
-        check_fn: f,
-        _lifetime: PhantomData,
-    })
-}
-
+/// Holds troubleshooting settings to change behavior when running a troubleshooter later
 pub struct TroubleshooterRunner {
     show_successful_steps: bool,
     show_not_run_steps: bool,
@@ -306,8 +481,9 @@ impl TroubleshooterRunner {
         }
     }
 
+    /// Actually runs the troubleshooter specified on the CLI
     pub fn run_cli<T: Troubleshooter>(&mut self, t: T) -> anyhow::Result<CheckResultType> {
-        let checks = t.checks();
+        let checks = t.checks()?;
         let mut start = CheckResultType::NotRun;
 
         for check in checks {
