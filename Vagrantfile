@@ -2,9 +2,7 @@
 # vi: set ft=ruby :
 
 $set_environment_variables = <<SCRIPT
-tee "/etc/profile.d/myvars.sh" >/dev/null <<EOF
-export PATH="/jj/x86_64-unknown-linux-musl/debug:$PATH"
-EOF
+ln -s /jj/x86_64-unknown-linux-musl/debug/jj-rs /usr/local/bin/jj-rs
 SCRIPT
 
 Vagrant.configure("2") do |config|
