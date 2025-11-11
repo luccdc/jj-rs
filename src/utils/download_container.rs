@@ -23,7 +23,7 @@
 //! ```
 
 use std::{
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr},
     os::{fd::OwnedFd, unix::fs::PermissionsExt},
     process::Stdio,
 };
@@ -64,6 +64,8 @@ pub struct DownloadContainer {
     original_mnt_ns: OwnedFd,
     child_mnt_ns: OwnedFd,
     nft: Nft,
+    wan_ip: Ipv4Addr,
+    lan_ip: Ipv4Addr,
 }
 
 impl DownloadContainer {
@@ -278,6 +280,8 @@ impl DownloadContainer {
             child_mnt_ns,
             original_net_ns,
             original_mnt_ns,
+            wan_ip,
+            lan_ip,
         })
     }
 
@@ -315,6 +319,10 @@ impl DownloadContainer {
 
     pub fn name(&self) -> &str {
         &self.ns_name
+    }
+
+    pub fn wan_ip(&self) -> &Ipv4Addr {
+        &self.wan_ip
     }
 }
 

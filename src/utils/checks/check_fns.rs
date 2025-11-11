@@ -2,11 +2,15 @@
 //! includes building blocks for applying simple checks or applying filters
 //! to checks
 
-use std::{marker::PhantomData, net::IpAddr};
+use std::{
+    marker::PhantomData,
+    net::{IpAddr, Ipv4Addr, TcpStream},
+};
 
 use crate::utils::{
     checks::{CheckResult, CheckStep, TroubleshooterRunner},
     distro::Distro,
+    download_container::DownloadContainer,
     qx,
     systemd::{get_service_info, is_service_active},
 };
@@ -237,21 +241,66 @@ impl<'a> CheckStep<'a> for TcpConnectCheck {
     }
 
     fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        let cont = crate::utils::download_container::DownloadContainer::new(None, None)?;
-        let client = cont.run(|| std::net::TcpStream::connect((self.ip, self.port)).map(|_| ()))?;
+        if self.ip.is_loopback() {
+            let cont = DownloadContainer::new(None, None)?;
+            let client1 = cont
+                .run(|| TcpStream::connect((IpAddr::V4(*cont.wan_ip()), self.port)).map(|_| ()))?;
+            let client2 = TcpStream::connect((self.ip, self.port)).map(|_| ());
 
-        if let Err(e) = client {
-            Ok(CheckResult::fail(
-                format!("Could not connect to {}:{}", self.ip, self.port),
-                serde_json::json!({
-                    "error": format!("{e:?}")
-                }),
-            ))
+            Ok(match (client1, client2) {
+                (Ok(_), Ok(_)) => CheckResult::succeed(
+                    format!(
+                        "Successfully connected to {}:{} and successfully connected to {} from download container",
+                        self.ip, self.port, self.port
+                    ),
+                    serde_json::json!(null),
+                ),
+                (Ok(_), Err(e)) => CheckResult::fail(
+                    format!(
+                        "Failed to connect to {}:{}, but successfully connected to port {} from the download shell",
+                        self.ip, self.port, self.port
+                    ),
+                    serde_json::json!({
+                        "local_connection_error": format!("{e:?}")
+                    }),
+                ),
+                (Err(e), Ok(_)) => CheckResult::fail(
+                    format!(
+                        "Successfully connected to {}:{}, but failed to connect to port {} from the download container",
+                        self.ip, self.port, self.port
+                    ),
+                    serde_json::json!({
+                        "container_connection_error": format!("{e:?}")
+                    }),
+                ),
+                (Err(e1), Err(e2)) => CheckResult::fail(
+                    format!(
+                        "Failed to connect to {}:{} and failed from the download container",
+                        self.ip, self.port
+                    ),
+                    serde_json::json!({
+                        "container_connection_error": format!("{e1:?}"),
+                        "local_connection_error": format!("{e2:?}"),
+                    }),
+                ),
+            })
         } else {
-            Ok(CheckResult::succeed(
-                format!("Successfully connected to {}:{}", self.ip, self.port),
-                serde_json::json!(null),
-            ))
+            let cont = DownloadContainer::new(None, None)?;
+            let client = cont.run(|| TcpStream::connect((self.ip, self.port)).map(|_| ()))?;
+
+            if let Err(e) = client {
+                Ok(CheckResult::fail(
+                    format!("Could not connect to {}:{}", self.ip, self.port),
+                    serde_json::json!({
+                        "error": format!("{e:?}")
+                    }),
+                ))
+            } else {
+                Ok(CheckResult::succeed(
+                    format!("Successfully connected to {}:{}", self.ip, self.port),
+                    serde_json::json!(null),
+                ))
+            }
         }
     }
 }
