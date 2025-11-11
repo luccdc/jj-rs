@@ -178,3 +178,49 @@ pub fn systemd_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<
         service_name: name.into(),
     })
 }
+
+#[doc(hidden)]
+pub struct OpenrcServiceCheck {
+    service_name: String,
+}
+
+impl<'a> CheckStep<'a> for OpenrcServiceCheck {
+    fn name(&self) -> &'static str {
+        "Check openrc service"
+    }
+
+    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+        if qx("which rc-service 2>/dev/nul")?.1.trim().is_empty() {
+            return Ok(CheckResult::not_run(
+                "`rc-service` not found on host",
+                serde_json::json!(null),
+            ));
+        }
+
+        let res = qx(&format!("rc-service {} status", &self.service_name))?.1;
+
+        if res.contains("status: started") {
+            Ok(CheckResult::succeed(
+                "OpenRC service is active",
+                serde_json::json!(null),
+            ))
+        } else {
+            Ok(CheckResult::fail(
+                "OpenRC service is not active",
+                serde_json::json!(null),
+            ))
+        }
+    }
+}
+
+/// A simple check that makes sure an OpenRC service is up
+///
+/// ```
+/// # use jj_rs::utils::checks::openrc_service_check;
+/// openrc_service_check("ssh");
+/// ```
+pub fn openrc_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
+    Box::new(OpenrcServiceCheck {
+        service_name: name.into(),
+    })
+}

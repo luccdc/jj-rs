@@ -9,7 +9,7 @@ use crate::utils::distro::get_distro;
 
 use super::{
     CheckFilterResult, CheckResult, CheckValue, Troubleshooter, TroubleshooterRunner, check_fn,
-    check_fns::systemd_service_check, filter_check,
+    filter_check, openrc_service_check, systemd_service_check,
 };
 
 #[derive(Parser, Deserialize, Debug)]
@@ -50,6 +50,15 @@ impl Troubleshooter for SshTroubleshooter {
                     }
                 },
             ),
+            filter_check(openrc_service_check("sshd"), |_| {
+                if self.host.is_some() && !self.local {
+                    Ok(CheckFilterResult::NoRun(
+                        "Cannot check openrc service on remote host".to_string(),
+                    ))
+                } else {
+                    Ok(CheckFilterResult::Run)
+                }
+            }),
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
         ])
     }
