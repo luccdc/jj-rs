@@ -109,6 +109,10 @@ impl QuickSetup {
         }
         writeln!(ob)?;
 
+        writeln!(
+            ob,
+            "        icmp type {{ echo-request, echo-reply }} ct state new accept"
+        );
         writeln!(ob, "        ct state established,related accept")?;
         writeln!(ob, r#"        log prefix "inbound-drop: " drop"#)?;
         writeln!(ob, "    }}\n")?;
