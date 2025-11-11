@@ -237,7 +237,7 @@ impl DownloadContainer {
         match &sneaky_ip {
             Some(ip) => {
                 nft.exec(
-                    format!("add rule {ns_name} postrouting ip saddr {lan_ip} snat to {ip}"),
+                    format!("add rule inet {ns_name} postrouting ip saddr {lan_ip} snat to {ip}"),
                     None,
                 )
                 .context("Could not add rule to snat to sneaky IP")?;
@@ -249,6 +249,15 @@ impl DownloadContainer {
                     "1",
                 )
                 .context("Could not enable proxy arp")?;
+
+                bb.execute(&[
+                    "ip",
+                    "route",
+                    "add",
+                    &format!("{ip}/32"),
+                    "dev",
+                    &format!("{ns_name}.0"),
+                ])?;
             }
             None => {
                 nft.exec(

@@ -1,19 +1,29 @@
 use std::{
     fs::OpenOptions,
     io::{Write, stdout},
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr},
     path::PathBuf,
+    process::Stdio,
 };
 
 use clap::{Parser, Subcommand};
 
-use crate::utils::ports::{SocketState, SocketType, parse_ports};
+use crate::utils::{
+    busybox::Busybox,
+    nft::Nft,
+    ports::{SocketState, SocketType, parse_ports},
+};
 
 #[derive(Subcommand, Debug)]
 enum FirewallCmd {
     /// Generate an NFT configuration file based on the current open ports
     #[command(visible_alias = "qs")]
     QuickSetup(QuickSetup),
+
+    /// Configure the firewall with NFT to perform NAT redirection from one
+    /// IP to another
+    #[command(visible_alias = "nr")]
+    NatRedirect(NatRedirect),
 }
 
 /// Firewall management
@@ -28,6 +38,7 @@ impl super::Command for Firewall {
     fn execute(self) -> anyhow::Result<()> {
         match self.cmd {
             FirewallCmd::QuickSetup(qs) => qs.execute(),
+            FirewallCmd::NatRedirect(nr) => nr.execute(),
         }
     }
 }
@@ -167,6 +178,62 @@ impl QuickSetup {
         writeln!(ob, r#"        log prefix "outbound-drop: " reject"#)?;
         writeln!(ob, "    }}")?;
         writeln!(ob, "}}")?;
+
+        Ok(())
+    }
+}
+
+#[derive(Parser, Debug)]
+struct NatRedirect {
+    /// Specify the IP address to listen on and perform NAT for
+    #[arg(short, long)]
+    listen_ip: IpAddr,
+
+    /// Specify the target IP address to send traffic to
+    #[arg(short, long)]
+    target_ip: IpAddr,
+}
+
+impl NatRedirect {
+    fn execute(self) -> anyhow::Result<()> {
+        let nft = Nft::new()?;
+
+        let NatRedirect {
+            listen_ip,
+            target_ip,
+        } = self;
+
+        let tbl_name = format!("nat_reflect_{listen_ip}_to_{target_ip}");
+
+        nft.exec(format!("delete table inet {tbl_name}"), Stdio::null())?;
+        nft.exec(format!("add table inet {tbl_name}"), Stdio::null())?;
+        nft.exec(format!("add chain inet {tbl_name} prerouting {{ type nat hook prerouting priority dstnat; policy accept; }}"), Stdio::null())?;
+        nft.exec(format!("add chain inet {tbl_name} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}"), Stdio::null())?;
+        nft.exec(
+            format!(
+                "add rule inet {tbl_name} prerouting ip daddr {listen_ip} dnat ip to {target_ip}"
+            ),
+            Stdio::null(),
+        )?;
+        nft.exec(
+            format!("add rule inet {tbl_name} postrouting ip daddr {target_ip} masquerade"),
+            Stdio::null(),
+        )?;
+
+        std::fs::write("/proc/sys/net/ipv4/conf/all/proxy_arp", "1")?;
+
+        let bb = Busybox::new()?;
+
+        bb.execute(&[
+            "ip",
+            "route",
+            "add",
+            &format!("{listen_ip}/32"),
+            "dev",
+            "lo",
+        ])?;
+
+        println!("Added NAT reflection from {listen_ip} to {target_ip}");
 
         Ok(())
     }

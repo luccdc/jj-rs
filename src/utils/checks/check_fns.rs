@@ -2,10 +2,7 @@
 //! includes building blocks for applying simple checks or applying filters
 //! to checks
 
-use std::{
-    marker::PhantomData,
-    net::{IpAddr, Ipv4Addr},
-};
+use std::{marker::PhantomData, net::IpAddr};
 
 use crate::utils::{
     checks::{CheckResult, CheckStep, TroubleshooterRunner},
@@ -240,7 +237,8 @@ impl<'a> CheckStep<'a> for TcpConnectCheck {
     }
 
     fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        let client = std::net::TcpStream::connect((self.ip, self.port));
+        let cont = crate::utils::download_container::DownloadContainer::new(None, None)?;
+        let client = cont.run(|| std::net::TcpStream::connect((self.ip, self.port)).map(|_| ()))?;
 
         if let Err(e) = client {
             Ok(CheckResult::fail(
@@ -266,10 +264,16 @@ pub fn tcp_connect_check<'a, I: Into<IpAddr>>(addr: I, port: u16) -> Box<dyn Che
     })
 }
 
+pub enum TcpdumpConnectionTest {
+    Tcp,
+    Udp { prompt: Vec<u8> },
+}
+
 #[doc(hidden)]
 pub struct TcpdumpCheck {
     ip: IpAddr,
     port: u16,
+    connection_test: TcpdumpConnectionTest,
 }
 
 impl<'a> CheckStep<'a> for TcpdumpCheck {
@@ -286,12 +290,14 @@ impl<'a> CheckStep<'a> for TcpdumpCheck {
 /// where NAT reflection is being used, to allow traffic to leave and go to a specific IP but have
 /// the server reflect the traffic back to the local system. Can be considered a much more advanced
 /// version of the TcpConnectCheck
-pub fn tcpdump_check<'a, I: Into<Ipv4Addr>>(
+pub fn tcpdump_check<'a, I: Into<IpAddr>>(
     addr: IpAddr,
     port: u16,
+    connection_test: TcpdumpConnectionTest,
 ) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(TcpdumpCheck {
         ip: addr.into(),
         port,
+        connection_test,
     })
 }

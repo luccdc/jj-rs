@@ -8,8 +8,9 @@ use serde_json::value::Value;
 use crate::utils::distro::get_distro;
 
 use super::{
-    CheckFilterResult, CheckResult, CheckValue, Troubleshooter, TroubleshooterRunner, check_fn,
-    filter_check, openrc_service_check, systemd_service_check, tcp_connect_check,
+    CheckFilterResult, CheckResult, CheckValue, TcpdumpConnectionTest, Troubleshooter,
+    TroubleshooterRunner, check_fn, filter_check, openrc_service_check, systemd_service_check,
+    tcp_connect_check, tcpdump_check,
 };
 
 #[derive(Parser, Deserialize, Debug)]
@@ -60,6 +61,24 @@ impl Troubleshooter for SshTroubleshooter {
                 }
             }),
             tcp_connect_check(self.get_host(), self.port.unwrap_or(22)),
+            filter_check(
+                tcpdump_check::<IpAddr>(
+                    self.get_host(),
+                    self.port.unwrap_or(22),
+                    TcpdumpConnectionTest::Tcp,
+                ),
+                |_| {
+                    Ok(match (self.local, self.host.as_ref()) {
+                        (true, Some(_)) => CheckFilterResult::Run,
+                        (false, Some(_)) => CheckFilterResult::NoRun(
+                            "Cannot check tcpdump when packets do not return to system via NAT reflection".to_string()
+                        ),
+                        (_, None) => CheckFilterResult::NoRun(
+                            "Cannot check tcpdump on localhost".to_string()
+                        )
+                    })
+                },
+            ),
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
         ])
     }
@@ -68,7 +87,7 @@ impl Troubleshooter for SshTroubleshooter {
 impl SshTroubleshooter {
     fn get_host(&self) -> IpAddr {
         self.host
-            .unwrap_or(Ipv4Addr::from_octets([127, 0, 0, 1]).into())
+            .unwrap_or(IpAddr::V4(Ipv4Addr::from_octets([127, 0, 0, 1])))
     }
 
     fn try_remote_login(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
