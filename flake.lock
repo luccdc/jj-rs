@@ -57,6 +57,22 @@
         "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64"
       }
     },
+    "libpcap-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1762794404,
+        "narHash": "sha256-r5uGGgXW24GrdT7m+w919cd9usOl2hLz4j2Yxkx6cGg=",
+        "ref": "refs/heads/master",
+        "rev": "c15e2e79023e32d0f4ca7be43236534fc651909e",
+        "revCount": 6792,
+        "type": "git",
+        "url": "https://github.com/the-tcpdump-group/libpcap"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://github.com/the-tcpdump-group/libpcap"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1761373498,
@@ -94,6 +110,7 @@
         "crane": "crane",
         "flake-parts": "flake-parts",
         "jq": "jq",
+        "libpcap-src": "libpcap-src",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"
       }

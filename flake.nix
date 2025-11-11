@@ -21,9 +21,14 @@
         "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64";
       flake = false;
     };
+    libpcap-src = {
+      url = "git+https://github.com/the-tcpdump-group/libpcap";
+      flake = false;
+    };
   };
 
-  outputs = inputs@{ self, flake-parts, crane, rust-overlay, busybox, jq, ... }:
+  outputs = inputs@{ self, flake-parts, crane, rust-overlay, busybox, jq
+    , libpcap-src, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [ ];
 
@@ -36,6 +41,40 @@
             overlays = [ (import rust-overlay) ];
             config.allowUnfreePredicate = pkg:
               builtins.elem (lib.getName pkg) [ "vagrant" ];
+          };
+
+          libpcap-static = pkgs.stdenv.mkDerivation {
+            name = "libpcap-static";
+
+            buildInputs = with pkgs; [ clang automake bison cmake flex musl ];
+
+            src = libpcap-src;
+
+            configurePhase = ''
+              cmake \
+                  -DCMAKE_BUILD_TYPE=MinSizeRel \
+                  -DBUILD_SHARED_LIBS=OFF \
+                  -DDISABLE_BLUETOOTH=ON \
+                  -DDISABLE_DAG=ON \
+                  -DDISABLE_DBUS=ON \
+                  -DDISABLE_DPDK=ON \
+                  -DDISABLE_NETMAP=ON \
+                  -DDISABLE_RDMA=ON \
+                  -DDISABLE_LINUX_USBMON=ON \
+                  -DDISABLE_SNF=ON \
+                  -DPCAP_TYPE=linux \
+                  .
+            '';
+
+            buildPhase = ''
+              cmake --build . --target pcap_static
+            '';
+
+            installPhase = ''
+              mkdir -p $out/lib
+
+              cp libpcap.a $out/lib
+            '';
           };
 
           pkgsStatic = pkgs.pkgsStatic;
@@ -60,6 +99,8 @@
 
             cargo-expand
           ];
+
+          libraries = [ libpcap-static ];
 
           gzip-binary = name: binary:
             pkgs.runCommand "${name}-gzipped" { } ''
@@ -90,6 +131,9 @@
 
           commonArgs = {
             inherit src;
+
+            buildInputs = libraries;
+            nativeBuildInputs = libraries;
 
             CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";

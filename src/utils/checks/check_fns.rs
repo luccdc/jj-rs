@@ -2,7 +2,10 @@
 //! includes building blocks for applying simple checks or applying filters
 //! to checks
 
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    net::{IpAddr, Ipv4Addr},
+};
 
 use crate::utils::{
     checks::{CheckResult, CheckStep, TroubleshooterRunner},
@@ -190,7 +193,7 @@ impl<'a> CheckStep<'a> for OpenrcServiceCheck {
     }
 
     fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        if qx("which rc-service 2>/dev/nul")?.1.trim().is_empty() {
+        if qx("which rc-service 2>/dev/null")?.1.trim().is_empty() {
             return Ok(CheckResult::not_run(
                 "`rc-service` not found on host",
                 serde_json::json!(null),
@@ -222,5 +225,73 @@ impl<'a> CheckStep<'a> for OpenrcServiceCheck {
 pub fn openrc_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(OpenrcServiceCheck {
         service_name: name.into(),
+    })
+}
+
+#[doc(hidden)]
+pub struct TcpConnectCheck {
+    ip: IpAddr,
+    port: u16,
+}
+
+impl<'a> CheckStep<'a> for TcpConnectCheck {
+    fn name(&self) -> &'static str {
+        "Check to see if the port is accessible for TCP"
+    }
+
+    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+        let client = std::net::TcpStream::connect((self.ip, self.port));
+
+        if let Err(e) = client {
+            Ok(CheckResult::fail(
+                format!("Could not connect to {}:{}", self.ip, self.port),
+                serde_json::json!({
+                    "error": format!("{e:?}")
+                }),
+            ))
+        } else {
+            Ok(CheckResult::succeed(
+                format!("Successfully connected to {}:{}", self.ip, self.port),
+                serde_json::json!(null),
+            ))
+        }
+    }
+}
+
+/// A simple check that sees if a service port is open and responding to TCP requests
+pub fn tcp_connect_check<'a, I: Into<IpAddr>>(addr: I, port: u16) -> Box<dyn CheckStep<'a> + 'a> {
+    Box::new(TcpConnectCheck {
+        ip: addr.into(),
+        port,
+    })
+}
+
+#[doc(hidden)]
+pub struct TcpdumpCheck {
+    ip: IpAddr,
+    port: u16,
+}
+
+impl<'a> CheckStep<'a> for TcpdumpCheck {
+    fn name(&self) -> &'static str {
+        "Check tcpdump to verify the firewall is working"
+    }
+
+    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+        todo!()
+    }
+}
+
+/// A check that tries to see if packets are able to leave and come back. Only works for checks
+/// where NAT reflection is being used, to allow traffic to leave and go to a specific IP but have
+/// the server reflect the traffic back to the local system. Can be considered a much more advanced
+/// version of the TcpConnectCheck
+pub fn tcpdump_check<'a, I: Into<Ipv4Addr>>(
+    addr: IpAddr,
+    port: u16,
+) -> Box<dyn CheckStep<'a> + 'a> {
+    Box::new(TcpdumpCheck {
+        ip: addr.into(),
+        port,
     })
 }

@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 
 use anyhow::Context;
 use clap::Parser;
@@ -9,13 +9,13 @@ use crate::utils::distro::get_distro;
 
 use super::{
     CheckFilterResult, CheckResult, CheckValue, Troubleshooter, TroubleshooterRunner, check_fn,
-    filter_check, openrc_service_check, systemd_service_check,
+    filter_check, openrc_service_check, systemd_service_check, tcp_connect_check,
 };
 
 #[derive(Parser, Deserialize, Debug)]
 pub struct SshTroubleshooter {
     #[arg(long, short = 'H')]
-    host: Option<Ipv4Addr>,
+    host: Option<IpAddr>,
 
     #[arg(long, short)]
     port: Option<u16>,
@@ -59,14 +59,20 @@ impl Troubleshooter for SshTroubleshooter {
                     Ok(CheckFilterResult::Run)
                 }
             }),
+            tcp_connect_check(self.get_host(), self.port.unwrap_or(22)),
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
         ])
     }
 }
 
 impl SshTroubleshooter {
+    fn get_host(&self) -> IpAddr {
+        self.host
+            .unwrap_or(Ipv4Addr::from_octets([127, 0, 0, 1]).into())
+    }
+
     fn try_remote_login(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        let _host = self.host.unwrap_or(Ipv4Addr::from_octets([127, 0, 0, 1]));
+        let _host = self.get_host();
         let _port = self.port.unwrap_or(22);
         let _user = self.user.clone().unwrap_or("root".to_string());
         let _pass = self
