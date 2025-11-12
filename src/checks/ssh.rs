@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 
 use anyhow::Context;
 use clap::Parser;
@@ -8,18 +8,17 @@ use serde_json::value::Value;
 use crate::utils::distro::get_distro;
 
 use super::{
-    CheckFilterResult, CheckResult, CheckValue, TcpdumpConnectionTest, Troubleshooter,
-    TroubleshooterRunner, check_fn, filter_check, openrc_service_check, systemd_service_check,
-    tcp_connect_check, tcpdump_check,
+    CheckResult, CheckValue, TcpdumpProtocol, Troubleshooter, TroubleshooterRunner, check_fn,
+    filter_check, openrc_service_check, systemd_service_check, tcp_connect_check, tcpdump_check,
 };
 
 #[derive(Parser, Deserialize, Debug)]
 pub struct SshTroubleshooter {
     #[arg(long, short = 'H')]
-    host: Option<IpAddr>,
+    host: Option<Ipv4Addr>,
 
-    #[arg(long, short)]
-    port: Option<u16>,
+    #[arg(long, short, default_value_t = 22)]
+    port: u16,
 
     #[arg(long, short)]
     user: Option<String>,
@@ -41,43 +40,21 @@ impl Troubleshooter for SshTroubleshooter {
                     Some(d) if d.is_deb_based() => "ssh",
                     _ => "sshd",
                 }),
-                |_| {
-                    if self.host.is_some() && !self.local {
-                        Ok(CheckFilterResult::NoRun(
-                            "Cannot check systemd service on remote host".to_string(),
-                        ))
-                    } else {
-                        Ok(CheckFilterResult::Run)
-                    }
-                },
+                self.host.is_none() || self.local,
+                "Cannot check systemd service on remote host",
             ),
-            filter_check(openrc_service_check("sshd"), |_| {
-                if self.host.is_some() && !self.local {
-                    Ok(CheckFilterResult::NoRun(
-                        "Cannot check openrc service on remote host".to_string(),
-                    ))
-                } else {
-                    Ok(CheckFilterResult::Run)
-                }
-            }),
-            tcp_connect_check(self.get_host(), self.port.unwrap_or(22)),
             filter_check(
-                tcpdump_check::<IpAddr>(
-                    self.get_host(),
-                    self.port.unwrap_or(22),
-                    TcpdumpConnectionTest::Tcp,
-                ),
-                |_| {
-                    Ok(match (self.local, self.host.as_ref()) {
-                        (true, Some(_)) => CheckFilterResult::Run,
-                        (false, Some(_)) => CheckFilterResult::NoRun(
-                            "Cannot check tcpdump when packets do not return to system via NAT reflection".to_string()
-                        ),
-                        (_, None) => CheckFilterResult::NoRun(
-                            "Cannot check tcpdump on localhost".to_string()
-                        )
-                    })
-                },
+                openrc_service_check("sshd"),
+                self.host.is_none() || self.local,
+                "Cannot check openrc service on remote host",
+            ),
+            tcp_connect_check(self.get_host(), self.port),
+            tcpdump_check(
+                self.get_host(),
+                self.port,
+                TcpdumpProtocol::Tcp,
+                b"openssh".to_vec(),
+                self.local,
             ),
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
         ])
@@ -85,14 +62,13 @@ impl Troubleshooter for SshTroubleshooter {
 }
 
 impl SshTroubleshooter {
-    fn get_host(&self) -> IpAddr {
-        self.host
-            .unwrap_or(IpAddr::V4(Ipv4Addr::from_octets([127, 0, 0, 1])))
+    fn get_host(&self) -> Ipv4Addr {
+        self.host.unwrap_or(Ipv4Addr::from_octets([127, 0, 0, 1]))
     }
 
     fn try_remote_login(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         let _host = self.get_host();
-        let _port = self.port.unwrap_or(22);
+        let _port = self.port;
         let _user = self.user.clone().unwrap_or("root".to_string());
         let _pass = self
             .password

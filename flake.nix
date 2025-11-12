@@ -191,7 +191,7 @@
           devShells.default = craneLib.devShell ({
             name = "jj";
 
-            packages = devShellTools;
+            packages = devShellTools ++ libraries;
 
             CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";

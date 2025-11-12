@@ -558,6 +558,22 @@ impl TroubleshooterRunner {
             }
         }
 
+        if !self.has_rendered_newline_for_step {
+            print!("\r\x1B[2K");
+        }
+
+        match start {
+            CheckResultType::Failure => {
+                println!("{}", "Some troubleshoot steps failed".red());
+            }
+            CheckResultType::NotRun => {
+                println!("{}", "No troubleshooting steps were run".cyan());
+            }
+            CheckResultType::Success => {
+                println!("{}", "Service appears to be up!".green());
+            }
+        }
+
         Ok(start)
     }
 }
@@ -594,6 +610,29 @@ fn render_extra_details(depth: usize, obj: &serde_json::Value) {
                 println!(",");
             }
             print!("{:depth$}}}", "");
+        }
+    }
+}
+
+/// Utility trait to convert things into a CheckResult but taking a parameter
+/// Mostly used to convert Results into CheckResults
+pub trait IntoCheckResult {
+    fn into_check_result<I: Into<String>>(self, a: I) -> CheckResult;
+}
+
+impl<E> IntoCheckResult for Result<CheckResult, E>
+where
+    E: std::fmt::Debug,
+{
+    fn into_check_result<I: Into<String>>(self, a: I) -> CheckResult {
+        match self {
+            Ok(v) => v,
+            Err(e) => CheckResult::fail(
+                a,
+                serde_json::json!({
+                    "error": format!("{e:?}")
+                }),
+            ),
         }
     }
 }
