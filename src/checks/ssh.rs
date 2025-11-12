@@ -48,7 +48,7 @@ impl Troubleshooter for SshTroubleshooter {
                 self.host.is_none() || self.local,
                 "Cannot check openrc service on remote host",
             ),
-            tcp_connect_check(self.get_host(), self.port),
+            // tcp_connect_check(self.get_host(), self.port),
             tcpdump_check(
                 self.get_host(),
                 self.port,

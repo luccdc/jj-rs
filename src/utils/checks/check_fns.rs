@@ -591,13 +591,9 @@ impl TcpdumpCheck {
             ..self.clone()
         };
 
-        match check.check_remote().await {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                cont.leave()?;
-                Err(e)
-            }
-        }
+        let v = check.check_remote().await;
+        cont.leave()?;
+        v
     }
 
     async fn check_remote(&self) -> anyhow::Result<CheckResult> {
