@@ -597,3 +597,26 @@ fn render_extra_details(depth: usize, obj: &serde_json::Value) {
         }
     }
 }
+
+/// Utility trait to convert things into a CheckResult but taking a parameter
+/// Mostly used to convert Results into CheckResults
+pub trait IntoCheckResult {
+    fn into_check_result<I: Into<String>>(self, a: I) -> CheckResult;
+}
+
+impl<E> IntoCheckResult for Result<CheckResult, E>
+where
+    E: std::fmt::Debug,
+{
+    fn into_check_result<I: Into<String>>(self, a: I) -> CheckResult {
+        match self {
+            Ok(v) => v,
+            Err(e) => CheckResult::fail(
+                a,
+                serde_json::json!({
+                    "error": format!("{e:?}")
+                }),
+            ),
+        }
+    }
+}

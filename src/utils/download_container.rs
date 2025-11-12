@@ -23,7 +23,7 @@
 //! ```
 
 use std::{
-    net::{IpAddr, Ipv4Addr},
+    net::Ipv4Addr,
     os::{fd::OwnedFd, unix::fs::PermissionsExt},
     process::Stdio,
 };
@@ -65,6 +65,7 @@ pub struct DownloadContainer {
     child_mnt_ns: OwnedFd,
     nft: Nft,
     wan_ip: Ipv4Addr,
+    #[allow(dead_code)]
     lan_ip: Ipv4Addr,
 }
 
@@ -301,28 +302,42 @@ impl DownloadContainer {
     /// # test_download_container().expect("could not run download container");
     /// ```
     pub fn run<T, F: FnOnce() -> T>(&self, f: F) -> anyhow::Result<T> {
+        unsafe { self.enter() }?;
+
+        let v = f();
+
+        self.leave()?;
+
+        Ok(v)
+    }
+
+    /// Internal functions for jumping into the environment for run. Needs to be matched
+    /// with a call to [`DownloadContainer::leave`]
+    pub unsafe fn enter(&self) -> anyhow::Result<()> {
         setns(&self.child_net_ns, CloneFlags::CLONE_NEWNET)
             .context("Could not change to child namespace to set up local networking")?;
         setns(&self.child_mnt_ns, CloneFlags::CLONE_NEWNS)
             .context("Could not change to child namespace to set up local networking")?;
 
-        let v = f();
+        Ok(())
+    }
 
+    /// Internal function for leaving the environment for run
+    pub fn leave(&self) -> anyhow::Result<()> {
         setns(&self.original_net_ns, CloneFlags::CLONE_NEWNET)
-            .context("Could not change back to host namespace")?;
-
+            .context("Could not change to child namespace to set up local networking")?;
         setns(&self.original_mnt_ns, CloneFlags::CLONE_NEWNS)
-            .context("Could not change back to host namespace")?;
+            .context("Could not change to child namespace to set up local networking")?;
 
-        Ok(v)
+        Ok(())
     }
 
     pub fn name(&self) -> &str {
         &self.ns_name
     }
 
-    pub fn wan_ip(&self) -> &Ipv4Addr {
-        &self.wan_ip
+    pub fn wan_ip(&self) -> Ipv4Addr {
+        self.wan_ip
     }
 }
 
