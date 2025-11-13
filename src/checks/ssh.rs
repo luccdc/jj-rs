@@ -1,16 +1,16 @@
 use std::{net::Ipv4Addr, sync::Arc};
 
 use anyhow::Context;
-use chrono::{DateTime, Local, Utc};
+use chrono::Utc;
 use clap::Parser;
-use jj_rs::utils::qx;
 use serde::Deserialize;
 
 use crate::{checks::IntoCheckResult, utils::distro::get_distro};
 
 use super::{
     CheckResult, CheckValue, TcpdumpProtocol, Troubleshooter, TroubleshooterRunner, check_fn,
-    filter_check, openrc_service_check, systemd_service_check, tcp_connect_check, tcpdump_check,
+    filter_check, get_system_logs, immediate_tcpdump_check, openrc_service_check,
+    passive_tcpdump_check, systemd_service_check, tcp_connect_check,
 };
 
 /// Troubleshoot an SSH server connection
@@ -37,6 +37,11 @@ pub struct SshTroubleshooter {
     /// WAN IP for this machine)
     #[arg(long, short)]
     local: bool,
+
+    /// Listen for an external connection attempt, and diagnose what appears to
+    /// be going wrong with such a check. All other steps attempt to initiate connections
+    #[arg(long, short)]
+    external: bool,
 }
 
 impl Troubleshooter for SshTroubleshooter {
@@ -49,16 +54,16 @@ impl Troubleshooter for SshTroubleshooter {
                     Some(d) if d.is_deb_based() => "ssh",
                     _ => "sshd",
                 }),
-                self.host.is_loopback(),
+                self.host.is_loopback() || self.local,
                 "Cannot check systemd service on remote host",
             ),
             filter_check(
                 openrc_service_check("sshd"),
-                self.host.is_loopback(),
+                self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),
             tcp_connect_check(self.host, self.port),
-            tcpdump_check(
+            immediate_tcpdump_check(
                 self.host,
                 self.port,
                 TcpdumpProtocol::Tcp,
@@ -66,6 +71,12 @@ impl Troubleshooter for SshTroubleshooter {
                 self.local,
             ),
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
+            passive_tcpdump_check(
+                self.port,
+                self.external,
+                !self.host.is_loopback() && !self.local,
+                get_system_logs,
+            ),
         ])
     }
 }
@@ -86,19 +97,11 @@ impl SshTroubleshooter {
             .enable_all()
             .build()?
             .block_on(self.try_connection(host, port, &user, &pass))
-            .into_check_result("Could not ");
+            .into_check_result("Could not attempt the connection to the server");
 
         let end = Utc::now();
 
-        use serde_json::value::Value;
-        let logs = if self.local || host.is_loopback() {
-            match self.get_logs(start, end) {
-                Ok(v) => v.map(|v2| v2.into_iter().map(Value::String).collect::<Value>()),
-                Err(e) => Some(Value::String(format!("Could not pull system logs: {e:?}"))),
-            }
-        } else {
-            None
-        };
+        let logs = (self.local || host.is_loopback()).then(|| get_system_logs(start, end));
 
         Ok(check_result.merge_overwrite_details(serde_json::json!({
             "system_logs": logs,
@@ -182,35 +185,5 @@ impl SshTroubleshooter {
                 ),
             },
         )
-    }
-
-    fn get_logs(
-        &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> anyhow::Result<Option<Vec<String>>> {
-        if !qx("which journalctl 2>/dev/null")?.1.is_empty() {
-            return Ok(Some(self.get_logs_systemd(start, end)?));
-        }
-
-        Ok(None)
-    }
-
-    fn get_logs_systemd(
-        &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> anyhow::Result<Vec<String>> {
-        let start = start.with_timezone(&Local);
-        let end = end.with_timezone(&Local);
-
-        let format = "%Y-%m-%d %H:%M:%S";
-
-        qx(&format!(
-            "journalctl --no-pager '--since={}' '--until={}' --utc",
-            start.format(format),
-            end.format(format)
-        ))
-        .map(|(_, o)| o.trim().split("\n").map(String::from).collect())
     }
 }

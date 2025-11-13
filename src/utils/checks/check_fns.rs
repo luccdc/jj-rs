@@ -12,6 +12,7 @@ use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
 use crate::utils::{
+    busybox::Busybox,
     checks::{CheckResult, CheckStep, IntoCheckResult, TroubleshooterRunner},
     distro::Distro,
     download_container::DownloadContainer,
@@ -400,16 +401,26 @@ pub fn tcp_connect_check<'a, I: Into<IpAddr>>(addr: I, port: u16) -> Box<dyn Che
     })
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Copy)]
 #[allow(dead_code)]
 pub enum TcpdumpProtocol {
     Tcp,
     Udp,
 }
 
+impl TcpdumpProtocol {
+    fn from_int(i: u8) -> Option<Self> {
+        match i {
+            6 => Some(TcpdumpProtocol::Tcp),
+            17 => Some(TcpdumpProtocol::Udp),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 #[doc(hidden)]
-pub struct TcpdumpCheck {
+pub struct ImmediateTcpdumpCheck {
     ip: Ipv4Addr,
     port: u16,
     protocol: TcpdumpProtocol,
@@ -427,7 +438,7 @@ impl pcap::PacketCodec for TcpdumpCodec {
     }
 }
 
-impl TcpdumpCheck {
+impl ImmediateTcpdumpCheck {
     fn setup_check_watch(&self) -> anyhow::Result<pcap::PacketStream<pcap::Active, TcpdumpCodec>> {
         let device = pcap::Device::lookup()
             .context("Could not get default PCAP capture device")?
@@ -511,8 +522,9 @@ impl TcpdumpCheck {
         if packet[30..34] == u32::from(self.ip).to_be_bytes()
             && packet[36..38] == self.port.to_be_bytes()
         {
+            let offset_ip = ((packet[14]) & 0x0F) as usize;
             let offset = ((packet[46] as usize) & 0xF0).overflowing_shr(4).0;
-            let offset = 34 + offset * 4;
+            let offset = 14 + offset_ip * 4 + offset * 4;
 
             if packet.len() - offset < self.connection_test.len() {
                 None?;
@@ -548,7 +560,8 @@ impl TcpdumpCheck {
         if packet[30..34] == u32::from(self.ip).to_be_bytes()
             && packet[36..38] == self.port.to_be_bytes()
         {
-            let offset = 38;
+            let offset_ip = ((packet[14]) & 0x0F) as usize;
+            let offset = 14 + offset_ip * 4;
 
             if packet.len() - offset < self.connection_test.len() {
                 None?;
@@ -577,7 +590,7 @@ impl TcpdumpCheck {
 
     async fn run_check_input(&self) -> anyhow::Result<u16> {
         use TcpdumpProtocol as TCT;
-        let TcpdumpCheck {
+        let ImmediateTcpdumpCheck {
             connection_test,
             ip,
             port,
@@ -608,7 +621,7 @@ impl TcpdumpCheck {
         let cwd = unsafe { cont.enter() }
             .context("Could not create download container for local tcpdump check")?;
 
-        let check = TcpdumpCheck {
+        let check = ImmediateTcpdumpCheck {
             ip: wan_ip,
             ..self.clone()
         };
@@ -653,7 +666,7 @@ impl TcpdumpCheck {
     }
 }
 
-impl<'a> CheckStep<'a> for TcpdumpCheck {
+impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
     fn name(&self) -> &'static str {
         "Check tcpdump to verify the firewall is working"
     }
@@ -686,18 +699,241 @@ impl<'a> CheckStep<'a> for TcpdumpCheck {
 /// where NAT reflection is being used, to allow traffic to leave and go to a specific IP but have
 /// the server reflect the traffic back to the local system. Can be considered a much more advanced
 /// version of the TcpConnectCheck
-pub fn tcpdump_check<'a, I: Into<Ipv4Addr>>(
+///
+/// It takes an address and port combination to try and make a connection to, and sends
+/// data to the port over a specified protocol. The data is critical to get UDP based
+/// protocols such as DNS to respond
+pub fn immediate_tcpdump_check<'a, I: Into<Ipv4Addr>>(
     addr: I,
     port: u16,
     protocol: TcpdumpProtocol,
     connection_test: Vec<u8>,
     local: bool,
 ) -> Box<dyn CheckStep<'a> + 'a> {
-    Box::new(TcpdumpCheck {
+    Box::new(ImmediateTcpdumpCheck {
         ip: addr.into(),
         port,
         protocol,
         connection_test,
         local,
+    })
+}
+
+#[doc(hidden)]
+pub struct PassiveTcpdumpCheck {
+    port: u16,
+    run: bool,
+    promisc: bool,
+    log_func: fn(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) -> serde_json::Value,
+}
+
+impl PassiveTcpdumpCheck {
+    fn make_capture(&self) -> anyhow::Result<pcap::Capture<pcap::Active>> {
+        let device = pcap::Device::lookup()
+            .context("Could not get default PCAP capture device")?
+            .ok_or(anyhow::anyhow!("Could not find pcap device"))?;
+
+        let capture = pcap::Capture::from_device(device)
+            .context("Could not load packet capture device for passive tcpdump check")?
+            .promisc(self.promisc)
+            .immediate_mode(true)
+            .timeout(10);
+
+        let mut capture = capture
+            .open()
+            .context("Could not open packet capture device for passive tcpdump check")?;
+
+        capture
+            .filter(&format!("port {}", self.port), false)
+            .context("Could not set filter for passive tcpdump check")?;
+
+        Ok(capture)
+    }
+
+    fn get_first_packet(
+        &self,
+        capture: &mut pcap::Capture<pcap::Active>,
+    ) -> anyhow::Result<(
+        Ipv4Addr,
+        u16,
+        chrono::DateTime<chrono::Utc>,
+        TcpdumpProtocol,
+    )> {
+        loop {
+            let p = capture
+                .next_packet()
+                .context("Could not acquire the next packet")?;
+
+            if p.data.len() < 40 {
+                continue;
+            }
+
+            if u16::from_be_bytes([p[12], p[13]]) != 0x800 {
+                // ignore non ipv4 traffic, it isn't real
+                continue;
+            }
+
+            let ip_packet = &p.data[14..];
+            let ihl = (ip_packet[0] & 0x0F) as usize;
+
+            let Some(protocol) = TcpdumpProtocol::from_int(ip_packet[9]) else {
+                continue;
+            };
+
+            let l4_packet = &ip_packet[ihl * 4..];
+
+            let src_ip =
+                Ipv4Addr::from_octets([ip_packet[12], ip_packet[13], ip_packet[14], ip_packet[15]]);
+            let src_port = u16::from_be_bytes([l4_packet[0], l4_packet[1]]);
+            let dst_port = u16::from_be_bytes([l4_packet[2], l4_packet[3]]);
+
+            if dst_port != self.port {
+                continue;
+            }
+
+            return Ok((src_ip, src_port, chrono::Utc::now(), protocol));
+        }
+    }
+
+    async fn get_response_packet(
+        &self,
+        capture: pcap::Capture<pcap::Active>,
+        source_ip: Ipv4Addr,
+        source_port: u16,
+        proto: TcpdumpProtocol,
+    ) -> anyhow::Result<()> {
+        let mut stream = capture.setnonblock()?.stream(TcpdumpCodec)?;
+        while let Some(p) = stream.next().await {
+            let p = p?.1;
+
+            if p.len() < 40 {
+                continue;
+            }
+
+            if u16::from_be_bytes([p[12], p[13]]) != 0x800 {
+                // ignore non ipv4 traffic, it isn't real
+                continue;
+            }
+
+            let ip_packet = &p[14..];
+            let ihl = (ip_packet[0] & 0x0F) as usize;
+
+            if Some(proto) != TcpdumpProtocol::from_int(ip_packet[9]) {
+                continue;
+            }
+
+            let l4_packet = &ip_packet[ihl * 4..];
+
+            let dst_ip =
+                Ipv4Addr::from_octets([ip_packet[16], ip_packet[17], ip_packet[18], ip_packet[19]]);
+            let src_port = u16::from_be_bytes([l4_packet[0], l4_packet[1]]);
+            let dst_port = u16::from_be_bytes([l4_packet[2], l4_packet[3]]);
+
+            if src_port != self.port || dst_ip != source_ip || dst_port != source_port {
+                continue;
+            }
+
+            return Ok(());
+        }
+
+        anyhow::bail!("Tcpdump stream ran out of packets")
+    }
+
+    fn get_debug_route(&self, source_ip: Ipv4Addr) -> serde_json::Value {
+        let bb = match Busybox::new() {
+            Ok(bb) => bb,
+            Err(e) => return format!("Could not load busybox: {e:?}").into(),
+        };
+
+        match bb.execute(&["ip", "route", "get", &format!("{source_ip}")]) {
+            Ok(s) => s.trim().into(),
+            Err(e) => format!("Could not print route: {e:?}").into(),
+        }
+    }
+}
+
+impl<'a> CheckStep<'a> for PassiveTcpdumpCheck {
+    fn name(&self) -> &'static str {
+        "Wait for an inbound connection on port and verify that return packets are sent"
+    }
+
+    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+        if !self.run {
+            return Ok(CheckResult::not_run(
+                "Check was not specified as required for troubleshooting",
+                serde_json::json!(null),
+            ));
+        }
+
+        let mut capture = self.make_capture()?;
+        let (source_ip, source_port, start, proto) = self.get_first_packet(&mut capture)?;
+
+        use tokio::{
+            runtime::Builder,
+            time::{Duration, timeout},
+        };
+        let result = Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
+                timeout(
+                    Duration::from_secs(5),
+                    self.get_response_packet(capture, source_ip, source_port, proto),
+                )
+                .await
+            });
+
+        let end = chrono::Utc::now();
+
+        let route = self.get_debug_route(source_ip);
+        let logs = (self.log_func)(start, end);
+
+        Ok(match result {
+            Ok(Ok(())) => CheckResult::succeed(
+                "System successfully responded to traffic",
+                serde_json::json!({
+                    "debug_route": route,
+                    "system_logs": logs
+                }),
+            ),
+            Ok(Err(e)) => CheckResult::fail(
+                "System error occurred when attempting to do a passive tcpdump check",
+                serde_json::json!({
+                    "debug_route": route,
+                    "system_logs": logs,
+                    "sytem_error": format!("{e:?}"),
+                }),
+            ),
+            Err(_) => CheckResult::fail(
+                "System did not respond in an appropriate amount of time when doing a tcpdump check",
+                serde_json::json!({
+                    "debug_route": route,
+                    "system_logs": logs,
+                }),
+            ),
+        })
+    }
+}
+
+/// Listen for an inbound connection on the specified port, and verify that a
+/// response is provided by the operating system.
+///
+/// Run is provided as an argument to allow avoiding the use of [`filter_check`],
+/// building that functionality into this check as it is an expensive check
+/// (time-wise)
+///
+/// Promisc allows specifying if this check should listen for traffic going to
+/// other servers
+pub fn passive_tcpdump_check<'a>(
+    port: u16,
+    run: bool,
+    promisc: bool,
+    log_func: fn(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) -> serde_json::Value,
+) -> Box<dyn CheckStep<'a> + 'a> {
+    Box::new(PassiveTcpdumpCheck {
+        port,
+        run,
+        promisc,
+        log_func,
     })
 }

@@ -93,6 +93,8 @@ use serde::{Deserialize, de::Visitor};
 pub mod check_fns;
 pub use check_fns::*;
 
+use super::qx;
+
 /// Represents a value that can be used as a richer parameter type
 /// than just String for checks. This struct provides the
 /// [`CheckValue::resolve_value`] and [`CheckValue::resolve_prompt`]
@@ -655,4 +657,43 @@ where
             ),
         }
     }
+}
+
+/// Utility function to get logs between two timestamps. It returns only a
+/// [`serde_json::value::Value`] to make it easy for inclusion in extra details
+///
+/// If there are errors acquiring system logs, this will return a string with the
+/// error message. If there is no compatible log provider, it just returns null
+pub fn get_system_logs(start: DateTime<Utc>, end: DateTime<Utc>) -> serde_json::value::Value {
+    use serde_json::value::Value;
+
+    if let Ok((_, path)) = qx("which journalctl 2>/dev/null")
+        && !path.is_empty()
+    {
+        return match get_logs_systemd(start, end) {
+            Ok(v) => v.into_iter().map(Value::String).collect::<Value>(),
+            Err(e) => Value::String(format!("Could not pull system logs: {e:?}")),
+        };
+    }
+
+    Value::Null
+}
+
+fn get_logs_systemd(start: DateTime<Utc>, end: DateTime<Utc>) -> anyhow::Result<Vec<String>> {
+    let start = start.with_timezone(&Local);
+    let end = end.with_timezone(&Local);
+
+    let format = "%Y-%m-%d %H:%M:%S";
+
+    qx(&format!(
+        "journalctl --no-pager '--since={}' '--until={}' --utc",
+        start.format(format),
+        // journalctl will go up to but not including the time, and has second precision
+        // This includes the final second of logs, or all the logs if the start and end
+        //   datetimes are the same (down to the second)
+        end.checked_add_signed(chrono::TimeDelta::seconds(1))
+            .unwrap_or(end)
+            .format(format)
+    ))
+    .map(|(_, o)| o.trim().split("\n").map(String::from).collect())
 }
