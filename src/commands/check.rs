@@ -2,12 +2,23 @@ use clap::{Parser, Subcommand};
 
 use crate::checks::{self, TroubleshooterRunner};
 
+/// Troubleshoot network services, remotely or locally
+///
+/// Check the help menu for each subcommand for more information
+///
+/// Certain parameters may be marked with [CheckValue]; these are fields that
+/// can use special values such as :STDIN: to read from standard input or
+/// :FILE:$FILE_PATH to read the value from a file. This is critical for
+/// passwords, to ensure they do not remain in the command line parameters of
+/// a check
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct Check {
+    /// Show the results of successful steps [default: no]
     #[arg(short = 's', long)]
     show_successful_steps: bool,
 
+    /// Show all the steps that were not run for some reason [default: no]
     #[arg(short = 'n', long)]
     show_not_run_steps: bool,
 
@@ -17,6 +28,7 @@ pub struct Check {
 
 #[derive(Subcommand, Debug)]
 pub enum CheckCommands {
+    /// Troubleshoot an SSH connection
     Ssh(checks::ssh::SshTroubleshooter),
 }
 

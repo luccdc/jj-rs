@@ -7,6 +7,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
 };
 
+use anyhow::Context;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
@@ -191,7 +192,9 @@ where
     }
 
     fn run_check(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        let distro = crate::utils::distro::get_distro()?;
+        let distro = crate::utils::distro::get_distro().context(
+            "Could not query current Linux distribution to determine if a check should run",
+        )?;
         match (self.filter_func)(distro).into_check_filter_result() {
             CheckFilterResult::Run => self.check.run_check(tr),
             CheckFilterResult::NoRun(v) => Ok(CheckResult::not_run(v, serde_json::json!(null))),
@@ -217,7 +220,8 @@ impl<'a> CheckStep<'a> for SystemdServiceCheck {
             ));
         }
 
-        let service_info = get_service_info(&self.service_name)?;
+        let service_info = get_service_info(&self.service_name)
+            .context("Could not pull systemd service information")?;
 
         if is_service_active(&service_info) {
             Ok(CheckResult::succeed(
@@ -270,7 +274,9 @@ impl<'a> CheckStep<'a> for OpenrcServiceCheck {
             ));
         }
 
-        let res = qx(&format!("rc-service {} status", &self.service_name))?.1;
+        let res = qx(&format!("rc-service {} status", &self.service_name))
+            .context("Could not pull openrc service information")?
+            .1;
 
         if res.contains("status: started") {
             Ok(CheckResult::succeed(
@@ -313,11 +319,14 @@ impl<'a> CheckStep<'a> for TcpConnectCheck {
         let timeout = std::time::Duration::from_secs(2);
 
         if self.ip.is_loopback() {
-            let cont = DownloadContainer::new(None, None)?;
-            let client1 = cont.run(|| {
-                let addr = SocketAddr::new(IpAddr::V4(cont.wan_ip()), self.port);
-                TcpStream::connect_timeout(&addr, timeout).map(|_| ())
-            })?;
+            let cont = DownloadContainer::new(None, None)
+                .context("Could not create download container for TCP check")?;
+            let client1 = cont
+                .run(|| {
+                    let addr = SocketAddr::new(IpAddr::V4(cont.wan_ip()), self.port);
+                    TcpStream::connect_timeout(&addr, timeout).map(|_| ())
+                })
+                .context("Could not run TCP connection test in download container")?;
             let addr2 = SocketAddr::new(self.ip, self.port);
             let client2 = TcpStream::connect_timeout(&addr2, timeout).map(|_| ());
 
@@ -359,9 +368,12 @@ impl<'a> CheckStep<'a> for TcpConnectCheck {
                 ),
             })
         } else {
-            let cont = DownloadContainer::new(None, None)?;
+            let cont = DownloadContainer::new(None, None)
+                .context("Could not create download container for TCP check")?;
             let addr = SocketAddr::new(self.ip, self.port);
-            let client = cont.run(|| TcpStream::connect_timeout(&addr, timeout).map(|_| ()))?;
+            let client = cont
+                .run(|| TcpStream::connect_timeout(&addr, timeout).map(|_| ()))
+                .context("Could not run TCP connection test in download container")?;
 
             if let Err(e) = client {
                 Ok(CheckResult::fail(
@@ -417,33 +429,46 @@ impl pcap::PacketCodec for TcpdumpCodec {
 
 impl TcpdumpCheck {
     fn setup_check_watch(&self) -> anyhow::Result<pcap::PacketStream<pcap::Active, TcpdumpCodec>> {
-        let device =
-            pcap::Device::lookup()?.ok_or(anyhow::anyhow!("Could not find pcap device"))?;
+        let device = pcap::Device::lookup()
+            .context("Could not get default PCAP capture device")?
+            .ok_or(anyhow::anyhow!("Could not find pcap device"))
+            .context("Could not find a capture device for the tcpdump check")?;
 
-        let capture = pcap::Capture::from_device(device)?
+        let capture = pcap::Capture::from_device(device)
+            .context("Could not load packet capture device for tcpdump check")?
             .promisc(true)
             .immediate_mode(true)
             .timeout(10);
 
-        let mut capture = capture.open()?.setnonblock()?;
-        capture.filter(
-            &format!(
-                "host {} and {} port {}",
-                self.ip,
-                match &self.protocol {
-                    TcpdumpProtocol::Tcp => {
-                        "tcp"
-                    }
-                    TcpdumpProtocol::Udp { .. } => {
-                        "udp"
-                    }
-                },
-                self.port
-            ),
-            false,
-        )?;
+        let mut capture = capture
+            .open()
+            .context("Could not open packet capture device for tcpdump check")?
+            .setnonblock()
+            .context(
+                "Could not convert packet capture device to non blocking mode for tcpdump check",
+            )?;
+        capture
+            .filter(
+                &format!(
+                    "host {} and {} port {}",
+                    self.ip,
+                    match &self.protocol {
+                        TcpdumpProtocol::Tcp => {
+                            "tcp"
+                        }
+                        TcpdumpProtocol::Udp { .. } => {
+                            "udp"
+                        }
+                    },
+                    self.port
+                ),
+                false,
+            )
+            .context("Could not set filter for tcpdump check")?;
 
-        Ok(capture.stream(TcpdumpCodec)?)
+        Ok(capture
+            .stream(TcpdumpCodec)
+            .context("Could not convert capture device to stream for tcpdump check")?)
     }
 
     async fn run_check_watch(
@@ -576,10 +601,12 @@ impl TcpdumpCheck {
 
     async fn check_local(&self) -> anyhow::Result<CheckResult> {
         // make a container and run checks from the container
-        let cont = DownloadContainer::new(None, None)?;
+        let cont = DownloadContainer::new(None, None)
+            .context("Could not create download container for local tcpdump check")?;
         let wan_ip = cont.wan_ip();
 
-        let cwd = unsafe { cont.enter() }?;
+        let cwd = unsafe { cont.enter() }
+            .context("Could not create download container for local tcpdump check")?;
 
         let check = TcpdumpCheck {
             ip: wan_ip,
@@ -587,7 +614,8 @@ impl TcpdumpCheck {
         };
 
         let v = check.check_remote().await;
-        cont.leave(cwd)?;
+        cont.leave(cwd)
+            .context("Could not create download container for local tcpdump check")?;
         v
     }
 
@@ -631,26 +659,18 @@ impl<'a> CheckStep<'a> for TcpdumpCheck {
     }
 
     fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        match (self.local, self.ip.is_loopback()) {
-            (true, _) => {}
-            (false, false) => {
-                return Ok(CheckResult::not_run(
-                    "Cannot check tcpdump when packets do not return to system via NAT reflection"
-                        .to_string(),
-                    serde_json::json!(null),
-                ));
-            }
-            (false, true) => {
-                return Ok(CheckResult::not_run(
-                    "Cannot check tcpdump on localhost".to_string(),
-                    serde_json::json!(null),
-                ));
-            }
+        if !self.local && !self.ip.is_loopback() {
+            return Ok(CheckResult::not_run(
+                "Cannot check tcpdump when packets do not return to system via NAT reflection"
+                    .to_string(),
+                serde_json::json!(null),
+            ));
         }
 
         Ok(tokio::runtime::Builder::new_current_thread()
             .enable_all()
-            .build()?
+            .build()
+            .context("Could not create async environment for tcpdump check")?
             .block_on(async {
                 if self.ip.is_loopback() {
                     self.check_local().await

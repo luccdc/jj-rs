@@ -13,20 +13,28 @@ use super::{
     filter_check, openrc_service_check, systemd_service_check, tcp_connect_check, tcpdump_check,
 };
 
+/// Troubleshoot an SSH server connection
 #[derive(Parser, Deserialize, Debug)]
 pub struct SshTroubleshooter {
-    #[arg(long, short = 'H')]
-    host: Option<Ipv4Addr>,
+    /// The host to connect to and attempt signing in
+    #[arg(long, short = 'H', default_value = "127.0.0.1")]
+    host: Ipv4Addr,
 
+    /// The port of the SSH server
     #[arg(long, short, default_value_t = 22)]
     port: u16,
 
-    #[arg(long, short)]
-    user: Option<String>,
+    /// The user to sign in as
+    #[arg(long, short, default_value = "root")]
+    user: String,
 
+    /// [CheckValue] The password to authenticate with
     #[arg(long, short = 'P', default_value_t = Default::default())]
     password: CheckValue,
 
+    /// If the remote host is specified, indicate that the traffic sent to the remote host will be sent
+    /// back to this server via NAT reflection (e.g., debug firewall on another machine, network firewall
+    /// WAN IP for this machine)
     #[arg(long, short)]
     local: bool,
 }
@@ -41,17 +49,17 @@ impl Troubleshooter for SshTroubleshooter {
                     Some(d) if d.is_deb_based() => "ssh",
                     _ => "sshd",
                 }),
-                self.host.is_none() || self.local,
+                self.host.is_loopback(),
                 "Cannot check systemd service on remote host",
             ),
             filter_check(
                 openrc_service_check("sshd"),
-                self.host.is_none() || self.local,
+                self.host.is_loopback(),
                 "Cannot check openrc service on remote host",
             ),
-            tcp_connect_check(self.get_host(), self.port),
+            tcp_connect_check(self.host, self.port),
             tcpdump_check(
-                self.get_host(),
+                self.host,
                 self.port,
                 TcpdumpProtocol::Tcp,
                 b"openssh".to_vec(),
@@ -63,14 +71,10 @@ impl Troubleshooter for SshTroubleshooter {
 }
 
 impl SshTroubleshooter {
-    fn get_host(&self) -> Ipv4Addr {
-        self.host.unwrap_or(Ipv4Addr::from_octets([127, 0, 0, 1]))
-    }
-
     fn try_remote_login(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        let host = self.get_host();
+        let host = self.host;
         let port = self.port;
-        let user = self.user.clone().unwrap_or("root".to_string());
+        let user = self.user.clone();
         let pass = self
             .password
             .clone()
@@ -87,7 +91,7 @@ impl SshTroubleshooter {
         let end = Utc::now();
 
         use serde_json::value::Value;
-        let logs = if self.local {
+        let logs = if self.local || host.is_loopback() {
             match self.get_logs(start, end) {
                 Ok(v) => v.map(|v2| v2.into_iter().map(Value::String).collect::<Value>()),
                 Err(e) => Some(Value::String(format!("Could not pull system logs: {e:?}"))),
