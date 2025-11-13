@@ -196,7 +196,7 @@ fn resolve_value(
 
             let mut input = String::new();
             std::io::stdin().lock().read_line(&mut input)?;
-            Ok(input)
+            Ok(input.trim().to_string())
         }
         CheckValueInternal::File(f) => {
             let bytes = std::fs::read(f)?;
@@ -432,6 +432,24 @@ impl CheckResult {
             extra_details,
         }
     }
+
+    /// Merge the extra details if both are maps, otherwise overwrite with the new value
+    pub fn merge_overwrite_details(self, extra_details: serde_json::Value) -> Self {
+        match (self.extra_details, extra_details) {
+            (serde_json::Value::Object(mut m1), serde_json::Value::Object(m2)) => {
+                m1.extend(m2);
+
+                Self {
+                    extra_details: serde_json::Value::Object(m1),
+                    ..self
+                }
+            }
+            (_, extra_details) => Self {
+                extra_details,
+                ..self
+            },
+        }
+    }
 }
 
 /// Marks a struct as a valid Troubleshooter
@@ -497,6 +515,8 @@ impl TroubleshooterRunner {
 
             start &= value.result_type;
 
+            let has_extra = value.extra_details != serde_json::Value::Null;
+            let has_extra_nl = if has_extra { "" } else { "\n" };
             match value.result_type {
                 CheckResultType::Success => {
                     if !self.show_successful_steps {
@@ -504,7 +524,7 @@ impl TroubleshooterRunner {
                     }
 
                     println!(
-                        "{}[{}] {} {}",
+                        "{}[{}] {} {}{has_extra_nl}",
                         if self.has_rendered_newline_for_step {
                             ""
                         } else {
@@ -522,7 +542,7 @@ impl TroubleshooterRunner {
                     }
 
                     println!(
-                        "{}[{}] {} {}",
+                        "{}[{}] {} {}{has_extra_nl}",
                         if self.has_rendered_newline_for_step {
                             ""
                         } else {
@@ -536,7 +556,7 @@ impl TroubleshooterRunner {
                 }
                 CheckResultType::Failure => {
                     println!(
-                        "{}[{}] {} {}",
+                        "{}[{}] {} {}{has_extra_nl}",
                         if self.has_rendered_newline_for_step {
                             ""
                         } else {
@@ -550,11 +570,11 @@ impl TroubleshooterRunner {
                 }
             }
 
-            if value.extra_details != serde_json::Value::Null {
+            if has_extra {
                 println!("Extra details: ");
                 print!("    ");
                 render_extra_details(4, &value.extra_details);
-                println!("\n\n");
+                println!("\n");
             }
         }
 
@@ -591,7 +611,7 @@ fn render_extra_details(depth: usize, obj: &serde_json::Value) {
             print!("{n}");
         }
         Value::String(s) => {
-            print!("{s}");
+            print!(r#""{s}""#);
         }
         Value::Array(ve) => {
             println!("[");

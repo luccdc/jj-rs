@@ -25,6 +25,7 @@
 use std::{
     net::Ipv4Addr,
     os::{fd::OwnedFd, unix::fs::PermissionsExt},
+    path::PathBuf,
     process::Stdio,
 };
 
@@ -302,32 +303,40 @@ impl DownloadContainer {
     /// # test_download_container().expect("could not run download container");
     /// ```
     pub fn run<T, F: FnOnce() -> T>(&self, f: F) -> anyhow::Result<T> {
-        unsafe { self.enter() }?;
+        let cwd = unsafe { self.enter() }?;
 
         let v = f();
 
-        self.leave()?;
+        self.leave(cwd)?;
 
         Ok(v)
     }
 
     /// Internal functions for jumping into the environment for run. Needs to be matched
     /// with a call to [`DownloadContainer::leave`]
-    pub unsafe fn enter(&self) -> anyhow::Result<()> {
+    ///
+    /// This returns a directory that should be provided back to leave to restore
+    /// the current working directory
+    pub unsafe fn enter(&self) -> anyhow::Result<PathBuf> {
+        let cwd = std::env::current_dir().context("Could not get current working directory")?;
+
         setns(&self.child_net_ns, CloneFlags::CLONE_NEWNET)
             .context("Could not change to child namespace to set up local networking")?;
         setns(&self.child_mnt_ns, CloneFlags::CLONE_NEWNS)
             .context("Could not change to child namespace to set up local networking")?;
 
-        Ok(())
+        Ok(cwd)
     }
 
     /// Internal function for leaving the environment for run
-    pub fn leave(&self) -> anyhow::Result<()> {
+    pub fn leave(&self, cwd: PathBuf) -> anyhow::Result<()> {
         setns(&self.original_net_ns, CloneFlags::CLONE_NEWNET)
             .context("Could not change to child namespace to set up local networking")?;
         setns(&self.original_mnt_ns, CloneFlags::CLONE_NEWNS)
             .context("Could not change to child namespace to set up local networking")?;
+
+        std::env::set_current_dir(cwd)
+            .context("Could not restore current working directory for download container")?;
 
         Ok(())
     }

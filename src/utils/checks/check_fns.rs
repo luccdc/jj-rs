@@ -563,7 +563,7 @@ impl TcpdumpCheck {
         match protocol {
             TCT::Tcp => {
                 let mut sock = tokio::net::TcpStream::connect((*ip, *port)).await?;
-                sock.write(connection_test).await?;
+                _ = sock.write(connection_test).await?;
                 Ok(sock.local_addr()?.port())
             }
             TCT::Udp => {
@@ -579,7 +579,7 @@ impl TcpdumpCheck {
         let cont = DownloadContainer::new(None, None)?;
         let wan_ip = cont.wan_ip();
 
-        unsafe { cont.enter() }?;
+        let cwd = unsafe { cont.enter() }?;
 
         let check = TcpdumpCheck {
             ip: wan_ip,
@@ -587,7 +587,7 @@ impl TcpdumpCheck {
         };
 
         let v = check.check_remote().await;
-        cont.leave()?;
+        cont.leave(cwd)?;
         v
     }
 
