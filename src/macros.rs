@@ -62,6 +62,7 @@ macro_rules! flags {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! pcre_join_fmt_string {
     ($expr:tt) => {
         "{}"
@@ -72,6 +73,7 @@ macro_rules! pcre_join_fmt_string {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! pcre_join_sections {
     ($var:ident $($tt:tt)+) => {
         format!("{}{}", $var, $crate::pcre_join_sections!($($tt)+))
@@ -84,6 +86,7 @@ macro_rules! pcre_join_sections {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! pcre_regex_flags_or_replace {
     (?) => {
         (false, "", ())
@@ -120,6 +123,7 @@ macro_rules! pcre_regex_flags_or_replace {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! pcre_regex {
     ({ $($regex:tt)* } $($tt:tt)*) => {{
         let (global, other_flags, replace) = $crate::pcre_regex_flags_or_replace!(? $($tt)*);
@@ -133,6 +137,7 @@ macro_rules! pcre_regex {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! pcre_format_regex {
     ($($tt:tt)*) => {{
         let (global, other_flags, regex, replace_with) = $crate::pcre_regex!($($tt)*);
@@ -153,8 +158,7 @@ macro_rules! pcre_format_regex {
 /// This macro allows for using the following syntaxes:
 ///
 /// ```
-/// use jj_rs::pcre;
-///
+/// # use jj_rs::pcre;
 /// let asdf = "asdf";
 ///
 /// // Basic assertion; does it match?
