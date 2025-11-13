@@ -532,7 +532,7 @@ impl TcpdumpCheck {
             if &packet[offset..] == self.connection_test {
                 *source_port = Some(u16::from_be_bytes([packet[34], packet[35]]));
                 *source_addr = Some(Ipv4Addr::from_octets([
-                    packet[30], packet[31], packet[32], packet[33],
+                    packet[26], packet[27], packet[28], packet[29],
                 ]));
             }
 
@@ -542,10 +542,10 @@ impl TcpdumpCheck {
                 return None;
             };
 
-            (packet[30..34] == u32::from(*source_addr).to_be_bytes()
-                && packet[36..38] == source_port.to_be_bytes()
-                && packet[26..30] == u32::from(self.ip).to_be_bytes()
-                && packet[34..36] == self.port.to_be_bytes())
+            (packet[26..30] == u32::from(self.ip).to_be_bytes()
+                && packet[34..36] == self.port.to_be_bytes()
+                && packet[30..34] == u32::from(*source_addr).to_be_bytes()
+                && packet[36..38] == source_port.to_be_bytes())
             .then(|| *source_port)
         }
     }
