@@ -35,6 +35,10 @@ To use Docker to test a command, run one of the following:
 
 Inside the docker container, you will be able to run `jj-rs` as root
 
+## Programming in Rust
+
+If you do not know the Rust programming language, a great starting resource is the Rust Book: [https://doc.rust-lang.org/book/](https://doc.rust-lang.org/book/)
+
 ## Adding a command
 
 To add a barebones CLI utility, create a new file in `src/commands` such as `example.rs` with the following content:
