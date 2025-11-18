@@ -11,24 +11,13 @@
     crane.url = "github:ipetkov/crane";
     flake-parts.url = "github:hercules-ci/flake-parts";
 
-    busybox = {
-      url =
-        "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox";
-      flake = false;
-    };
-    jq = {
-      url =
-        "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64";
-      flake = false;
-    };
     libpcap-src = {
       url = "git+https://github.com/the-tcpdump-group/libpcap";
       flake = false;
     };
   };
 
-  outputs = inputs@{ self, flake-parts, crane, rust-overlay, busybox, jq
-    , libpcap-src, ... }:
+  outputs = inputs@{ self, flake-parts, crane, rust-overlay, libpcap-src, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [ ];
 
@@ -112,8 +101,9 @@
               cp "$TEMP/${name}.gz" $out
             '';
 
-          busybox-gzipped = gzip-binary "busybox" busybox;
-          jq-gzipped = gzip-binary "jq" jq;
+          busybox-gzipped =
+            gzip-binary "busybox" "${pkgsStatic.busybox}/bin/busybox";
+          jq-gzipped = gzip-binary "jq" "${pkgsStatic.jq.bin}/bin/jq";
           nft-gzipped = gzip-binary "nft"
             ("${pkgsStatic.nftables.override { withCli = false; }}/bin/nft");
           tmux-gzipped = gzip-binary "tmux" "${pkgsStatic.tmux}/bin/tmux";
