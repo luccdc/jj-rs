@@ -315,8 +315,15 @@ impl<'a> CheckStep<'a> for TcpConnectCheck {
         let timeout = std::time::Duration::from_secs(2);
 
         if self.ip.is_loopback() {
-            let cont = DownloadContainer::new(None, None)
-                .context("Could not create download container for TCP check")?;
+            let cont = match DownloadContainer::new(None, None) {
+                Ok(cont) => cont,
+                Err(e) => {
+                    return Ok(CheckResult::fail(
+                        format!("Could not create download container for TCP check: {e:?}"),
+                        serde_json::json!(null),
+                    ));
+                }
+            };
             let client1 = cont
                 .run(|| {
                     let addr = SocketAddr::new(IpAddr::V4(cont.wan_ip()), self.port);
