@@ -158,9 +158,7 @@ impl super::Command for Elk {
 
         let hostname = qx("hostnamectl")?.1;
         if pcre!(&hostname =~ qr/r"Static\+hostname:\s+\(unset\)"/xms) {
-            eprintln!(
-                "!!! ELK requires a hostname explicitly set to work correctly"
-            );
+            eprintln!("!!! ELK requires a hostname explicitly set to work correctly");
             return Ok(());
         }
 
@@ -171,9 +169,10 @@ impl super::Command for Elk {
         }
 
         if let EC::Install(_) | EC::SetupZram(_) = &self.command
-            && let Err(e) = setup_zram() {
-                eprintln!("{}{e}", "??? Could not set up zram: ".yellow());
-            }
+            && let Err(e) = setup_zram()
+        {
+            eprintln!("{}{e}", "??? Could not set up zram: ".yellow());
+        }
 
         if let EC::Install(args) | EC::DownloadPackages(args) = &self.command {
             download_packages(&distro, args)?;
@@ -858,9 +857,7 @@ fn install_beats(distro: Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
         download_beats(&distro, args)?;
     }
 
-    println!(
-        "--- Done downloading beats packages! Installing beats packages..."
-    );
+    println!("--- Done downloading beats packages! Installing beats packages...");
 
     for beat in ["auditbeat", "filebeat", "packetbeat"] {
         if distro.is_deb_based() {
