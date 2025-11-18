@@ -59,7 +59,7 @@ impl From<&str> for Distro {
             return Distro::Arch;
         }
 
-        return Distro::Other(s);
+        Distro::Other(s)
     }
 }
 

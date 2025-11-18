@@ -40,7 +40,7 @@ use anyhow::Context;
 use flate2::write::GzDecoder;
 use nix::sys::memfd::{MFdFlags, memfd_create};
 
-const TCPDUMP_BYTES: &'static [u8] = include_bytes!(std::env!("TCPDUMP_GZIPPED"));
+const TCPDUMP_BYTES: &[u8] = include_bytes!(std::env!("TCPDUMP_GZIPPED"));
 
 /// Handle around the `tcpdump` binary
 pub struct Tcpdump {
@@ -72,7 +72,7 @@ impl Tcpdump {
     /// Return a new Command object to prepare for reading from it later
     #[allow(dead_code)]
     pub fn command_inst(&self) -> Command {
-        Command::new(&format!("/proc/self/fd/{}", self.tcpdump_file.as_raw_fd()))
+        Command::new(format!("/proc/self/fd/{}", self.tcpdump_file.as_raw_fd()))
     }
 
     /// Spawn tcpdump with the specified arguments to show results to the operator
@@ -81,7 +81,7 @@ impl Tcpdump {
         args: &[R],
         stderr: S,
     ) -> anyhow::Result<ExitStatus> {
-        Command::new(&format!("/proc/self/fd/{}", self.tcpdump_file.as_raw_fd()))
+        Command::new(format!("/proc/self/fd/{}", self.tcpdump_file.as_raw_fd()))
             .args(args)
             .stderr(stderr.into().unwrap_or_else(Stdio::inherit))
             .stdout(Stdio::inherit())

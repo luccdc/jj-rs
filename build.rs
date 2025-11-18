@@ -19,7 +19,7 @@ fn main() -> std::io::Result<()> {
             std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
         ),
         format!(
-            "const KIBANA_DASHBOARDS: &'static [&'static [u8]] = &[{}];",
+            "const KIBANA_DASHBOARDS: &[&[u8]] = &[{}];",
             include_macros.join(",")
         ),
     )?;

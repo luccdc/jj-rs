@@ -49,7 +49,7 @@ pub struct Zsh {
     args: Vec<String>,
 }
 
-pub const ZSH_BYTES: &'static [u8] = include_bytes!(std::env!("ZSH_GZIPPED"));
+pub const ZSH_BYTES: &[u8] = include_bytes!(std::env!("ZSH_GZIPPED"));
 
 impl super::Command for Zsh {
     fn execute(self) -> anyhow::Result<()> {
@@ -83,7 +83,7 @@ impl super::Command for Zsh {
                             let len = parts.len();
                             parts[len - 1] = self.install_path.display().to_string();
                         }
-                        return parts.join(":");
+                        parts.join(":")
                     } else {
                         line.to_string()
                     }

@@ -426,7 +426,7 @@ impl pcap::PacketCodec for TcpdumpCodec {
     type Item = (pcap::PacketHeader, Vec<u8>);
 
     fn decode(&mut self, p: pcap::Packet<'_>) -> Self::Item {
-        (p.header.clone(), p.data.to_owned())
+        (*p.header, p.data.to_owned())
     }
 }
 
@@ -464,7 +464,7 @@ impl ImmediateTcpdumpCheck {
                         TcpdumpProtocol::Tcp => {
                             "tcp"
                         }
-                        TcpdumpProtocol::Udp { .. } => {
+                        TcpdumpProtocol::Udp => {
                             "udp"
                         }
                     },
@@ -474,9 +474,9 @@ impl ImmediateTcpdumpCheck {
             )
             .context("Could not set filter for tcpdump check")?;
 
-        Ok(capture
+        capture
             .stream(TcpdumpCodec)
-            .context("Could not convert capture device to stream for tcpdump check")?)
+            .context("Could not convert capture device to stream for tcpdump check")
     }
 
     async fn run_check_watch(
@@ -557,7 +557,7 @@ impl ImmediateTcpdumpCheck {
                 None?;
             }
 
-            if &packet[offset..] == self.connection_test {
+            if packet[offset..] == self.connection_test {
                 *source_port = Some(u16::from_be_bytes([packet[34], packet[35]]));
                 *source_addr = Some(Ipv4Addr::from_octets([
                     packet[26], packet[27], packet[28], packet[29],
@@ -574,7 +574,7 @@ impl ImmediateTcpdumpCheck {
                 && packet[34..36] == self.port.to_be_bytes()
                 && packet[30..34] == u32::from(*source_addr).to_be_bytes()
                 && packet[36..38] == source_port.to_be_bytes())
-            .then(|| *source_port)
+            .then_some(*source_port)
         }
     }
 
@@ -604,7 +604,7 @@ impl ImmediateTcpdumpCheck {
                 None?;
             }
 
-            if &packet[offset..] == self.connection_test {
+            if packet[offset..] == self.connection_test {
                 *source_port = Some(u16::from_be_bytes([packet[34], packet[35]]));
                 *source_addr = Some(Ipv4Addr::from_octets([
                     packet[26], packet[27], packet[28], packet[29],
@@ -621,7 +621,7 @@ impl ImmediateTcpdumpCheck {
                 && packet[34..36] == self.port.to_be_bytes()
                 && packet[30..34] == u32::from(*source_addr).to_be_bytes()
                 && packet[36..38] == source_port.to_be_bytes())
-            .then(|| *source_port)
+            .then_some(*source_port)
         }
     }
 
@@ -642,7 +642,7 @@ impl ImmediateTcpdumpCheck {
                 }
                 TcpdumpProtocol::Udp => {
                     let sock = UdpSocket::bind("0.0.0.0:0")?;
-                    sock.send_to(&connection_test, (container.wan_ip(), *port))?;
+                    sock.send_to(connection_test, (container.wan_ip(), *port))?;
                     Ok(sock.local_addr()?.port())
                 }
             })

@@ -27,10 +27,10 @@ use crate::{
 // It includes all the ndjson files for kibana dashboards
 include!(concat!(env!("OUT_DIR"), "/kibana_dashboards.rs"));
 
-const FILEBEAT_YML: &'static str = include_str!("elk/filebeat.yml");
-const AUDITBEAT_YML: &'static str = include_str!("elk/auditbeat.yml");
-const PACKETBEAT_YML: &'static str = include_str!("elk/packetbeat.yml");
-const LOGSTASH_CONF: &'static str = include_str!("elk/pipeline.conf");
+const FILEBEAT_YML: &str = include_str!("elk/filebeat.yml");
+const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.yml");
+const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.yml");
+const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
 
 #[derive(Parser, Clone, Debug)]
 #[command(about)]
@@ -153,13 +153,12 @@ impl super::Command for Elk {
         use ElkCommands as EC;
 
         if let EC::InstallBeats(args) = &self.command {
-            return install_beats(distro, &args);
+            return install_beats(distro, args);
         }
 
         let hostname = qx("hostnamectl")?.1;
         if pcre!(&hostname =~ qr/r"Static\+hostname:\s+\(unset\)"/xms) {
             eprintln!(
-                "{}",
                 "!!! ELK requires a hostname explicitly set to work correctly"
             );
             return Ok(());
@@ -171,11 +170,10 @@ impl super::Command for Elk {
             get_elastic_password(&mut elastic_password)?;
         }
 
-        if let EC::Install(_) | EC::SetupZram(_) = &self.command {
-            if let Err(e) = setup_zram() {
+        if let EC::Install(_) | EC::SetupZram(_) = &self.command
+            && let Err(e) = setup_zram() {
                 eprintln!("{}{e}", "??? Could not set up zram: ".yellow());
             }
-        }
 
         if let EC::Install(args) | EC::DownloadPackages(args) = &self.command {
             download_packages(&distro, args)?;
@@ -367,7 +365,7 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Resul
     if args.use_download_shell {
         let container = DownloadContainer::new(None, args.sneaky_ip)?;
 
-        container.run(|| download_packages_internal())??;
+        container.run(download_packages_internal)??;
     } else {
         download_packages_internal()?;
     }
@@ -427,16 +425,16 @@ fn setup_elasticsearch(
 
     let mut password_change =
         Command::new("/usr/share/elasticsearch/bin/elasticsearch-reset-password")
-            .args(&["-u", "elastic", "-i"])
+            .args(["-u", "elastic", "-i"])
             .stdin(Stdio::piped())
             .stderr(Stdio::inherit())
             .stdout(Stdio::inherit())
             .spawn()?;
 
     if let Some(ref mut stdin) = password_change.stdin {
-        write!(stdin, "y\n")?;
-        write!(stdin, "{}\n", elastic_password)?;
-        write!(stdin, "{}\n", elastic_password)?;
+        writeln!(stdin, "y")?;
+        writeln!(stdin, "{}", elastic_password)?;
+        writeln!(stdin, "{}", elastic_password)?;
     }
 
     password_change.wait()?;
@@ -861,7 +859,6 @@ fn install_beats(distro: Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
     }
 
     println!(
-        "{}",
         "--- Done downloading beats packages! Installing beats packages..."
     );
 
@@ -930,7 +927,7 @@ output.logstash:
     system("filebeat test output")?;
     system("packetbeat test output")?;
 
-    println!("{}", "--- All set up!");
+    println!("--- All set up!");
 
     Ok(())
 }

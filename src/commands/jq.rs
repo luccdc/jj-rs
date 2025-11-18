@@ -30,7 +30,7 @@ pub struct Jq {
     args: Vec<String>,
 }
 
-const JQ_BYTES: &'static [u8] = include_bytes!(std::env!("JQ_GZIPPED"));
+const JQ_BYTES: &[u8] = include_bytes!(std::env!("JQ_GZIPPED"));
 
 impl super::Command for Jq {
     fn execute(self) -> anyhow::Result<()> {

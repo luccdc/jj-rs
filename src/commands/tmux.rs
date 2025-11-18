@@ -28,7 +28,7 @@ pub struct Tmux {
     args: Vec<String>,
 }
 
-const TMUX_BYTES: &'static [u8] = include_bytes!(std::env!("TMUX_GZIPPED"));
+const TMUX_BYTES: &[u8] = include_bytes!(std::env!("TMUX_GZIPPED"));
 
 impl super::Command for Tmux {
     fn execute(self) -> anyhow::Result<()> {

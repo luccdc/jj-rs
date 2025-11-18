@@ -46,7 +46,7 @@ use crate::{
     utils::{busybox::Busybox, nft::Nft},
 };
 
-const IP_ADDR_REGEX: &'static str = concat!(
+const IP_ADDR_REGEX: &str = concat!(
     "(?:[0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]|25[0-5])",
     r"\.",
     "(?:[0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]|25[0-5])",
@@ -312,11 +312,13 @@ impl DownloadContainer {
         Ok(v)
     }
 
-    /// Internal functions for jumping into the environment for run. Needs to be matched
-    /// with a call to [`DownloadContainer::leave`]
+    /// Internal functions for jumping into the environment for run.
     ///
     /// This returns a directory that should be provided back to leave to restore
     /// the current working directory
+    ///
+    /// # Safety
+    /// Needs to be matched with a call to [`DownloadContainer::leave`]
     pub unsafe fn enter(&self) -> anyhow::Result<PathBuf> {
         let cwd = std::env::current_dir().context("Could not get current working directory")?;
 
@@ -370,7 +372,7 @@ impl Drop for DownloadContainer {
             .nft
             .exec(format!("delete table inet {}", self.ns_name), None)
         {
-            return eprintln!("Could not delete nftables namespace: {e}");
+            eprintln!("Could not delete nftables namespace: {e}")
         }
     }
 }
@@ -445,7 +447,9 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
                 libc::sem_post(semaphore);
 
                 let _ = bb.execv(&["sleep", "infinity"]);
-                loop {}
+                loop {
+                    std::thread::yield_now();
+                }
             }
             ForkResult::Parent { child } => {
                 libc::sem_wait(semaphore);

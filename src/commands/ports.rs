@@ -12,8 +12,8 @@ impl super::Command for Ports {
         let tcp_ports = ports::parse_net_tcp()?;
 
         println!(
-            "{:>10}:{:<10} {:>12}: {} {}",
-            "Local addr", "Local port", "PID", "Command line", "(Cgroup)"
+            "{:>10}:{:<10} {:>12}: Command line (Cgroup)",
+            "Local addr", "Local port", "PID"
         );
 
         for port in tcp_ports {

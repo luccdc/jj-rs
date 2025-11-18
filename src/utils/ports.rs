@@ -25,6 +25,7 @@ pub enum SocketType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum SocketState {
     UNKNOWN,
     ESTABLISHED,
@@ -96,12 +97,11 @@ pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
                 .ok()
                 .map(|dir| dir.file_name().to_string_lossy().to_string())
         })
-        .filter(|dir| dir_re.is_match(&dir))
+        .filter(|dir| dir_re.is_match(dir))
         .flat_map(|dir| {
             std::fs::read_dir(format!("/proc/{dir}/fd"))
                 .into_iter()
                 .flatten()
-                .into_iter()
                 .flatten()
                 .filter_map({
                     let dir = dir.clone();

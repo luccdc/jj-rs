@@ -261,7 +261,7 @@ impl CheckValue {
             return Ok(s.to_string());
         }
 
-        let value = resolve_value(&*internal_ref, None)?;
+        let value = resolve_value(&internal_ref, None)?;
         *internal_ref = CheckValueInternal::Value(value.clone());
 
         Ok(value)
@@ -270,7 +270,7 @@ impl CheckValue {
     /// Takes the current value and reduces it to a string
     ///
     /// - If the internal value represents `:STDIN:`, it reads from stdin after
-    /// prompting the user
+    ///   prompting the user
     /// - If the internal value represents `:FILE:<PATH>`, it reads from the file path
     /// - Otherwise, it just reads the internal value
     pub fn resolve_prompt<I: AsRef<str>>(
@@ -298,7 +298,7 @@ impl CheckValue {
             return Ok(s.to_string());
         }
 
-        let value = resolve_value(&*internal_ref, Some((prompt.as_ref(), tr)))?;
+        let value = resolve_value(&internal_ref, Some((prompt.as_ref(), tr)))?;
         *internal_ref = CheckValueInternal::Value(value.clone());
 
         Ok(value)
@@ -316,17 +316,17 @@ impl FromStr for CheckValue {
             });
         }
 
-        if s.starts_with(":FILE:") {
+        if let Some(path) = s.strip_prefix(":FILE:") {
             return Ok(CheckValue {
-                original: CheckValueInternal::File(PathBuf::from(&s[6..])),
-                internal: Mutex::new(CheckValueInternal::File(PathBuf::from(&s[6..]))).into(),
+                original: CheckValueInternal::File(PathBuf::from(path)),
+                internal: Mutex::new(CheckValueInternal::File(PathBuf::from(path))).into(),
             });
         }
 
-        return Ok(CheckValue {
+        Ok(CheckValue {
             original: CheckValueInternal::Value(s.to_string()),
             internal: Mutex::new(CheckValueInternal::Value(s.to_string())).into(),
-        });
+        })
     }
 }
 

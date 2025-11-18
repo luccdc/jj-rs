@@ -37,12 +37,12 @@ use nix::{
     unistd::execv,
 };
 
-const BUSYBOX_BYTES: &'static [u8] = include_bytes!(std::env!("BUSYBOX_GZIPPED"));
+const BUSYBOX_BYTES: &[u8] = include_bytes!(std::env!("BUSYBOX_GZIPPED"));
 
 /// Utility function for converting a list of Strings or strs to a list CStrings
 pub fn str_to_cstr<R: AsRef<str>>(args: &[R]) -> anyhow::Result<Vec<CString>> {
     args.iter()
-        .map(|arg| CString::from_str(&arg.as_ref()))
+        .map(|arg| CString::from_str(arg.as_ref()))
         .collect::<Result<Vec<CString>, _>>()
         .context("Could not convert list of strings to list of cstrings")
 }
@@ -127,7 +127,7 @@ impl Busybox {
     /// # test_busybox().expect("could not run busybox test");
     /// ```
     pub fn execute<R: AsRef<OsStr>>(&self, command: &[R]) -> anyhow::Result<String> {
-        let Some(cmd) = command.get(0) else {
+        let Some(cmd) = command.first() else {
             bail!("Command not fully specified; empty list provided to Busybox::execute");
         };
 
@@ -143,7 +143,7 @@ impl Busybox {
     /// Constructs a std::process::Command object that makes use of the
     /// internal Busybox implementation
     pub fn command<R: AsRef<OsStr>>(&self, cmd: R) -> Command {
-        let mut cmd_obj = Command::new(&format!("/proc/self/fd/{}", self.busybox_file.as_raw_fd()));
+        let mut cmd_obj = Command::new(format!("/proc/self/fd/{}", self.busybox_file.as_raw_fd()));
         cmd_obj.arg0(cmd);
         cmd_obj
     }

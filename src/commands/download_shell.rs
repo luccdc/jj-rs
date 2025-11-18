@@ -62,13 +62,13 @@ fn zsh_command() -> anyhow::Result<(OwnedFd, Command)> {
 
     Ok((
         unsafe { OwnedFd::from_raw_fd(raw_fd) },
-        Command::new(&format!("/proc/self/fd/{raw_fd}")),
+        Command::new(format!("/proc/self/fd/{raw_fd}")),
     ))
 }
 
 impl super::Command for DownloadShell {
     fn execute(mut self) -> anyhow::Result<()> {
-        let container = DownloadContainer::new(self.name.take(), self.sneaky_ip.clone())?;
+        let container = DownloadContainer::new(self.name.take(), self.sneaky_ip)?;
 
         let bash_cmd = format!(
             r#"exec bash --rcfile <(cat ~/.bashrc 2>/dev/null || cat /etc/bashrc 2>/dev/null || echo 'export PS1="\u@\h:\w\$ "'; echo 'PS1="\033[0;32m({})\033[0m $PS1"')"#,
@@ -94,7 +94,7 @@ impl super::Command for DownloadShell {
                         let (fd, mut cmd) = zsh_command()?;
 
                         let users = load_users(&format!("{uid}"))?;
-                        if let Some(user) = users.get(0) {
+                        if let Some(user) = users.first() {
                             cmd.env("HOME", user.home.clone());
                         }
                         if let Ok(user) = std::env::var("SUDO_USER") {
@@ -129,7 +129,7 @@ impl super::Command for DownloadShell {
                         let mut cmd = bb.command("sh");
 
                         let users = load_users(&format!("{uid}"))?;
-                        if let Some(user) = users.get(0) {
+                        if let Some(user) = users.first() {
                             cmd.env("HOME", user.home.clone());
                         }
                         if let Ok(user) = std::env::var("SUDO_USER") {
@@ -160,10 +160,10 @@ impl super::Command for DownloadShell {
                         let _ = nix::unistd::setuid(uid.into());
 
                         let mut cmd = Command::new("bash");
-                        cmd.args(&["-c", &bash_cmd]);
+                        cmd.args(["-c", &bash_cmd]);
 
                         let users = load_users(&format!("{uid}"))?;
-                        if let Some(user) = users.get(0) {
+                        if let Some(user) = users.first() {
                             cmd.env("HOME", user.home.clone());
                         }
                         if let Ok(user) = std::env::var("SUDO_USER") {
@@ -195,7 +195,7 @@ impl super::Command for DownloadShell {
                         cmd.args(&self.command[1..]);
 
                         let users = load_users(&format!("{uid}"))?;
-                        if let Some(user) = users.get(0) {
+                        if let Some(user) = users.first() {
                             cmd.env("HOME", user.home.clone());
                         }
                         if let Ok(user) = std::env::var("SUDO_USER") {
@@ -232,7 +232,7 @@ impl super::Command for DownloadShell {
                 }
                 (_, ShellType::Bash, _) => {
                     Command::new("bash")
-                        .args(&["-c", &bash_cmd])
+                        .args(["-c", &bash_cmd])
                         .spawn()?
                         .wait()?;
                 }

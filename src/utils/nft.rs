@@ -23,7 +23,7 @@ use anyhow::Context;
 use flate2::write::GzDecoder;
 use nix::sys::memfd::{MFdFlags, memfd_create};
 
-const NFT_BYTES: &'static [u8] = include_bytes!(std::env!("NFT_GZIPPED"));
+const NFT_BYTES: &[u8] = include_bytes!(std::env!("NFT_GZIPPED"));
 
 /// Handle around the `nft` binary
 pub struct Nft {
@@ -70,7 +70,7 @@ impl Nft {
         command: R,
         stderr: S,
     ) -> anyhow::Result<ExitStatus> {
-        Command::new(&format!("/proc/self/fd/{}", self.nft_file.as_raw_fd()))
+        Command::new(format!("/proc/self/fd/{}", self.nft_file.as_raw_fd()))
             .arg(command.as_ref())
             .stderr(stderr.into().unwrap_or_else(Stdio::inherit))
             .stdout(Stdio::inherit())
@@ -83,6 +83,6 @@ impl Nft {
     /// Create a new [`std::process::Command`] object to perform further
     /// customization around later
     pub fn command(&self) -> Command {
-        Command::new(&format!("/proc/self/fd/{}", self.nft_file.as_raw_fd()))
+        Command::new(format!("/proc/self/fd/{}", self.nft_file.as_raw_fd()))
     }
 }

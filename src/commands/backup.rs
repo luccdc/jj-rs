@@ -53,13 +53,13 @@ impl super::Command for Backup {
                 "/usr/lib/systemd",
                 "/opt",
             ] {
-                if !exists(&path).context("Could not check if path existed")? {
+                if !exists(path).context("Could not check if path existed")? {
                     continue;
                 }
 
                 println!("{} {}", "--- Adding ".green(), path.green());
 
-                for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
+                for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
                     let Ok(mut file) = File::open(entry.path()) else {
                         continue;
                     };
@@ -75,7 +75,7 @@ impl super::Command for Backup {
             for path in &self.paths {
                 println!("{} {}", "--- Adding ".green(), path.green());
 
-                for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
+                for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
                     let Ok(mut file) = File::open(entry.path()) else {
                         continue;
                     };
@@ -92,7 +92,7 @@ impl super::Command for Backup {
 
         for backup in &self.tarballs {
             println!("Copying backup to {backup}...");
-            copy(&self.temp_tarball, &backup)?;
+            copy(&self.temp_tarball, backup)?;
         }
 
         println!("Done with file backups!");

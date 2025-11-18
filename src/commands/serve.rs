@@ -70,7 +70,7 @@ async fn serve(args: Serve) -> anyhow::Result<()> {
 
 fn not_found() -> anyhow::Result<Response<BoxBody<Bytes, std::io::Error>>> {
     let body = Full::new(Bytes::from("404"))
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+        .map_err(std::io::Error::other)
         .boxed();
 
     Ok(Response::builder()
@@ -92,20 +92,20 @@ async fn respond(
         Ok(p) => p,
         Err(_) => {
             tracing::warn!("404 {}", uri);
-            return Ok(not_found()?);
+            return not_found();
         }
     };
 
     if !path.starts_with(root_path) {
         tracing::warn!("404 {}", uri);
-        return Ok(not_found()?);
+        return not_found();
     }
 
     let metadata = match tokio::fs::metadata(&path).await {
         Ok(m) => m,
         Err(_) => {
             tracing::warn!("404 {}", uri);
-            return Ok(not_found()?);
+            return not_found();
         }
     };
 
@@ -122,7 +122,7 @@ async fn respond(
             tracing::error!("Could not respond to client: {e}");
 
             let body = Full::new(Bytes::from("error"))
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+                .map_err(std::io::Error::other)
                 .boxed();
 
             Ok(Response::builder()
@@ -192,7 +192,7 @@ async fn respond_dir(
 {}
 </body></html>",
             if uri == "/" {
-                format!("")
+                String::new()
             } else {
                 format!(r#"<tr><td>d</td><td></td><td><a href="{uri}/..">..</a></td></tr>"#)
             },
@@ -250,7 +250,7 @@ async fn respond_dir(
     };
 
     let body = Full::new(Bytes::from(body))
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+        .map_err(std::io::Error::other)
         .boxed();
 
     Ok(Response::builder().status(StatusCode::OK).body(body)?)

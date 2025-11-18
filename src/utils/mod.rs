@@ -38,7 +38,7 @@ pub mod tcpdump;
 /// ```
 pub fn qx(command: &str) -> anyhow::Result<(ExitStatus, String)> {
     let output = std::process::Command::new("sh")
-        .args(&["-c", command])
+        .args(["-c", command])
         .stderr(std::process::Stdio::piped())
         .output()?;
 
@@ -60,7 +60,7 @@ pub fn qx(command: &str) -> anyhow::Result<(ExitStatus, String)> {
 /// ```
 pub fn system(command: &str) -> anyhow::Result<ExitStatus> {
     std::process::Command::new("/bin/sh")
-        .args(&["-c", command])
+        .args(["-c", command])
         .spawn()
         .context("Could not spawn sh")?
         .wait()

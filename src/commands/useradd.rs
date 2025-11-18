@@ -34,7 +34,7 @@ impl super::Command for Useradd {
         for user in self.users {
             println!("Adding user {user}");
             bb.command("adduser")
-                .args(&["-S", "-s", "/bin/sh", "-G", sudo_group, &user])
+                .args(["-S", "-s", "/bin/sh", "-G", sudo_group, &user])
                 .spawn()?
                 .wait()?;
             bb.command("passwd").arg(user).spawn()?.wait()?;
