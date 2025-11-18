@@ -491,15 +491,14 @@ impl ImmediateTcpdumpCheck {
         source_port: &mut Option<u16>,
         source_addr: &mut Option<Ipv4Addr>,
         wan_ip: Ipv4Addr,
-        packet_count: &mut usize,
+        inbound_packet_count: &mut usize,
+        outbound_packet_count: &mut usize,
         capture: &mut pcap::PacketStream<pcap::Active, TcpdumpCodec>,
     ) -> anyhow::Result<u16> {
         loop {
             let Some(Ok((header, packet))) = capture.next().await else {
                 continue;
             };
-
-            (*packet_count) += 1;
 
             // 14: Ethernet header
             // 20: IPv4 header
@@ -509,10 +508,28 @@ impl ImmediateTcpdumpCheck {
             // SYN/ACK
             if let Some(port) = match self.protocol {
                 TcpdumpProtocol::Udp => (header.caplen >= 38)
-                    .then(|| self.check_udp_packet(source_port, source_addr, wan_ip, &packet))
+                    .then(|| {
+                        self.check_udp_packet(
+                            source_port,
+                            source_addr,
+                            wan_ip,
+                            inbound_packet_count,
+                            outbound_packet_count,
+                            &packet,
+                        )
+                    })
                     .flatten(),
                 TcpdumpProtocol::Tcp => (header.caplen >= 48)
-                    .then(|| self.check_tcp_packet(source_port, source_addr, wan_ip, &packet))
+                    .then(|| {
+                        self.check_tcp_packet(
+                            source_port,
+                            source_addr,
+                            wan_ip,
+                            inbound_packet_count,
+                            outbound_packet_count,
+                            &packet,
+                        )
+                    })
                     .flatten(),
             } {
                 return Ok(port);
@@ -525,8 +542,17 @@ impl ImmediateTcpdumpCheck {
         source_port: &mut Option<u16>,
         source_addr: &mut Option<Ipv4Addr>,
         wan_ip: Ipv4Addr,
+        inbound_packet_count: &mut usize,
+        outbound_packet_count: &mut usize,
         packet: &[u8],
     ) -> Option<u16> {
+        let counter = if packet[30..34] == u32::from(wan_ip).to_be_bytes() {
+            inbound_packet_count
+        } else {
+            outbound_packet_count
+        };
+        (*counter) += 1;
+
         if packet[30..34] == u32::from(wan_ip).to_be_bytes()
             && packet[36..38] == self.port.to_be_bytes()
         {
@@ -564,6 +590,8 @@ impl ImmediateTcpdumpCheck {
         source_port: &mut Option<u16>,
         source_addr: &mut Option<Ipv4Addr>,
         wan_ip: Ipv4Addr,
+        inbound_packet_count: &mut usize,
+        outbound_packet_count: &mut usize,
         packet: &[u8],
     ) -> Option<u16> {
         if packet[30..34] == u32::from(wan_ip).to_be_bytes()
@@ -687,7 +715,8 @@ impl ImmediateTcpdumpCheck {
 
         let mut source_port = None;
         let mut source_addr = None;
-        let mut packet_count = 0;
+        let mut inbound_packet_count = 0;
+        let mut outbound_packet_count = 0;
 
         use tokio::time;
 
@@ -697,7 +726,8 @@ impl ImmediateTcpdumpCheck {
                 &mut source_port,
                 &mut source_addr,
                 container.wan_ip(),
-                &mut packet_count,
+                &mut inbound_packet_count,
+                &mut outbound_packet_count,
                 &mut capture,
             ),
         )
@@ -725,7 +755,10 @@ impl ImmediateTcpdumpCheck {
         match (guess_source_port, actual_source_port) {
             (Ok(Ok(gsp)), Ok(asp)) if gsp == asp => Ok(CheckResult::succeed(
                 "Successfully verified connection to service",
-                json!({ "packet_count": packet_count }),
+                json!({
+                    "inbound_packet_count": inbound_packet_count,
+                    "outbound_packet_count": outbound_packet_count,
+                }),
             )),
             // Just in case it matched the wrong connection somehow
             // By proving that both source ports are the same, it is possible to
@@ -735,27 +768,24 @@ impl ImmediateTcpdumpCheck {
             (Ok(Ok(_)), Err(e)) => Ok(CheckResult::succeed(
                 "Successfully sent packets out and received a result, but encountered an error when checking the source port",
                 json!({
-                    "packet_count": packet_count,
+                    "inbound_packet_count": inbound_packet_count,
+                    "outbound_packet_count": outbound_packet_count,
                     "system_error": format!("{e:?}"),
                 }),
             )),
             (Ok(Err(e)), _) => Ok(CheckResult::fail(
                 "System error when performing a tcpdump check",
                 json!({
-                    "packet_count": packet_count,
+                    "inbound_packet_count": inbound_packet_count,
+                    "outbound_packet_count": outbound_packet_count,
                     "system_error": format!("{e:?}")
                 }),
             )),
-            (Err(_), _) if packet_count > 0 => Ok(CheckResult::fail(
-                "Timeout when performing tcpdump check; packets were received (likely firewall blocking inbound or outbound!)",
-                json!({
-                    "packet_count": packet_count,
-                }),
-            )),
             (Err(_), _) => Ok(CheckResult::fail(
-                "Timeout when performing tcpdump check; packets were not received",
+                "Timeout when performing tcpdump check",
                 json!({
-                    "packet_count": packet_count,
+                    "inbound_packet_count": inbound_packet_count,
+                    "outbound_packet_count": outbound_packet_count,
                 }),
             )), // (_, _, _) => todo!(),
         }

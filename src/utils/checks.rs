@@ -398,7 +398,6 @@ impl BitAndAssign for CheckResultType {
 /// when it happened, what happened, a brief summary, and any extra useful information
 #[derive(serde::Serialize)]
 pub struct CheckResult {
-    #[allow(dead_code)] // to be used for the daemon
     timestamp: DateTime<Utc>,
     result_type: CheckResultType,
     log_item: String,
