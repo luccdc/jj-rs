@@ -1,0 +1,19 @@
+name: ci-check
+
+on:
+  pull_request:
+    branches: ['*']
+
+jobs:
+  ci-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Run `nix flake check`
+        run: nix flake check
+      - name: Run `cargo clippy`
+        run: |
+          nix develop --command cargo clippy
