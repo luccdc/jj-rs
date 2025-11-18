@@ -20,8 +20,7 @@ use crate::utils::{
     systemd::{get_service_info, is_service_active},
 };
 
-#[doc(hidden)]
-pub struct CheckFn<'a, F>
+struct CheckFn<'a, F>
 where
     F: Fn(&mut TroubleshooterRunner) -> anyhow::Result<CheckResult> + 'a,
 {
@@ -106,8 +105,7 @@ where
     }
 }
 
-#[doc(hidden)]
-pub struct CheckFilter<'a, F, T>
+struct CheckFilter<'a, F, T>
 where
     F: Fn(Option<Distro>) -> T + 'a,
 {
@@ -203,8 +201,7 @@ where
     }
 }
 
-#[doc(hidden)]
-pub struct SystemdServiceCheck {
+struct SystemdServiceCheck {
     service_name: String,
 }
 
@@ -257,8 +254,7 @@ pub fn systemd_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<
     })
 }
 
-#[doc(hidden)]
-pub struct OpenrcServiceCheck {
+struct OpenrcServiceCheck {
     service_name: String,
 }
 
@@ -305,8 +301,7 @@ pub fn openrc_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'
     })
 }
 
-#[doc(hidden)]
-pub struct TcpConnectCheck {
+struct TcpConnectCheck {
     ip: IpAddr,
     port: u16,
 }
@@ -418,9 +413,7 @@ impl TcpdumpProtocol {
     }
 }
 
-#[derive(Clone)]
-#[doc(hidden)]
-pub struct ImmediateTcpdumpCheck {
+struct ImmediateTcpdumpCheck {
     port: u16,
     protocol: TcpdumpProtocol,
     connection_test: Vec<u8>,
@@ -844,8 +837,7 @@ pub fn immediate_tcpdump_check<'a>(
     })
 }
 
-#[doc(hidden)]
-pub struct PassiveTcpdumpCheck {
+struct PassiveTcpdumpCheck {
     port: u16,
     run: bool,
     promisc: bool,
