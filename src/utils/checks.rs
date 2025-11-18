@@ -366,7 +366,7 @@ impl<'de> Deserialize<'de> for CheckValue {
 }
 
 /// Represents whether a check failed, succeeded, or was not run
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, Copy, Eq, PartialEq)]
 pub enum CheckResultType {
     Success,
     Failure,
@@ -395,7 +395,8 @@ impl BitAndAssign for CheckResultType {
 }
 
 /// Contains data about the results of running a check, including
-/// when it happeend, what happened, a brief summary, and any extra useful information
+/// when it happened, what happened, a brief summary, and any extra useful information
+#[derive(serde::Serialize)]
 pub struct CheckResult {
     #[allow(dead_code)] // to be used for the daemon
     timestamp: DateTime<Utc>,

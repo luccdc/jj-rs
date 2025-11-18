@@ -7,11 +7,7 @@ use serde::Deserialize;
 
 use crate::{checks::IntoCheckResult, utils::distro::get_distro};
 
-use super::{
-    CheckResult, CheckValue, TcpdumpProtocol, Troubleshooter, TroubleshooterRunner, check_fn,
-    filter_check, get_system_logs, immediate_tcpdump_check, openrc_service_check,
-    passive_tcpdump_check, systemd_service_check, tcp_connect_check,
-};
+use super::*;
 
 /// Troubleshoot an SSH server connection
 #[derive(Parser, Deserialize, Debug)]
@@ -64,11 +60,10 @@ impl Troubleshooter for SshTroubleshooter {
             ),
             tcp_connect_check(self.host, self.port),
             immediate_tcpdump_check(
-                self.host,
                 self.port,
                 TcpdumpProtocol::Tcp,
                 b"openssh".to_vec(),
-                self.local,
+                self.host.is_loopback() || self.local,
             ),
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
             passive_tcpdump_check(

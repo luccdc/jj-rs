@@ -3,13 +3,13 @@
 //! to checks
 
 use std::{
+    io::prelude::*,
     marker::PhantomData,
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket},
 };
 
 use anyhow::Context;
 use futures_util::StreamExt;
-use tokio::io::AsyncWriteExt;
 
 use crate::utils::{
     busybox::Busybox,
@@ -421,11 +421,10 @@ impl TcpdumpProtocol {
 #[derive(Clone)]
 #[doc(hidden)]
 pub struct ImmediateTcpdumpCheck {
-    ip: Ipv4Addr,
     port: u16,
     protocol: TcpdumpProtocol,
     connection_test: Vec<u8>,
-    local: bool,
+    should_run: bool,
 }
 
 struct TcpdumpCodec;
@@ -439,11 +438,16 @@ impl pcap::PacketCodec for TcpdumpCodec {
 }
 
 impl ImmediateTcpdumpCheck {
-    fn setup_check_watch(&self) -> anyhow::Result<pcap::PacketStream<pcap::Active, TcpdumpCodec>> {
-        let device = pcap::Device::lookup()
-            .context("Could not get default PCAP capture device")?
-            .ok_or(anyhow::anyhow!("Could not find pcap device"))
-            .context("Could not find a capture device for the tcpdump check")?;
+    fn setup_check_watch(
+        &self,
+        wan_ip: Ipv4Addr,
+        lan_device: &str,
+    ) -> anyhow::Result<pcap::PacketStream<pcap::Active, TcpdumpCodec>> {
+        let device = pcap::Device::list()
+            .context("Could not list pcap devices")?
+            .into_iter()
+            .find(|dev| dev.name == lan_device)
+            .ok_or(anyhow::anyhow!("Could not find pcap device"))?;
 
         let capture = pcap::Capture::from_device(device)
             .context("Could not load packet capture device for tcpdump check")?
@@ -462,7 +466,7 @@ impl ImmediateTcpdumpCheck {
             .filter(
                 &format!(
                     "host {} and {} port {}",
-                    self.ip,
+                    wan_ip,
                     match &self.protocol {
                         TcpdumpProtocol::Tcp => {
                             "tcp"
@@ -484,15 +488,18 @@ impl ImmediateTcpdumpCheck {
 
     async fn run_check_watch(
         &self,
+        source_port: &mut Option<u16>,
+        source_addr: &mut Option<Ipv4Addr>,
+        wan_ip: Ipv4Addr,
+        packet_count: &mut usize,
         capture: &mut pcap::PacketStream<pcap::Active, TcpdumpCodec>,
     ) -> anyhow::Result<u16> {
-        let mut source_port = None::<u16>;
-        let mut source_addr = None::<Ipv4Addr>;
-
         loop {
             let Some(Ok((header, packet))) = capture.next().await else {
                 continue;
             };
+
+            (*packet_count) += 1;
 
             // 14: Ethernet header
             // 20: IPv4 header
@@ -502,10 +509,10 @@ impl ImmediateTcpdumpCheck {
             // SYN/ACK
             if let Some(port) = match self.protocol {
                 TcpdumpProtocol::Udp => (header.caplen >= 38)
-                    .then(|| self.check_udp_packet(&mut source_port, &mut source_addr, &packet))
+                    .then(|| self.check_udp_packet(source_port, source_addr, wan_ip, &packet))
                     .flatten(),
                 TcpdumpProtocol::Tcp => (header.caplen >= 48)
-                    .then(|| self.check_tcp_packet(&mut source_port, &mut source_addr, &packet))
+                    .then(|| self.check_tcp_packet(source_port, source_addr, wan_ip, &packet))
                     .flatten(),
             } {
                 return Ok(port);
@@ -517,9 +524,10 @@ impl ImmediateTcpdumpCheck {
         &self,
         source_port: &mut Option<u16>,
         source_addr: &mut Option<Ipv4Addr>,
+        wan_ip: Ipv4Addr,
         packet: &[u8],
     ) -> Option<u16> {
-        if packet[30..34] == u32::from(self.ip).to_be_bytes()
+        if packet[30..34] == u32::from(wan_ip).to_be_bytes()
             && packet[36..38] == self.port.to_be_bytes()
         {
             let offset_ip = ((packet[14]) & 0x0F) as usize;
@@ -543,7 +551,7 @@ impl ImmediateTcpdumpCheck {
                 return None;
             };
 
-            (packet[26..30] == u32::from(self.ip).to_be_bytes()
+            (packet[26..30] == u32::from(wan_ip).to_be_bytes()
                 && packet[34..36] == self.port.to_be_bytes()
                 && packet[30..34] == u32::from(*source_addr).to_be_bytes()
                 && packet[36..38] == source_port.to_be_bytes())
@@ -555,9 +563,10 @@ impl ImmediateTcpdumpCheck {
         &self,
         source_port: &mut Option<u16>,
         source_addr: &mut Option<Ipv4Addr>,
+        wan_ip: Ipv4Addr,
         packet: &[u8],
     ) -> Option<u16> {
-        if packet[30..34] == u32::from(self.ip).to_be_bytes()
+        if packet[30..34] == u32::from(wan_ip).to_be_bytes()
             && packet[36..38] == self.port.to_be_bytes()
         {
             let offset_ip = ((packet[14]) & 0x0F) as usize;
@@ -580,7 +589,7 @@ impl ImmediateTcpdumpCheck {
                 return None;
             };
 
-            (packet[26..30] == u32::from(self.ip).to_be_bytes()
+            (packet[26..30] == u32::from(wan_ip).to_be_bytes()
                 && packet[34..36] == self.port.to_be_bytes()
                 && packet[30..34] == u32::from(*source_addr).to_be_bytes()
                 && packet[36..38] == source_port.to_be_bytes())
@@ -588,81 +597,168 @@ impl ImmediateTcpdumpCheck {
         }
     }
 
-    async fn run_check_input(&self) -> anyhow::Result<u16> {
-        use TcpdumpProtocol as TCT;
+    fn make_connection(&self, container: &DownloadContainer) -> anyhow::Result<u16> {
         let ImmediateTcpdumpCheck {
-            connection_test,
-            ip,
             port,
             protocol,
+            connection_test,
             ..
         } = self;
 
-        match protocol {
-            TCT::Tcp => {
-                let mut sock = tokio::net::TcpStream::connect((*ip, *port)).await?;
-                _ = sock.write(connection_test).await?;
-                Ok(sock.local_addr()?.port())
-            }
-            TCT::Udp => {
-                let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-                sock.send_to(&connection_test, (*ip, *port)).await?;
-                Ok(sock.local_addr()?.port())
-            }
-        }
+        container
+            .run(|| match protocol {
+                TcpdumpProtocol::Tcp => {
+                    let mut sock = TcpStream::connect((container.wan_ip(), *port))?;
+                    _ = sock.write(connection_test)?;
+                    Ok(sock.local_addr()?.port())
+                }
+                TcpdumpProtocol::Udp => {
+                    let sock = UdpSocket::bind("0.0.0.0:0")?;
+                    sock.send_to(&connection_test, (container.wan_ip(), *port))?;
+                    Ok(sock.local_addr()?.port())
+                }
+            })
+            .flatten()
     }
 
-    async fn check_local(&self) -> anyhow::Result<CheckResult> {
-        // make a container and run checks from the container
-        let cont = DownloadContainer::new(None, None)
-            .context("Could not create download container for local tcpdump check")?;
-        let wan_ip = cont.wan_ip();
+    async fn run_check(&self) -> anyhow::Result<CheckResult> {
+        let container = DownloadContainer::new(None, None)
+            .context("Could not create download container for immediate tcpdump check")?;
 
-        let cwd = unsafe { cont.enter() }
-            .context("Could not create download container for local tcpdump check")?;
+        use nix::unistd::{ForkResult, fork};
 
-        let check = ImmediateTcpdumpCheck {
-            ip: wan_ip,
-            ..self.clone()
+        // Semaphores are nasty but one of the simplest ways to communicate across
+        // processes. We have to wait for the process to finish initializing, hence
+        // shared memory and a shared semaphore
+        use libc::sem_t;
+
+        struct Sync {
+            semaphore: sem_t,
+            err: Result<u16, ()>,
+        }
+
+        const SYNC_SIZE: usize = std::mem::size_of::<Sync>();
+
+        let (child, mut capture, sync) = unsafe {
+            let sync: *mut Sync = libc::mmap(
+                std::ptr::null_mut(),
+                SYNC_SIZE,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_ANONYMOUS | libc::MAP_SHARED,
+                0,
+                0,
+            ) as *mut _;
+            let semaphore = &mut (*sync).semaphore as *mut _;
+
+            libc::sem_init(semaphore, 1, 0);
+
+            match fork()? {
+                ForkResult::Parent { child } => {
+                    let capture = self.setup_check_watch(
+                        container.wan_ip(),
+                        &format!("{}.0", container.name()),
+                    )?;
+
+                    libc::sem_post(semaphore);
+
+                    (child, capture, sync)
+                }
+                ForkResult::Child => {
+                    libc::sem_wait(semaphore);
+                    libc::sem_destroy(semaphore);
+
+                    (*sync).err = self
+                        .make_connection(&container)
+                        .inspect_err(|e| {
+                            eprintln!("Could not make connection from download container: {e:?}");
+                        })
+                        .map_err(|_| {});
+
+                    // The container will be cleaned by the parent process
+                    // Without this call, the child process will attempt to
+                    // delete external resources like nftables chains as
+                    // the drop function is called - bad!
+                    // This is why it is part of an unsafe block
+                    std::mem::forget(container);
+                    std::process::exit(0);
+                }
+            }
         };
 
-        let v = check.check_remote().await;
-        cont.leave(cwd)
-            .context("Could not create download container for local tcpdump check")?;
-        v
-    }
+        let mut source_port = None;
+        let mut source_addr = None;
+        let mut packet_count = 0;
 
-    async fn check_remote(&self) -> anyhow::Result<CheckResult> {
-        // Check against a remote server that does NAT reflection
+        use tokio::time;
 
-        let mut capture = self.setup_check_watch()?;
+        let guess_source_port = time::timeout(
+            time::Duration::from_secs(4),
+            self.run_check_watch(
+                &mut source_port,
+                &mut source_addr,
+                container.wan_ip(),
+                &mut packet_count,
+                &mut capture,
+            ),
+        )
+        .await;
 
-        // poll watch once, so that it can get to the point where it is ready
-        for attempt in 0..3 {
-            use tokio::time;
-            let src_port = time::timeout(time::Duration::from_secs(4), self.run_check_input());
-
-            let guess_port = time::timeout(
-                time::Duration::from_secs(2),
-                self.run_check_watch(&mut capture),
-            );
-
-            let (Ok(Ok(guess_port)), Ok(Ok(src_port))) = tokio::join!(guess_port, src_port) else {
-                continue;
-            };
-
-            if guess_port == src_port {
-                return Ok(CheckResult::succeed(
-                    "Successfully verified that the firewall is allowing inbound traffic on service port with tcpdump",
-                    serde_json::json!({ "attempt_count": attempt + 1 }),
-                ));
-            }
+        if let Err(e) = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL) {
+            eprintln!("Could not kill child performing connection: {e:?}");
+        }
+        if let Err(e) = nix::sys::wait::waitpid(child, None) {
+            eprintln!("Could not wait for child: {e:?}");
         }
 
-        Ok(CheckResult::fail(
-            "Could not verify firewall with tcpdump after 3 attempts",
-            serde_json::json!(null),
-        ))
+        let actual_source_port = unsafe {
+            (*sync).err.map_err(|_| {
+                anyhow::anyhow!("Could not perform net connection and specify source port")
+            })
+        };
+
+        unsafe {
+            libc::munmap(sync as *mut _, SYNC_SIZE);
+        }
+
+        use serde_json::json;
+
+        match (guess_source_port, actual_source_port) {
+            (Ok(Ok(gsp)), Ok(asp)) if gsp == asp => Ok(CheckResult::succeed(
+                "Successfully verified connection to service",
+                json!({ "packet_count": packet_count }),
+            )),
+            // Just in case it matched the wrong connection somehow
+            // By proving that both source ports are the same, it is possible to
+            // verify that the connection made and the connection analyzed were
+            // the same without storing all the packets
+            (Ok(Ok(_)), Ok(_)) => Box::pin(self.run_check()).await,
+            (Ok(Ok(_)), Err(e)) => Ok(CheckResult::succeed(
+                "Successfully sent packets out and received a result, but encountered an error when checking the source port",
+                json!({
+                    "packet_count": packet_count,
+                    "system_error": format!("{e:?}"),
+                }),
+            )),
+            (Ok(Err(e)), _) => Ok(CheckResult::fail(
+                "System error when performing a tcpdump check",
+                json!({
+                    "packet_count": packet_count,
+                    "system_error": format!("{e:?}")
+                }),
+            )),
+            (Err(_), _) if packet_count > 0 => Ok(CheckResult::fail(
+                "Timeout when performing tcpdump check; packets were received (likely firewall blocking inbound or outbound!)",
+                json!({
+                    "packet_count": packet_count,
+                }),
+            )),
+            (Err(_), _) => Ok(CheckResult::fail(
+                "Timeout when performing tcpdump check; packets were not received",
+                json!({
+                    "packet_count": packet_count,
+                }),
+            )), // (_, _, _) => todo!(),
+        }
     }
 }
 
@@ -672,7 +768,7 @@ impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
     }
 
     fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
-        if !self.local && !self.ip.is_loopback() {
+        if !self.should_run {
             return Ok(CheckResult::not_run(
                 "Cannot check tcpdump when packets do not return to system via NAT reflection"
                     .to_string(),
@@ -684,13 +780,7 @@ impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
             .enable_all()
             .build()
             .context("Could not create async environment for tcpdump check")?
-            .block_on(async {
-                if self.ip.is_loopback() {
-                    self.check_local().await
-                } else {
-                    self.check_remote().await
-                }
-            })
+            .block_on(self.run_check())
             .into_check_result("Unknown error when performing tcpdump check"))
     }
 }
@@ -703,19 +793,17 @@ impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
 /// It takes an address and port combination to try and make a connection to, and sends
 /// data to the port over a specified protocol. The data is critical to get UDP based
 /// protocols such as DNS to respond
-pub fn immediate_tcpdump_check<'a, I: Into<Ipv4Addr>>(
-    addr: I,
+pub fn immediate_tcpdump_check<'a>(
     port: u16,
     protocol: TcpdumpProtocol,
     connection_test: Vec<u8>,
-    local: bool,
+    should_run: bool,
 ) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(ImmediateTcpdumpCheck {
-        ip: addr.into(),
         port,
         protocol,
         connection_test,
-        local,
+        should_run,
     })
 }
 
