@@ -594,6 +594,13 @@ impl ImmediateTcpdumpCheck {
         outbound_packet_count: &mut usize,
         packet: &[u8],
     ) -> Option<u16> {
+        let counter = if packet[30..34] == u32::from(wan_ip).to_be_bytes() {
+            inbound_packet_count
+        } else {
+            outbound_packet_count
+        };
+        (*counter) += 1;
+
         if packet[30..34] == u32::from(wan_ip).to_be_bytes()
             && packet[36..38] == self.port.to_be_bytes()
         {
