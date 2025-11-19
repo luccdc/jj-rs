@@ -489,14 +489,20 @@ where
 pub struct TroubleshooterRunner {
     show_successful_steps: bool,
     show_not_run_steps: bool,
+    hide_extra_details: bool,
     has_rendered_newline_for_step: bool,
 }
 
 impl TroubleshooterRunner {
-    pub fn new(show_successful_steps: bool, show_not_run_steps: bool) -> Self {
+    pub fn new(
+        show_successful_steps: bool,
+        show_not_run_steps: bool,
+        hide_extra_details: bool,
+    ) -> Self {
         Self {
             show_successful_steps,
             show_not_run_steps,
+            hide_extra_details,
             has_rendered_newline_for_step: false,
         }
     }
@@ -572,7 +578,7 @@ impl TroubleshooterRunner {
                 }
             }
 
-            if has_extra {
+            if has_extra && !self.hide_extra_details {
                 println!("Extra details: ");
                 print!("    ");
                 render_extra_details(4, &value.extra_details);

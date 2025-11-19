@@ -22,6 +22,10 @@ pub struct Check {
     #[arg(short = 'n', long)]
     show_not_run_steps: bool,
 
+    /// Hide all the extra details for commands
+    #[arg(short = 'e', long)]
+    hide_extra_details: bool,
+
     #[command(subcommand)]
     check_type: CheckCommands,
 }
@@ -34,7 +38,11 @@ pub enum CheckCommands {
 
 impl super::Command for Check {
     fn execute(self) -> anyhow::Result<()> {
-        let mut t = TroubleshooterRunner::new(self.show_successful_steps, self.show_not_run_steps);
+        let mut t = TroubleshooterRunner::new(
+            self.show_successful_steps,
+            self.show_not_run_steps,
+            self.hide_extra_details,
+        );
 
         match self.check_type {
             CheckCommands::Ssh(ssh) => t.run_cli(ssh),

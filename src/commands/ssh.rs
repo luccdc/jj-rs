@@ -17,7 +17,7 @@ impl super::Command for Ssh {
     fn execute(self) -> anyhow::Result<()> {
         match self.command {
             SshCommands::Check(ssh_troubleshooter) => {
-                let mut t = crate::utils::checks::TroubleshooterRunner::new(false, false);
+                let mut t = crate::utils::checks::TroubleshooterRunner::new(false, false, false);
 
                 t.run_cli(ssh_troubleshooter)?;
                 Ok(())

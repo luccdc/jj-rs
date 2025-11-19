@@ -15,9 +15,15 @@
       url = "git+https://github.com/the-tcpdump-group/libpcap";
       flake = false;
     };
+    pamtester = {
+      url =
+        "http://ftp.de.debian.org/debian/pool/main/p/pamtester/pamtester_0.1.2-4_amd64.deb";
+      flake = false;
+    };
   };
 
-  outputs = inputs@{ self, flake-parts, crane, rust-overlay, libpcap-src, ... }:
+  outputs = inputs@{ self, flake-parts, crane, rust-overlay, libpcap-src
+    , pamtester, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [ ];
 
@@ -65,6 +71,16 @@
               cp libpcap.a $out/lib
             '';
           };
+
+          pamtester-gzipped = pkgs.runCommand "pamtster-gzipped" { } ''
+            TEMP="$(mktemp -d)"
+
+            cd $TEMP
+            ${pkgs.binutils}/bin/ar x ${pamtester}
+            tar xvJpf data.tar.xz
+            ${pkgs.busybox}/bin/gzip usr/bin/pamtester
+            cp usr/bin/pamtester.gz $out
+          '';
 
           pkgsStatic = pkgs.pkgsStatic;
 
@@ -134,6 +150,7 @@
             TMUX_GZIPPED = tmux-gzipped;
             TCPDUMP_GZIPPED = tcpdump-gzipped;
             ZSH_GZIPPED = zsh-gzipped;
+            PAMTESTER_GZIPPED = pamtester-gzipped;
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
@@ -192,6 +209,7 @@
             TMUX_GZIPPED = tmux-gzipped;
             TCPDUMP_GZIPPED = tcpdump-gzipped;
             ZSH_GZIPPED = zsh-gzipped;
+            PAMTESTER_GZIPPED = pamtester-gzipped;
           });
         };
     };

@@ -80,12 +80,25 @@
         "type": "github"
       }
     },
+    "pamtester": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-pmdgzp1H4qeftbAG5ppmWnKnCwIO4fQSyZgqBb5Md7c=",
+        "type": "file",
+        "url": "http://ftp.de.debian.org/debian/pool/main/p/pamtester/pamtester_0.1.2-4_amd64.deb"
+      },
+      "original": {
+        "type": "file",
+        "url": "http://ftp.de.debian.org/debian/pool/main/p/pamtester/pamtester_0.1.2-4_amd64.deb"
+      }
+    },
     "root": {
       "inputs": {
         "crane": "crane",
         "flake-parts": "flake-parts",
         "libpcap-src": "libpcap-src",
         "nixpkgs": "nixpkgs",
+        "pamtester": "pamtester",
         "rust-overlay": "rust-overlay"
       }
     },

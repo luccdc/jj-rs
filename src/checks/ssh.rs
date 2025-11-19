@@ -72,6 +72,12 @@ impl Troubleshooter for SshTroubleshooter {
                 self.host.is_loopback() || self.local,
             ),
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
+            pam_check(
+                Some("sshd"),
+                &self.user,
+                self.password.clone(),
+                self.host.is_loopback() || self.local,
+            ),
             passive_tcpdump_check(
                 self.port,
                 self.external,

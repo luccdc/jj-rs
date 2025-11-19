@@ -14,6 +14,7 @@ pub mod checks;
 pub mod distro;
 pub mod download_container;
 pub mod nft;
+pub mod pamtester;
 pub mod passwd;
 pub mod ports;
 #[allow(dead_code)]
