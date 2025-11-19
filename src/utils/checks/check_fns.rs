@@ -5,7 +5,7 @@
 use std::{
     io::prelude::*,
     marker::PhantomData,
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket},
 };
 
 use anyhow::Context;
@@ -16,7 +16,7 @@ use crate::utils::{
     checks::{CheckResult, CheckStep, IntoCheckResult, TroubleshooterRunner},
     distro::Distro,
     download_container::DownloadContainer,
-    qx,
+    ports, qx,
     systemd::{get_service_info, is_service_active},
 };
 
@@ -308,22 +308,15 @@ struct TcpConnectCheck {
 
 impl<'a> CheckStep<'a> for TcpConnectCheck {
     fn name(&self) -> &'static str {
-        "Check to see if the port is accessible for TCP"
+        "Check TCP port status"
     }
 
     fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         let timeout = std::time::Duration::from_secs(2);
 
         if self.ip.is_loopback() {
-            let cont = match DownloadContainer::new(None, None) {
-                Ok(cont) => cont,
-                Err(e) => {
-                    return Ok(CheckResult::fail(
-                        format!("Could not create download container for TCP check: {e:?}"),
-                        serde_json::json!(null),
-                    ));
-                }
-            };
+            let cont = DownloadContainer::new(None, None)
+                .context("Could not create download container for TCP check")?;
             let client1 = cont
                 .run(|| {
                     let addr = SocketAddr::new(IpAddr::V4(cont.wan_ip()), self.port);
@@ -403,18 +396,19 @@ pub fn tcp_connect_check<'a, I: Into<IpAddr>>(addr: I, port: u16) -> Box<dyn Che
     })
 }
 
+/// Option used to configure the layer 4 protocol
 #[derive(Clone, Debug, PartialEq, Eq, Copy)]
 #[allow(dead_code)]
-pub enum TcpdumpProtocol {
+pub enum CheckIpProtocol {
     Tcp,
     Udp,
 }
 
-impl TcpdumpProtocol {
+impl CheckIpProtocol {
     fn from_int(i: u8) -> Option<Self> {
         match i {
-            6 => Some(TcpdumpProtocol::Tcp),
-            17 => Some(TcpdumpProtocol::Udp),
+            6 => Some(CheckIpProtocol::Tcp),
+            17 => Some(CheckIpProtocol::Udp),
             _ => None,
         }
     }
@@ -422,7 +416,7 @@ impl TcpdumpProtocol {
 
 struct ImmediateTcpdumpCheck {
     port: u16,
-    protocol: TcpdumpProtocol,
+    protocol: CheckIpProtocol,
     connection_test: Vec<u8>,
     should_run: bool,
 }
@@ -468,10 +462,10 @@ impl ImmediateTcpdumpCheck {
                     "host {} and {} port {}",
                     wan_ip,
                     match &self.protocol {
-                        TcpdumpProtocol::Tcp => {
+                        CheckIpProtocol::Tcp => {
                             "tcp"
                         }
-                        TcpdumpProtocol::Udp => {
+                        CheckIpProtocol::Udp => {
                             "udp"
                         }
                     },
@@ -507,7 +501,7 @@ impl ImmediateTcpdumpCheck {
             // We don't need any extra information from UDP, but from TCP we want flags to check for
             // SYN/ACK
             if let Some(port) = match self.protocol {
-                TcpdumpProtocol::Udp => (header.caplen >= 38)
+                CheckIpProtocol::Udp => (header.caplen >= 38)
                     .then(|| {
                         self.check_udp_packet(
                             source_port,
@@ -519,7 +513,7 @@ impl ImmediateTcpdumpCheck {
                         )
                     })
                     .flatten(),
-                TcpdumpProtocol::Tcp => (header.caplen >= 48)
+                CheckIpProtocol::Tcp => (header.caplen >= 48)
                     .then(|| {
                         self.check_tcp_packet(
                             source_port,
@@ -642,12 +636,12 @@ impl ImmediateTcpdumpCheck {
 
         container
             .run(|| match protocol {
-                TcpdumpProtocol::Tcp => {
+                CheckIpProtocol::Tcp => {
                     let mut sock = TcpStream::connect((container.wan_ip(), *port))?;
                     _ = sock.write(connection_test)?;
                     Ok(sock.local_addr()?.port())
                 }
-                TcpdumpProtocol::Udp => {
+                CheckIpProtocol::Udp => {
                     let sock = UdpSocket::bind("0.0.0.0:0")?;
                     sock.send_to(connection_test, (container.wan_ip(), *port))?;
                     Ok(sock.local_addr()?.port())
@@ -801,7 +795,7 @@ impl ImmediateTcpdumpCheck {
 
 impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
     fn name(&self) -> &'static str {
-        "Check tcpdump to verify the firewall is working"
+        "Verify firewall with tcpdump"
     }
 
     fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
@@ -830,9 +824,20 @@ impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
 /// It takes an address and port combination to try and make a connection to, and sends
 /// data to the port over a specified protocol. The data is critical to get UDP based
 /// protocols such as DNS to respond
+///
+/// Example:
+/// ```
+/// # use jj_rs::utils::checks::{CheckIpProtocol, immediate_tcpdump_check};
+/// immediate_tcpdump_check(
+///     22,
+///     CheckIpProtocol::Tcp,
+///     b"opensh".to_vec(),
+///     true
+/// );
+/// ```
 pub fn immediate_tcpdump_check<'a>(
     port: u16,
-    protocol: TcpdumpProtocol,
+    protocol: CheckIpProtocol,
     connection_test: Vec<u8>,
     should_run: bool,
 ) -> Box<dyn CheckStep<'a> + 'a> {
@@ -881,7 +886,7 @@ impl PassiveTcpdumpCheck {
         Ipv4Addr,
         u16,
         chrono::DateTime<chrono::Utc>,
-        TcpdumpProtocol,
+        CheckIpProtocol,
     )> {
         loop {
             let p = capture
@@ -900,7 +905,7 @@ impl PassiveTcpdumpCheck {
             let ip_packet = &p.data[14..];
             let ihl = (ip_packet[0] & 0x0F) as usize;
 
-            let Some(protocol) = TcpdumpProtocol::from_int(ip_packet[9]) else {
+            let Some(protocol) = CheckIpProtocol::from_int(ip_packet[9]) else {
                 continue;
             };
 
@@ -924,7 +929,7 @@ impl PassiveTcpdumpCheck {
         capture: pcap::Capture<pcap::Active>,
         source_ip: Ipv4Addr,
         source_port: u16,
-        proto: TcpdumpProtocol,
+        proto: CheckIpProtocol,
     ) -> anyhow::Result<()> {
         let mut stream = capture.setnonblock()?.stream(TcpdumpCodec)?;
         while let Some(p) = stream.next().await {
@@ -942,7 +947,7 @@ impl PassiveTcpdumpCheck {
             let ip_packet = &p[14..];
             let ihl = (ip_packet[0] & 0x0F) as usize;
 
-            if Some(proto) != TcpdumpProtocol::from_int(ip_packet[9]) {
+            if Some(proto) != CheckIpProtocol::from_int(ip_packet[9]) {
                 continue;
             }
 
@@ -1059,5 +1064,189 @@ pub fn passive_tcpdump_check<'a>(
         run,
         promisc,
         log_func,
+    })
+}
+
+struct BinaryPortsCheck {
+    process_names: Vec<String>,
+    port: u16,
+    protocol: CheckIpProtocol,
+    run_local: bool,
+}
+
+impl CheckStep<'_> for BinaryPortsCheck {
+    fn name(&self) -> &'static str {
+        "Sockstat check"
+    }
+
+    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+        if !self.run_local {
+            return Ok(CheckResult::not_run(
+                "Cannot check listening ports on a remote system",
+                serde_json::json!(null),
+            ));
+        }
+
+        let procs = std::fs::read_dir("/proc").context("Could not open /proc")?;
+
+        let procs = procs
+            .filter_map(|entry| {
+                entry
+                    .ok()
+                    .map(|dir| dir.file_name().to_string_lossy().to_string())
+            })
+            .filter_map(|dir| dir.parse::<u32>().ok())
+            .filter_map(|dir| {
+                nix::fcntl::readlink(&*format!("/proc/{dir}/exe"))
+                    .ok()
+                    .filter(|exe| {
+                        let exe_str = exe.to_string_lossy();
+
+                        self.process_names
+                            .iter()
+                            .any(|proc_name| exe_str.ends_with(&**proc_name))
+                    })
+                    .map(|exe| (dir, exe.to_string_lossy().to_string()))
+            })
+            .filter_map(|(pid, exe)| {
+                let inodes = ports::socket_inodes_for_pid(pid)
+                    .ok()?
+                    .into_iter()
+                    .map(|inode| (inode, pid as u64))
+                    .collect();
+
+                // Read from /proc/{pid}/net/{tcp,udp}6 instead to make sure that
+                // we are checking accross namespaces. It is the responsibility of
+                // the operator to verify firewall rules are correct
+
+                let ports = ports::parse_raw_ip_stats::<_, Ipv4Addr>(
+                    format!("/proc/{pid}/net/tcp"),
+                    ports::SocketType::Tcp,
+                )
+                .into_iter()
+                .flatten()
+                .chain(
+                    ports::parse_raw_ip_stats::<_, Ipv6Addr>(
+                        format!("/proc/{pid}/net/tcp6"),
+                        ports::SocketType::Tcp,
+                    )
+                    .into_iter()
+                    .flatten(),
+                )
+                .chain(
+                    ports::parse_raw_ip_stats::<_, Ipv4Addr>(
+                        format!("/proc/{pid}/net/udp"),
+                        ports::SocketType::Udp,
+                    )
+                    .into_iter()
+                    .flatten(),
+                )
+                .chain(
+                    ports::parse_raw_ip_stats::<_, Ipv6Addr>(
+                        format!("/proc/{pid}/net/udp6"),
+                        ports::SocketType::Udp,
+                    )
+                    .into_iter()
+                    .flatten(),
+                )
+                .collect::<Vec<_>>();
+
+                let ports_enriched = ports::enrich_ip_stats(ports, inodes)
+                    .into_iter()
+                    .filter(|port| port.pid == Some(pid.into()))
+                    .collect::<Vec<_>>();
+
+                Some((pid, exe, ports_enriched))
+            })
+            .collect::<Vec<_>>();
+
+        let proc_listening = procs.iter().any(|(_, _, ports)| {
+            ports.iter().any(|port| {
+                !port.local_address.is_loopback()
+                    && port.local_port == self.port
+                    && (port.state
+                        == (match self.protocol {
+                            CheckIpProtocol::Tcp => ports::SocketState::LISTEN,
+                            CheckIpProtocol::Udp => ports::SocketState::CLOSE,
+                        }))
+                    && (port.socket_type
+                        == (match self.protocol {
+                            CheckIpProtocol::Tcp => ports::SocketType::Tcp,
+                            CheckIpProtocol::Udp => ports::SocketType::Udp,
+                        }))
+            })
+        });
+
+        let context_procs = procs
+            .iter()
+            .map(|(pid, exe, ports)| {
+                serde_json::json!({
+                    "pid": pid,
+                    "exe": exe,
+                    "ports": ports
+                        .iter()
+                        .map(|port| serde_json::json!({
+                            "local_address": format!("{}", port.local_address),
+                            "local_port": port.local_port,
+                            "state": format!("{:?}", port.state),
+                            "type": format!("{:?}", port.socket_type)
+                        }))
+                        .collect::<serde_json::Value>()
+                })
+            })
+            .collect::<serde_json::Value>();
+
+        if proc_listening {
+            Ok(CheckResult::succeed(
+                format!(
+                    "Successfully found a process listening on port {}",
+                    self.port
+                ),
+                serde_json::json!({
+                    "processes": context_procs
+                }),
+            ))
+        } else {
+            Ok(CheckResult::fail(
+                format!(
+                    "Could not find a process with specified names listening on port {}",
+                    self.port
+                ),
+                serde_json::json!({
+                    "specified_names": self.process_names,
+                    "processes": context_procs
+                }),
+            ))
+        }
+    }
+}
+
+/// Check for processes started from a binary with the specified name, and
+/// verify that a specified port is listening for TCP or open for UDP
+///
+/// Example:
+/// ```
+/// # use jj_rs::utils::checks::{CheckIpProtocol, binary_ports_check};
+/// binary_ports_check(
+///     ["sshd"],
+///     22,
+///     CheckIpProtocol::Tcp,
+///     true
+/// );
+/// ```
+pub fn binary_ports_check<'a, I: IntoIterator<Item = S>, S: AsRef<str>>(
+    process_names: I,
+    port: u16,
+    protocol: CheckIpProtocol,
+    run_local: bool,
+) -> Box<dyn CheckStep<'a> + 'a> {
+    Box::new(BinaryPortsCheck {
+        process_names: process_names
+            .into_iter()
+            .map(|s| s.as_ref().to_string())
+            .collect(),
+        port,
+        protocol,
+        run_local,
     })
 }

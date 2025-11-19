@@ -58,10 +58,16 @@ impl Troubleshooter for SshTroubleshooter {
                 self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),
+            binary_ports_check(
+                ["sshd"],
+                self.port,
+                CheckIpProtocol::Tcp,
+                self.host.is_loopback() || self.local,
+            ),
             tcp_connect_check(self.host, self.port),
             immediate_tcpdump_check(
                 self.port,
-                TcpdumpProtocol::Tcp,
+                CheckIpProtocol::Tcp,
                 b"openssh".to_vec(),
                 self.host.is_loopback() || self.local,
             ),
@@ -85,6 +91,13 @@ impl SshTroubleshooter {
             .password
             .clone()
             .resolve_prompt(tr, "Enter a password to sign into the SSH server with: ")?;
+
+        // Wait one second so that logs generated from here on out are more
+        // likely to be related to logging in. Otherwise, the program goes too
+        // fast and will catch logs from previous checks; in particular,
+        // kex_exchange_identification errors from connecting directly and logs
+        // about the download shell being created
+        std::thread::sleep(std::time::Duration::from_secs(1));
 
         let start = Utc::now();
 

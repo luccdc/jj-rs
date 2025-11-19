@@ -22,7 +22,7 @@ pub enum SocketType {
 }
 
 /// Mirrors the states [used internally](https://github.com/iproute2/iproute2/blob/ca756f36a0c6d24ab60657f8d14312c17443e5f0/misc/ss.c#L222-L238) for `ss`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
 #[allow(clippy::upper_case_acronyms)]
@@ -122,7 +122,29 @@ pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
         .collect())
 }
 
-trait IpSize: From<Self::Size> {
+/// Given a specified PID, load the file descriptors that map to sockets and
+/// extract the inode number of the socket internally
+pub fn socket_inodes_for_pid(pid: u32) -> anyhow::Result<Vec<u64>> {
+    let socket_re = regex::Regex::new(r"socket:\[([0-9]+)\]")?;
+
+    Ok(std::fs::read_dir(format!("/proc/{pid}/fd"))?
+        .filter_map(|fd| -> Option<u64> {
+            let fd_name = fd.ok()?.file_name().to_string_lossy().to_string();
+            let link = readlink(&*format!("/proc/{pid}/fd/{fd_name}"))
+                .ok()?
+                .to_string_lossy()
+                .to_string();
+
+            let inode_str = socket_re.captures(&link)?.extract::<1>().1[0];
+
+            inode_str.parse().ok()
+        })
+        .collect())
+}
+
+/// Internal trait used to allow specifying Ipv4Addr and Ipv6Addr as type arguments
+/// to parsers for /proc/net/{tcp,udp}6
+pub trait IpSize: From<Self::Size> {
     type Size: Num + PrimInt + std::fmt::Debug;
     const HEX_COUNT: &str;
 }
@@ -137,15 +159,18 @@ impl IpSize for Ipv6Addr {
     const HEX_COUNT: &str = "32";
 }
 
-/// Parse statistics from a file such as /proc/net/tcp or /proc/net/udp
-fn parse_ip_stats<P, A>(path: P, socket_type: SocketType) -> anyhow::Result<Vec<SocketRecord>>
+/// Parse the path specified and return just the basic inode data. All the process
+/// specific information in the SocketRecord structs returned are left as None;
+/// `pid`, `cmdline`, and `cgroup`
+pub fn parse_raw_ip_stats<P, A>(
+    path: P,
+    socket_type: SocketType,
+) -> anyhow::Result<Vec<SocketRecord>>
 where
     P: AsRef<Path>,
     A: IpSize + Into<IpAddr>,
     <<A as IpSize>::Size as Num>::FromStrRadixErr: 'static + std::error::Error + Send + Sync,
 {
-    let inode_pids = socket_inodes()?;
-
     let tcp_sockets = std::fs::read_to_string(path)?;
 
     let regex = regex::Regex::new(&format!(
@@ -187,15 +212,6 @@ where
             ]|
              -> anyhow::Result<SocketRecord> {
                 let inode = inode.parse()?;
-                let pid = inode_pids.get(&inode).cloned();
-
-                let cmdline = pid
-                    .and_then(|p| std::fs::read_to_string(format!("/proc/{p}/cmdline")).ok())
-                    .map(|cmd| cmd.replace("\0", " "));
-
-                let cgroup = pid
-                    .and_then(|p| std::fs::read_to_string(format!("/proc/{p}/cgroup")).ok())
-                    .map(|cg| cg.trim_end().to_string());
 
                 let local_address = A::Size::from_be(A::Size::from_str_radix(loc_addr, 16)?);
                 let remote_address = A::Size::from_be(A::Size::from_str_radix(rem_addr, 16)?);
@@ -208,15 +224,72 @@ where
                     remote_port: u16::from_str_radix(rem_port, 16)?,
                     state: u8::from_str_radix(stat, 16)?.into(),
                     inode,
-                    pid,
-                    cmdline,
-                    cgroup,
+                    pid: None,
+                    cmdline: None,
+                    cgroup: None,
                 })
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(results)
+}
+
+/// Given the specified sockets, query the /proc filesystem to identify process
+/// information. Makes use of the provided inode_pids map to avoid querying all
+/// of /proc to identify which process has a symbolic link to the socket inode
+///
+/// inode_pids maps from inodes to pids
+pub fn enrich_ip_stats(
+    stats: Vec<SocketRecord>,
+    inode_pids: HashMap<u64, u64>,
+) -> Vec<SocketRecord> {
+    stats
+        .into_iter()
+        .map(|stat| {
+            let pid = inode_pids.get(&stat.inode).cloned();
+
+            let cmdline = pid
+                .and_then(|p| std::fs::read_to_string(format!("/proc/{p}/cmdline")).ok())
+                .map(|cmd| cmd.replace("\0", " "));
+
+            let cgroup = pid
+                .and_then(|p| std::fs::read_to_string(format!("/proc/{p}/cgroup")).ok())
+                .map(|cg| cg.trim_end().to_string());
+
+            SocketRecord {
+                pid,
+                cmdline,
+                cgroup,
+                ..stat
+            }
+        })
+        .collect()
+}
+
+/// Parse statistics from a file such as /proc/net/tcp or /proc/net/udp6
+///
+/// Example parsing IPv4 data:
+/// ```
+/// # use {jj_rs::utils::ports::{SocketType, parse_ip_stats}, std::net::Ipv4Addr};
+/// parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp);
+/// ```
+///
+/// Example parsing IPv6 data:
+/// ```
+/// # use {jj_rs::utils::ports::{SocketType, parse_ip_stats}, std::net::Ipv6Addr};
+/// parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp6", SocketType::Udp);
+/// ```
+pub fn parse_ip_stats<P, A>(path: P, socket_type: SocketType) -> anyhow::Result<Vec<SocketRecord>>
+where
+    P: AsRef<Path>,
+    A: IpSize + Into<IpAddr>,
+    <<A as IpSize>::Size as Num>::FromStrRadixErr: 'static + std::error::Error + Send + Sync,
+{
+    let inode_pids = socket_inodes()?;
+    let ip_stats = parse_raw_ip_stats::<P, A>(path, socket_type)?;
+
+    Ok(enrich_ip_stats(ip_stats, inode_pids))
 }
 
 /// Shortcut to parse statistics from /proc/net/tcp

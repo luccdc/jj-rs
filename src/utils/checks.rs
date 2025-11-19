@@ -616,13 +616,17 @@ fn render_extra_details(depth: usize, obj: &serde_json::Value) {
             print!(r#""{s}""#);
         }
         Value::Array(ve) => {
-            println!("[");
-            for val in ve {
-                print!("{:depth$}", "", depth = depth + 4);
-                render_extra_details(depth + 4, val);
-                println!(",");
+            if ve.is_empty() {
+                print!("[]");
+            } else {
+                println!("[");
+                for val in ve {
+                    print!("{:depth$}", "", depth = depth + 4);
+                    render_extra_details(depth + 4, val);
+                    println!(",");
+                }
+                print!("{:depth$}]", "");
             }
-            print!("{:depth$}]", "");
         }
         Value::Object(o) => {
             println!("{{");
