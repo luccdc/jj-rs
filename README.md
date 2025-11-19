@@ -37,7 +37,13 @@ Inside the docker container, you will be able to run `jj-rs` as root
 
 ## Programming in Rust
 
-If you do not know the Rust programming language, a great starting resource is the Rust Book: [https://doc.rust-lang.org/book/](https://doc.rust-lang.org/book/)
+If you do not know the Rust programming language, a couple of great starting resources are: 
+- The Rust book: [https://doc.rust-lang.org/book/](https://doc.rust-lang.org/book/)
+- Rustlings: [https://github.com/rust-lang/rustlings](https://github.com/rust-lang/rustlings)
+
+## How to contribute changes to this repository
+
+All changes made to the main branch should be done via branching and pull request
 
 ## Adding a command
 
@@ -107,6 +113,12 @@ fn do_the_thing() -> anyhow::Result<()> {
         .context("Could not run iptables to drop firewall rules")?; // Context added before using `?`
 }
 ```
+
+## Async vs sync Rust
+
+Asynchronous rust should not be used as a first choice. It will be used in the following cases:
+1. Programming commands or utilities that are web servers or clients, since the web ecosystem is heavily intertwined with async Rust (e.g., `jj-rs serve`: [./src/commands/serve.rs](./src/commands/serve.rs))
+2. Programming a utility that needs a timeout but does not provide such a function in synchronous Rust, but does provide a selectable asynchronous API (e.g., `PassiveTcpdumpCheck::run_check`: [./src/utils/checks/check_fns.rs](./src/utils/checks/check_fns.rs))
 
 ## Documentation
 
