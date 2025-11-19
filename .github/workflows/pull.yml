@@ -3,8 +3,8 @@ name: ci-check
 on:
   pull_request:
     branches: ['*']
-  paths:
-    - 'src/**'
+    paths:
+      - 'src/**'
 
 jobs:
   ci-check:
