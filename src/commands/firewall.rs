@@ -94,7 +94,9 @@ impl QuickSetup {
             .filter(|p| p.socket_type == SocketType::Tcp && p.state == SocketState::ESTABLISHED)
             .collect::<Vec<_>>();
 
-        writeln!(ob, "flush ruleset")?;
+        writeln!(ob, "table inet core_firewall")?;
+        writeln!(ob, "flush table inet core_firewall\n")?;
+        writeln!(ob, "delete table inet core_firewall\n")?;
         writeln!(ob, "table inet core_firewall {{")?;
         writeln!(ob, "    chain input {{")?;
         writeln!(ob, "        type filter hook input priority 0; policy drop")?;

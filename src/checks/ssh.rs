@@ -2,64 +2,54 @@ use std::{net::Ipv4Addr, sync::Arc};
 
 use anyhow::Context;
 use chrono::Utc;
-use clap::Parser;
-use serde::Deserialize;
 
 use crate::utils::distro::get_distro;
 
 use super::*;
 
-fn defarg_localhost() -> Ipv4Addr {
-    Ipv4Addr::LOCALHOST
-}
-
-fn defarg_22() -> u16 {
-    22
-}
-
-fn defarg_root() -> String {
-    "root".to_string()
-}
-
-fn defarg_false() -> bool {
-    false
-}
-
 /// Troubleshoot an SSH server connection
-#[derive(Parser, Deserialize, Debug)]
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[serde(default)]
 pub struct SshTroubleshooter {
     /// The host to connect to and attempt signing in
     #[arg(long, short = 'H', default_value = "127.0.0.1")]
-    #[serde(default = "defarg_localhost")]
     host: Ipv4Addr,
 
     /// The port of the SSH server
     #[arg(long, short, default_value_t = 22)]
-    #[serde(default = "defarg_22")]
     port: u16,
 
     /// The user to sign in as
     #[arg(long, short, default_value = "root")]
-    #[serde(default = "defarg_root")]
     user: String,
 
     /// [CheckValue] The password to authenticate with
     #[arg(long, short = 'P', default_value_t = Default::default())]
-    #[serde(default)]
     password: CheckValue,
 
     /// If the remote host is specified, indicate that the traffic sent to the remote host will be sent
     /// back to this server via NAT reflection (e.g., debug firewall on another machine, network firewall
     /// WAN IP for this machine)
     #[arg(long, short)]
-    #[serde(default = "defarg_false")]
     local: bool,
 
     /// Listen for an external connection attempt, and diagnose what appears to
     /// be going wrong with such a check. All other steps attempt to initiate connections
     #[arg(long, short)]
-    #[serde(default = "defarg_false")]
     external: bool,
+}
+
+impl Default for SshTroubleshooter {
+    fn default() -> Self {
+        SshTroubleshooter {
+            host: Ipv4Addr::from(0x7F000001),
+            port: 22,
+            user: "root".to_string(),
+            password: CheckValue::stdin(),
+            local: false,
+            external: false,
+        }
+    }
 }
 
 impl Troubleshooter for SshTroubleshooter {

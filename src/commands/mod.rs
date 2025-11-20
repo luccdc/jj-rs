@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod busybox;
 pub mod check;
+pub mod check_daemon;
 pub mod download_shell;
 pub mod elk;
 pub mod r#enum;

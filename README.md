@@ -1,6 +1,26 @@
 # jiujitsu-rs
 
-## Getting set up
+Grapple your Linux systems
+
+A generic swiss army knife tool that is meant to be easily deployed to a system and allows for administering a system with a single binary
+
+## Features
+
+- System enumeration and verification
+- Manage backups
+- Firewall management
+- Quick ELK setup and management
+- Integrated service uptime checks
+
+## Installing
+
+To install, simply download the latest release and move it to `/usr/bin`:
+``` sh
+wget -O /tmp/jj-rs https://github.com/luccdc/jj-rs/releases/latest/download/jj-rs
+install -m755 /tmp/jj-rs /usr/bin/jj-rs
+```
+
+## Getting set up for development
 
 1. You will need a Linux shell; WSL2 will work great
 2. Install and configure [git lfs](https://git-lfs.com/):

@@ -5,5 +5,6 @@
 //! It's to run doctests and allow generating documentation
 //! for what goes on in utils
 
+#[doc(hidden)]
 pub mod macros;
 pub mod utils;

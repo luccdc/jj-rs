@@ -1,6 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::Parser;
 
-use crate::checks::{self, TroubleshooterRunner};
+use crate::{checks, define_checks};
 
 /// Troubleshoot network services, remotely or locally
 ///
@@ -30,23 +30,26 @@ pub struct Check {
     check_type: CheckCommands,
 }
 
-#[derive(Subcommand, Debug)]
-pub enum CheckCommands {
-    /// Troubleshoot an SSH connection
-    Ssh(checks::ssh::SshTroubleshooter),
+// Add checks here:
+//
+// /// Comments describing how to use troubleshooter
+// Name, serialized_name => module::Troubleshooter
+define_checks! {
+    CheckCommands {
+        /// Troubleshoot an SSH connection
+        Ssh, "ssh" => checks::ssh::SshTroubleshooter
+    }
 }
 
 impl super::Command for Check {
     fn execute(self) -> anyhow::Result<()> {
-        let mut t = TroubleshooterRunner::new(
+        let mut t = checks::TroubleshooterRunner::new(
             self.show_successful_steps,
             self.show_not_run_steps,
             self.hide_extra_details,
         );
 
-        match self.check_type {
-            CheckCommands::Ssh(ssh) => t.run_cli(ssh),
-        }?;
+        t.run_cli(self.check_type.troubleshooter())?;
 
         Ok(())
     }

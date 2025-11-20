@@ -206,7 +206,7 @@ impl<'a> CheckStep<'a> for PassiveTcpdumpCheck {
 /// Listen for an inbound connection on the specified port, and verify that a
 /// response is provided by the operating system.
 ///
-/// Run is provided as an argument to allow avoiding the use of [`filter_check`],
+/// Run is provided as an argument to allow avoiding the use of [`super::filter_check`],
 /// building that functionality into this check as it is an expensive check
 /// (time-wise)
 ///

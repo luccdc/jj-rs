@@ -1,3 +1,7 @@
+//! Utilities for reading passwd entries
+//!
+//! Makes use of getent to also query for domain user information, if available
+
 use crate::utils::qx;
 
 /// Matches the structure of man 5 passwd

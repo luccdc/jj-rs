@@ -10,10 +10,8 @@
 //!
 //! ```
 //! # use jj_rs::utils::checks::CheckValue;
-//! use clap::Parser;
-//! use serde::Deserialize;
-//!
-//! #[derive(Parser, Deserialize)]
+//! #[derive(clap::Parser, serde::Deserialize, serde::Serialize, Default)]
+//! #[serde(default)]
 //! pub struct SshTroubleshooter {
 //!     #[arg(long, short, default_value_t = Default::default())]
 //!     password: CheckValue
@@ -28,7 +26,8 @@
 //! # use jj_rs::utils::checks::{CheckValue, Troubleshooter, check_fn, CheckStep, CheckResult, TroubleshooterRunner};
 //! # use clap::Parser;
 //! # use serde::Deserialize;
-//! # #[derive(Parser, Deserialize)]
+//! # #[derive(clap::Parser, serde::Deserialize, serde::Serialize, Default)]
+//! # #[serde(default)]
 //! # pub struct SshTroubleshooter {
 //! #     #[arg(long, short, default_value_t = Default::default())]
 //! #     password: CheckValue
@@ -88,7 +87,7 @@ use std::{
 
 use chrono::prelude::*;
 use colored::Colorize;
-use serde::{Deserialize, de::Visitor};
+use serde::{Deserialize, Serialize, de::Visitor};
 
 pub mod check_fns;
 pub use check_fns::*;
@@ -365,8 +364,21 @@ impl<'de> Deserialize<'de> for CheckValue {
     }
 }
 
+impl Serialize for CheckValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match &self.original {
+            CheckValueInternal::File(f) => serializer.serialize_str(&format!("@{}", f.display())),
+            CheckValueInternal::Stdin => serializer.serialize_str("-"),
+            CheckValueInternal::Value(v) => serializer.serialize_str(&v),
+        }
+    }
+}
+
 /// Represents whether a check failed, succeeded, or was not run
-#[derive(serde::Serialize, Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, Eq, PartialEq)]
 pub enum CheckResultType {
     Success,
     Failure,
@@ -396,7 +408,7 @@ impl BitAndAssign for CheckResultType {
 
 /// Contains data about the results of running a check, including
 /// when it happened, what happened, a brief summary, and any extra useful information
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct CheckResult {
     timestamp: DateTime<Utc>,
     result_type: CheckResultType,
@@ -458,8 +470,15 @@ impl CheckResult {
 ///
 /// Merely used to return a list of checks that constitute a troubleshooting process
 ///
+/// Every troubleshooter should extend clap::Parser so that it can be used at the cli
+/// and for the daemon, Deserialize and Serialize so that it can be parse configuration
+/// from a file for the daemon, and Default so that the daemon tui knows sensible
+/// values when editing a troubleshooter and creating a new one
+///
 /// See [`crate::utils::checks`] for a description of how to make use of this trait
-pub trait Troubleshooter: for<'de> Deserialize<'de> {
+pub trait Troubleshooter:
+    clap::Parser + for<'de> Deserialize<'de> + serde::Serialize + Default + Clone
+{
     fn checks<'a>(&'a self) -> anyhow::Result<Vec<Box<dyn CheckStep<'a> + 'a>>>;
 }
 
@@ -491,6 +510,10 @@ pub struct TroubleshooterRunner {
     show_not_run_steps: bool,
     hide_extra_details: bool,
     has_rendered_newline_for_step: bool,
+    prompt_user_channel: Option<(
+        std::sync::mpsc::Sender<String>,
+        std::sync::mpsc::Receiver<String>,
+    )>,
 }
 
 impl TroubleshooterRunner {
@@ -504,11 +527,28 @@ impl TroubleshooterRunner {
             show_not_run_steps,
             hide_extra_details,
             has_rendered_newline_for_step: false,
+            prompt_user_channel: None,
+        }
+    }
+
+    pub fn new_daemon(
+        show_successful_steps: bool,
+        show_not_run_steps: bool,
+        hide_extra_details: bool,
+        prompt_user_sender: std::sync::mpsc::Sender<String>,
+        prompt_user_receiver: std::sync::mpsc::Receiver<String>,
+    ) -> Self {
+        Self {
+            show_successful_steps,
+            show_not_run_steps,
+            hide_extra_details,
+            has_rendered_newline_for_step: false,
+            prompt_user_channel: Some((prompt_user_sender, prompt_user_receiver)),
         }
     }
 
     /// Actually runs the troubleshooter specified on the CLI
-    pub fn run_cli<T: Troubleshooter>(&mut self, t: T) -> anyhow::Result<CheckResultType> {
+    pub fn run_cli(&mut self, t: Box<impl Troubleshooter>) -> anyhow::Result<CheckResultType> {
         let checks = t.checks()?;
         let mut start = CheckResultType::NotRun;
 

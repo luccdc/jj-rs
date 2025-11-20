@@ -1,3 +1,5 @@
+/// One time macro used to define the commands that are used for the main
+/// clap argument parser
 #[macro_export]
 macro_rules! define_commands {
     ($($cmd:ident$(, $alias:ident)? => $($struct:ident)::+),+$(,)?) => {
@@ -26,11 +28,49 @@ macro_rules! define_commands {
     };
 }
 
+/// One time macro used to define the list of checks the system is aware of
 #[macro_export]
-macro_rules! ownstr {
-    ($v:expr) => {{ $v.to_string() }};
+macro_rules! define_checks {
+    ($cname:ident { $($(#[$($attr:tt)*])* $name:ident$(, $alias:expr)? => $($ts:ident)::+),+$(,)? }) => {
+        #[derive(::clap::Subcommand, ::serde::Serialize, ::serde::Deserialize, Debug, Clone)]
+        pub enum $cname {
+            $(
+                $(#[$($attr)*])*
+                $(#[serde(rename = $alias)])?
+                $name($($ts)::+)
+            ),+,
+        }
+
+        impl $cname {
+            pub fn troubleshooter(self) -> Box<impl $crate::checks::Troubleshooter> {
+                match self {
+                    $(
+                        Self::$name(inner) => Box::new(inner)
+                    ),+,
+                }
+            }
+        }
+    };
 }
 
+/// Macro that performs very similarly to vec![], except it calls
+/// .to_string() on all items provided to it
+///
+/// Normal use of vec![] can be confusing with String vecs:
+/// ```compile_fail
+/// let string_vec: Vec<String> = vec!["1", "2"];
+/// ```
+///
+/// Or, it can be verbose:
+/// ```
+/// let string_vec: Vec<String> = vec!["1".to_string(), "2".to_string()];
+/// ```
+///
+/// This macro makes creating such vecs easier:
+/// ```
+/// # use jj_rs::strvec;
+/// let string_vec: Vec<String> = strvec!["1", "2"];
+/// ```
 #[macro_export]
 macro_rules! strvec {
     ($($v:expr),+$(,)?) => {
@@ -40,6 +80,7 @@ macro_rules! strvec {
     };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! flags {
     ($flags:ident) => {{

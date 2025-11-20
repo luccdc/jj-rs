@@ -19,6 +19,7 @@ define_commands! {
     // utility commands
     DownloadShell, ds => commands::download_shell::DownloadShell,
     Check, c => commands::check::Check,
+    CheckDaemon, cd => commands::check_daemon::CheckDaemon,
     Elk => commands::elk::Elk,
     Serve, s => commands::serve::Serve,
 
