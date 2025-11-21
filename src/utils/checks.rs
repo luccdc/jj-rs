@@ -88,6 +88,10 @@ use std::{
 use chrono::prelude::*;
 use colored::Colorize;
 use serde::{Deserialize, Serialize, de::Visitor};
+use tokio::{
+    runtime::Handle,
+    sync::mpsc::{Receiver, Sender},
+};
 
 pub mod check_fns;
 pub use check_fns::*;
@@ -177,26 +181,52 @@ enum CheckValueInternal {
 
 fn resolve_value(
     internal: &CheckValueInternal,
-    prompt: Option<(&str, &mut TroubleshooterRunner)>,
+    tr: &mut TroubleshooterRunner,
+    prompt: Option<&str>,
 ) -> anyhow::Result<String> {
     match internal {
         CheckValueInternal::Value(s) => Ok(s.to_string()),
         CheckValueInternal::Stdin => {
-            if let Some((p, tr)) = prompt {
-                print!(
-                    "{}{p}",
-                    if tr.has_rendered_newline_for_step {
-                        ""
-                    } else {
-                        "\n"
-                    }
-                );
-                tr.has_rendered_newline_for_step = true;
-                std::io::stdout().lock().flush()?;
-            }
+            let input = match (prompt, &mut tr.prompt_user_channel) {
+                (Some(p), None) => {
+                    print!(
+                        "{}{p}",
+                        if tr.has_rendered_newline_for_step {
+                            ""
+                        } else {
+                            "\n"
+                        }
+                    );
+                    tr.has_rendered_newline_for_step = true;
+                    std::io::stdout().lock().flush()?;
 
-            let mut input = String::new();
-            std::io::stdin().lock().read_line(&mut input)?;
+                    let mut input = String::new();
+                    std::io::stdin().lock().read_line(&mut input)?;
+
+                    Ok::<_, anyhow::Error>(input)
+                }
+                (Some(p), Some((w, r, h))) => h.block_on(async {
+                    w.send(Some(p.to_string())).await?;
+
+                    Ok(r.recv()
+                        .await
+                        .ok_or(anyhow::anyhow!("Did not receive prompt back from user"))?)
+                }),
+                (None, Some((w, r, h))) => h.block_on(async {
+                    w.send(None).await?;
+
+                    Ok(r.recv()
+                        .await
+                        .ok_or(anyhow::anyhow!("Did not receive prompt back from user"))?)
+                }),
+                (None, None) => {
+                    let mut input = String::new();
+                    std::io::stdin().lock().read_line(&mut input)?;
+
+                    Ok(input)
+                }
+            }?;
+
             Ok(input.trim().to_string())
         }
         CheckValueInternal::File(f) => {
@@ -239,7 +269,7 @@ impl CheckValue {
     /// - If the internal value represents `:FILE:<PATH>`, it reads from the file path
     /// - Otherwise, it just reads the internal value
     #[allow(dead_code)] // to be used in later checks
-    pub fn resolve_value(&self) -> anyhow::Result<String> {
+    pub fn resolve_value(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<String> {
         // Yes, this function returns a Result, and yes it deals with Mutexes
         // However, the results are actually based on file system and TTY
         // I/O; if the Mutex fails to lock, this function will resort to using
@@ -252,7 +282,7 @@ impl CheckValue {
         let mut internal_ref = match lock {
             Ok(r) => r,
             Err(_) => {
-                return resolve_value(&self.original, None);
+                return resolve_value(&self.original, tr, None);
             }
         };
 
@@ -260,7 +290,7 @@ impl CheckValue {
             return Ok(s.to_string());
         }
 
-        let value = resolve_value(&internal_ref, None)?;
+        let value = resolve_value(&internal_ref, tr, None)?;
         *internal_ref = CheckValueInternal::Value(value.clone());
 
         Ok(value)
@@ -289,7 +319,7 @@ impl CheckValue {
         let mut internal_ref = match lock {
             Ok(r) => r,
             Err(_) => {
-                return resolve_value(&self.original, Some((prompt.as_ref(), tr)));
+                return resolve_value(&self.original, tr, Some(prompt.as_ref()));
             }
         };
 
@@ -297,7 +327,7 @@ impl CheckValue {
             return Ok(s.to_string());
         }
 
-        let value = resolve_value(&internal_ref, Some((prompt.as_ref(), tr)))?;
+        let value = resolve_value(&internal_ref, tr, Some(prompt.as_ref()))?;
         *internal_ref = CheckValueInternal::Value(value.clone());
 
         Ok(value)
@@ -510,10 +540,7 @@ pub struct TroubleshooterRunner {
     show_not_run_steps: bool,
     hide_extra_details: bool,
     has_rendered_newline_for_step: bool,
-    prompt_user_channel: Option<(
-        std::sync::mpsc::Sender<String>,
-        std::sync::mpsc::Receiver<String>,
-    )>,
+    prompt_user_channel: Option<(Sender<Option<String>>, Receiver<String>, Handle)>,
 }
 
 impl TroubleshooterRunner {
@@ -535,15 +562,16 @@ impl TroubleshooterRunner {
         show_successful_steps: bool,
         show_not_run_steps: bool,
         hide_extra_details: bool,
-        prompt_user_sender: std::sync::mpsc::Sender<String>,
-        prompt_user_receiver: std::sync::mpsc::Receiver<String>,
+        prompt_user_sender: Sender<Option<String>>,
+        prompt_user_receiver: Receiver<String>,
+        tokio_handle: Handle,
     ) -> Self {
         Self {
             show_successful_steps,
             show_not_run_steps,
             hide_extra_details,
             has_rendered_newline_for_step: false,
-            prompt_user_channel: Some((prompt_user_sender, prompt_user_receiver)),
+            prompt_user_channel: Some((prompt_user_sender, prompt_user_receiver, tokio_handle)),
         }
     }
 

@@ -6,44 +6,55 @@
 //! - Accepts incoming logs from several logging sources, and will dispatch to the
 //!   UI thread, the log file (optional), and the log IP:port (optional)
 //!   All logs will be newline delimited JSON instances of TroubleshooterResult
-//! Daemon thread:
-//! - Manages current check processes. Checks will be run by forking and use
-//!   anonymous pipes to communicate state and commands with JSON, or signals to
-//!   indicate killing processes. Processes will be used instead of threads because
-//!   certain checks make use of download containers and modify nftables, hopping
-//!   between namespaces and performing actions based on a process ID
-//! - The daemon will spawn a sub thread that muxes together prompts from the checks
-//!   to obtain values via "stdin", ensuring that different checks don't read values
-//!   intended for another check value
+//!   Logging thread does not own logs, but merely passes them to all designated
+//!   storage targets
 //! UI thread:
 //! - Display results of check logs, or use ratatui to display a TUI in interactive
 //!   mode. Both cases need to handle reading from stdin to gather user input for
 //!   checks that ask for it
+//! - Can spawn check threads
+//! Check threads:
+//! - Check threads are used to transition between two states, waiting and
+//!   performing a check. When waiting, it is ready to handle some basic IPC
+//!   messages such as Stop or TriggerCheck, but when performing a check
+//!   the check thread can then fork. While forking, the child process actually
+//!   performs the check, but the parent process will switch to translating IPC
+//!   messages between the nicer mpsc channel type and the more powerful pipe
+//!   channel. Each check will be given the same mpsc Sender to respond to IPC
+//!   messages with, and they will be required to use the same Sender to send
+//!   messages and responses back
 
 use std::{
     collections::HashMap,
-    io::{Read, Write},
     net::SocketAddr,
-    os::fd::AsFd,
     path::PathBuf,
-    sync::RwLock,
+    sync::{Arc, RwLock, atomic::AtomicBool},
 };
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, stdin, stdout},
+    net::unix::pipe,
+    sync::mpsc,
+};
 
 use crate::checks::{CheckResult, CheckResultType};
 
 use super::check::CheckCommands;
 
-mod daemon;
+mod check_thread;
 mod logs;
 mod tui;
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub struct CheckId(Arc<str>, Arc<str>);
 
 #[derive(Serialize, Deserialize)]
 pub struct TroubleshooterResult {
     timestamp: chrono::DateTime<chrono::Utc>,
+    check_id: CheckId,
     overall_result: CheckResultType,
     steps: HashMap<String, CheckResult>,
 }
@@ -56,7 +67,12 @@ struct DaemonConfig {
     checks: ChecksConfig,
 }
 
-type RuntimeHostCheck = HashMap<String, (CheckCommands, daemon::RuntimeCheckStateHandle)>;
+struct RuntimeCheckHandle {
+    message_sender: mpsc::Sender<check_thread::OutboundMessage>,
+    currently_running: AtomicBool,
+}
+
+type RuntimeHostCheck = HashMap<String, (CheckCommands, RuntimeCheckHandle)>;
 type RuntimeChecksConfig = HashMap<String, RuntimeHostCheck>;
 
 #[derive(Default)]
@@ -116,7 +132,8 @@ pub enum DaemonConfigArg {
 
 impl super::Command for CheckDaemon {
     fn execute(self) -> anyhow::Result<()> {
-        let logs = logs::LogHandler::new(self.logs_ip.clone(), self.log_file.clone());
+        let log_config = logs::LogConfig::new(self.logs_ip.clone(), self.log_file.clone());
+
         let checks: RwLock<RuntimeDaemonConfig> = RwLock::new(RuntimeDaemonConfig {
             check_interval: std::time::Duration::from_secs(self.check_interval.into()),
             ..Default::default()
@@ -149,61 +166,94 @@ impl super::Command for CheckDaemon {
             }
         };
 
-        let (prompt_reader, prompt_writer) = std::io::pipe()?;
-        let (answer_reader, answer_writer) = std::io::pipe()?;
+        let (prompt_writer, prompt_reader) = mpsc::channel(128);
+        let (log_writer, log_receiver) = pipe::pipe()?;
+        let (log_event_sender, log_event_receiver) = mpsc::channel(128);
 
         std::thread::scope(|scope| -> anyhow::Result<()> {
-            let daemon = daemon::spawn_daemon(&logs, &checks, prompt_writer, answer_reader, scope);
+            scope.spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?
+                    .block_on(async {
+                        logs::log_handler_thread(log_config, log_receiver, log_event_sender).await
+                    })
+            });
 
-            daemon.import_config(&config)?;
-            daemon.start_all_unstarted()?;
-
-            if self.interactive_mode {
-                tui::main(&checks, &daemon, &logs, prompt_reader, answer_writer, scope)
-            } else {
-                basic_log_runner(&logs, prompt_reader, answer_writer, scope)
-            }
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(async {
+                    if self.interactive_mode {
+                        // tui::main(&checks, &daemon, &logs, prompt_reader, answer_writer, scope)
+                        todo!()
+                    } else {
+                        basic_log_runner(&checks, log_event_receiver, prompt_reader).await
+                    }
+                })
         })
     }
 }
 
-fn basic_log_runner<'scope, 'env: 'scope>(
-    logs: &'env logs::LogHandler,
-    mut prompt_reader: std::io::PipeReader,
-    mut answer_writer: std::io::PipeWriter,
-    scope: &'scope std::thread::Scope<'scope, 'env>,
+async fn basic_log_runner<'scope, 'env: 'scope>(
+    checks: &RwLock<RuntimeDaemonConfig>,
+    mut logs_reader: mpsc::Receiver<logs::LogEvent>,
+    mut prompt_reader: mpsc::Receiver<(CheckId, Option<String>)>,
 ) -> anyhow::Result<()> {
-    let (mut logs_reader, logs_writer) = std::io::pipe()?;
-
-    scope.spawn(|| {
-        if let Err(e) = logs.run(logs_writer) {
-            eprintln!("Error running logs thread! {e}");
-        };
-    });
-
-    let mut logs_buffer = [0u8; 8192];
-    let mut prompt_buffer = [0u8; 8192];
     let mut answer_buffer = [0u8; 8192];
 
     loop {
-        let pr_raw = prompt_reader.as_fd();
-        let logs_raw = logs_reader.as_fd();
+        tokio::select! {
+            Some(event) = logs_reader.recv() => {
+                let logs::LogEvent::Result(res) = event;
 
-        let mut fds = nix::sys::select::FdSet::new();
-        fds.insert(pr_raw);
-        fds.insert(logs_raw);
+                println!(
+                    "{}: {}.{} - {:?}; {}",
+                    res.timestamp,
+                    res.check_id.0,
+                    res.check_id.1,
+                    res.overall_result,
+                    serde_json::to_string(&res).unwrap_or("<serialization error>".to_string())
+                );
+            }
+            Some((check_id, prompt)) = prompt_reader.recv() => {
+                if let Some(p) = prompt {
+                    print!("{p}");
+                    stdout().flush().await?;
+                }
 
-        nix::sys::select::select(None, &mut fds, None, None, None)?;
+                let bytes = stdin().read(&mut answer_buffer).await?;
 
-        if let Ok(bytes) = prompt_reader.read(&mut prompt_buffer) {
-            std::io::stdout().write(&prompt_buffer[..bytes])?;
+                let checks = match checks.read() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!(
+                            "Could not send response back to check {}.{}! {e}",
+                            check_id.0,
+                            check_id.1
+                        );
+                        continue;
+                    }
+                };
 
-            let bytes = std::io::stdin().read(&mut answer_buffer)?;
-            answer_writer.write_all(&answer_buffer[..bytes])?;
-        }
+                let Some(host_handle) = checks.checks.get(&*check_id.0) else {
+                    eprintln!("Could not identify host in current configuration: {}", check_id.0);
+                    continue;
+                };
 
-        if let Ok(bytes) = logs_reader.read(&mut logs_buffer) {
-            std::io::stdout().write(&logs_buffer[..bytes])?;
+                let Some(check_handle) = host_handle.get(&*check_id.1) else {
+                    eprintln!("Could not identify check in current configuration: {}", check_id.1);
+                    continue;
+                };
+
+                if let Err(e) = check_handle.1.message_sender.send(
+                    check_thread::OutboundMessage::PromptResponse(
+                        String::from_utf8_lossy(&answer_buffer[..bytes]).to_string()
+                    )
+                ).await {
+                    eprintln!("Could not send prompt response back to check thread: {e}");
+                }
+            }
         }
     }
 }
