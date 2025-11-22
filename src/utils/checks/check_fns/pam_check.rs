@@ -16,7 +16,7 @@ impl CheckStep<'_> for PamCheck {
         "PAM check"
     }
 
-    fn run_check(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         if !self.run_local {
             return Ok(CheckResult::not_run(
                 "Cannot run check on remote systems",

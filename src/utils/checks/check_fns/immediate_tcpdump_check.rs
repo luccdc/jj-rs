@@ -387,7 +387,7 @@ impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
         "Verify firewall with tcpdump"
     }
 
-    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         if !self.should_run {
             return Ok(CheckResult::not_run(
                 "Cannot check tcpdump when packets do not return to system via NAT reflection"

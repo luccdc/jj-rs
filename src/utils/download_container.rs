@@ -323,9 +323,10 @@ impl DownloadContainer {
         let cwd = std::env::current_dir().context("Could not get current working directory")?;
 
         setns(&self.child_net_ns, CloneFlags::CLONE_NEWNET)
-            .context("Could not change to child namespace to set up local networking")?;
+            .context("Could not change to child net namespace while entering container")?;
+        // WHY WHY
         setns(&self.child_mnt_ns, CloneFlags::CLONE_NEWNS)
-            .context("Could not change to child namespace to set up local networking")?;
+            .context("Could not change to child mount namespace while entering container")?;
 
         Ok(cwd)
     }
@@ -333,9 +334,9 @@ impl DownloadContainer {
     /// Internal function for leaving the environment for run
     pub fn leave(&self, cwd: PathBuf) -> anyhow::Result<()> {
         setns(&self.original_net_ns, CloneFlags::CLONE_NEWNET)
-            .context("Could not change to child namespace to set up local networking")?;
+            .context("Could not change to parent net namespace while leaving container")?;
         setns(&self.original_mnt_ns, CloneFlags::CLONE_NEWNS)
-            .context("Could not change to child namespace to set up local networking")?;
+            .context("Could not change to parent mount namespace while leaving container")?;
 
         std::env::set_current_dir(cwd)
             .context("Could not restore current working directory for download container")?;

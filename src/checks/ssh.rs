@@ -101,7 +101,7 @@ impl Troubleshooter for SshTroubleshooter {
 }
 
 impl SshTroubleshooter {
-    fn try_remote_login(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn try_remote_login(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         let host = self.host;
         let port = self.port;
         let user = self.user.clone();

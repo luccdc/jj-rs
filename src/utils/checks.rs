@@ -88,10 +88,6 @@ use std::{
 use chrono::prelude::*;
 use colored::Colorize;
 use serde::{Deserialize, Serialize, de::Visitor};
-use tokio::{
-    runtime::Handle,
-    sync::mpsc::{Receiver, Sender},
-};
 
 pub mod check_fns;
 pub use check_fns::*;
@@ -181,52 +177,13 @@ enum CheckValueInternal {
 
 fn resolve_value(
     internal: &CheckValueInternal,
-    tr: &mut TroubleshooterRunner,
-    prompt: Option<&str>,
+    tr: &mut dyn TroubleshooterRunner,
+    prompt: &str,
 ) -> anyhow::Result<String> {
     match internal {
         CheckValueInternal::Value(s) => Ok(s.to_string()),
         CheckValueInternal::Stdin => {
-            let input = match (prompt, &mut tr.prompt_user_channel) {
-                (Some(p), None) => {
-                    print!(
-                        "{}{p}",
-                        if tr.has_rendered_newline_for_step {
-                            ""
-                        } else {
-                            "\n"
-                        }
-                    );
-                    tr.has_rendered_newline_for_step = true;
-                    std::io::stdout().lock().flush()?;
-
-                    let mut input = String::new();
-                    std::io::stdin().lock().read_line(&mut input)?;
-
-                    Ok::<_, anyhow::Error>(input)
-                }
-                (Some(p), Some((w, r, h))) => h.block_on(async {
-                    w.send(Some(p.to_string())).await?;
-
-                    Ok(r.recv()
-                        .await
-                        .ok_or(anyhow::anyhow!("Did not receive prompt back from user"))?)
-                }),
-                (None, Some((w, r, h))) => h.block_on(async {
-                    w.send(None).await?;
-
-                    Ok(r.recv()
-                        .await
-                        .ok_or(anyhow::anyhow!("Did not receive prompt back from user"))?)
-                }),
-                (None, None) => {
-                    let mut input = String::new();
-                    std::io::stdin().lock().read_line(&mut input)?;
-
-                    Ok(input)
-                }
-            }?;
-
+            let input = tr.prompt_user(prompt)?;
             Ok(input.trim().to_string())
         }
         CheckValueInternal::File(f) => {
@@ -265,46 +222,13 @@ impl CheckValue {
 
     /// Takes the current value and reduces it to a string
     ///
-    /// - If the internal value represents `:STDIN:`, it reads from stdin
-    /// - If the internal value represents `:FILE:<PATH>`, it reads from the file path
-    /// - Otherwise, it just reads the internal value
-    #[allow(dead_code)] // to be used in later checks
-    pub fn resolve_value(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<String> {
-        // Yes, this function returns a Result, and yes it deals with Mutexes
-        // However, the results are actually based on file system and TTY
-        // I/O; if the Mutex fails to lock, this function will resort to using
-        // the original input provided
-        if let CheckValueInternal::Value(s) = &self.original {
-            return Ok(s.to_string());
-        };
-
-        let lock = self.internal.lock();
-        let mut internal_ref = match lock {
-            Ok(r) => r,
-            Err(_) => {
-                return resolve_value(&self.original, tr, None);
-            }
-        };
-
-        if let CheckValueInternal::Value(s) = &*internal_ref {
-            return Ok(s.to_string());
-        }
-
-        let value = resolve_value(&internal_ref, tr, None)?;
-        *internal_ref = CheckValueInternal::Value(value.clone());
-
-        Ok(value)
-    }
-
-    /// Takes the current value and reduces it to a string
-    ///
     /// - If the internal value represents `:STDIN:`, it reads from stdin after
     ///   prompting the user
     /// - If the internal value represents `:FILE:<PATH>`, it reads from the file path
     /// - Otherwise, it just reads the internal value
     pub fn resolve_prompt<I: AsRef<str>>(
         &self,
-        tr: &mut TroubleshooterRunner,
+        tr: &mut dyn TroubleshooterRunner,
         prompt: I,
     ) -> anyhow::Result<String> {
         // Yes, this function returns a Result, and yes it deals with Mutexes
@@ -319,7 +243,7 @@ impl CheckValue {
         let mut internal_ref = match lock {
             Ok(r) => r,
             Err(_) => {
-                return resolve_value(&self.original, tr, Some(prompt.as_ref()));
+                return resolve_value(&self.original, tr, prompt.as_ref());
             }
         };
 
@@ -327,7 +251,7 @@ impl CheckValue {
             return Ok(s.to_string());
         }
 
-        let value = resolve_value(&internal_ref, tr, Some(prompt.as_ref()))?;
+        let value = resolve_value(&internal_ref, tr, prompt.as_ref())?;
         *internal_ref = CheckValueInternal::Value(value.clone());
 
         Ok(value)
@@ -440,10 +364,10 @@ impl BitAndAssign for CheckResultType {
 /// when it happened, what happened, a brief summary, and any extra useful information
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct CheckResult {
-    timestamp: DateTime<Utc>,
-    result_type: CheckResultType,
-    log_item: String,
-    extra_details: serde_json::Value,
+    pub timestamp: DateTime<Utc>,
+    pub result_type: CheckResultType,
+    pub log_item: String,
+    pub extra_details: serde_json::Value,
 }
 
 impl CheckResult {
@@ -518,7 +442,7 @@ pub trait Troubleshooter:
 pub trait CheckStep<'a> {
     fn name(&self) -> &'static str;
 
-    fn run_check(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult>;
+    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult>;
 }
 
 impl<'a, T> CheckStep<'a> for Box<T>
@@ -529,21 +453,45 @@ where
         T::name(self)
     }
 
-    fn run_check(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         T::run_check(self, tr)
     }
 }
 
+/// Utility used to allow troubleshooters to interact with users and run steps
+pub trait TroubleshooterRunner {
+    fn prompt_user(&mut self, prompt: &str) -> anyhow::Result<String>;
+}
+
 /// Holds troubleshooting settings to change behavior when running a troubleshooter later
-pub struct TroubleshooterRunner {
+pub struct CliTroubleshooter {
     show_successful_steps: bool,
     show_not_run_steps: bool,
     hide_extra_details: bool,
     has_rendered_newline_for_step: bool,
-    prompt_user_channel: Option<(Sender<Option<String>>, Receiver<String>, Handle)>,
 }
 
-impl TroubleshooterRunner {
+impl TroubleshooterRunner for CliTroubleshooter {
+    fn prompt_user(&mut self, prompt: &str) -> anyhow::Result<String> {
+        print!(
+            "{}{prompt}",
+            if self.has_rendered_newline_for_step {
+                ""
+            } else {
+                "\n"
+            }
+        );
+        self.has_rendered_newline_for_step = true;
+        std::io::stdout().lock().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().lock().read_line(&mut input)?;
+
+        Ok(input)
+    }
+}
+
+impl CliTroubleshooter {
     pub fn new(
         show_successful_steps: bool,
         show_not_run_steps: bool,
@@ -554,24 +502,6 @@ impl TroubleshooterRunner {
             show_not_run_steps,
             hide_extra_details,
             has_rendered_newline_for_step: false,
-            prompt_user_channel: None,
-        }
-    }
-
-    pub fn new_daemon(
-        show_successful_steps: bool,
-        show_not_run_steps: bool,
-        hide_extra_details: bool,
-        prompt_user_sender: Sender<Option<String>>,
-        prompt_user_receiver: Receiver<String>,
-        tokio_handle: Handle,
-    ) -> Self {
-        Self {
-            show_successful_steps,
-            show_not_run_steps,
-            hide_extra_details,
-            has_rendered_newline_for_step: false,
-            prompt_user_channel: Some((prompt_user_sender, prompt_user_receiver, tokio_handle)),
         }
     }
 
@@ -711,6 +641,31 @@ fn render_extra_details(depth: usize, obj: &serde_json::Value) {
             }
             print!("{:depth$}}}", "");
         }
+    }
+}
+
+pub struct DaemonTroubleshooter<F>
+where
+    F: FnMut(&str) -> anyhow::Result<String>,
+{
+    prompt_f: F,
+}
+
+impl<F> TroubleshooterRunner for DaemonTroubleshooter<F>
+where
+    F: FnMut(&str) -> anyhow::Result<String>,
+{
+    fn prompt_user(&mut self, prompt: &str) -> anyhow::Result<String> {
+        (self.prompt_f)(prompt)
+    }
+}
+
+impl<F> DaemonTroubleshooter<F>
+where
+    F: FnMut(&str) -> anyhow::Result<String>,
+{
+    pub fn new(prompt_f: F) -> Self {
+        Self { prompt_f }
     }
 }
 

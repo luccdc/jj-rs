@@ -145,7 +145,7 @@ impl<'a> CheckStep<'a> for PassiveTcpdumpCheck {
         "Wait for an inbound connection on port and verify that return packets are sent"
     }
 
-    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         if !self.run {
             return Ok(CheckResult::not_run(
                 "Check was not specified as required for troubleshooting",

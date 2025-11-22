@@ -17,7 +17,7 @@ impl<'a> CheckStep<'a> for TcpConnectCheck {
         "Check TCP port status"
     }
 
-    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         let timeout = std::time::Duration::from_secs(2);
 
         if self.ip.is_loopback() {

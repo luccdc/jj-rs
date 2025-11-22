@@ -15,7 +15,7 @@ impl<'a> CheckStep<'a> for SystemdServiceCheck {
         "Check systemd service"
     }
 
-    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         if qx("which systemctl 2>/dev/null")?.1.trim().is_empty() {
             return Ok(CheckResult::not_run(
                 "`systemctl` not found on host",
@@ -68,7 +68,7 @@ impl<'a> CheckStep<'a> for OpenrcServiceCheck {
         "Check openrc service"
     }
 
-    fn run_check(&self, _tr: &mut TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
         if qx("which rc-service 2>/dev/null")?.1.trim().is_empty() {
             return Ok(CheckResult::not_run(
                 "`rc-service` not found on host",
