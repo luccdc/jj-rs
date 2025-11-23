@@ -26,9 +26,10 @@ install -m755 /tmp/jj-rs /usr/bin/jj-rs
 2. Install and configure [git lfs](https://git-lfs.com/):
    1. Use a package manager to install git lfs, e.g. `sudo apt install git-lfs`
    2. Run `git lfs install`
-3. From a Linux system, install the [Nix package manager](https://nixos.org/download/).
-4. Enable [Flake support](https://nixos.wiki/wiki/Flakes), usually by adding `experimental-features = nix-command flakes` to either `~/.config/nix/nix.conf` or `/etc/nix/nix.conf` and restarting the `nix` daemon
-5. Run `nix develop` in this folder (should take about 4 or 5 minutes the first time as it downloads dependencies, and 5-10 seconds afterwards)
+3. Set your name and email in this repository with `git config user.name` and `git config user.email`
+4. From a Linux system, install the [Nix package manager](https://nixos.org/download/).
+5. Enable [Flake support](https://nixos.wiki/wiki/Flakes), usually by adding `experimental-features = nix-command flakes` to either `~/.config/nix/nix.conf` or `/etc/nix/nix.conf` and restarting the `nix` daemon
+6. Run `nix develop` in this folder (should take about 4 or 5 minutes the first time as it downloads dependencies, and 5-10 seconds afterwards)
 
 ## Building and testing
 
@@ -110,6 +111,61 @@ Finally, add it to `src/main.rs`:
 Example, ex => commands::example::Example
 ```
 
+## Adding a check
+
+To add a service check, create a new file in `src/checks` such as `example.rs` with the following content:
+
+``` rust
+use std::{path::PathBuf};
+
+use super::*;
+
+/// Troubleshoot an example service
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct ExampleTroubleshooter {
+    /// The configuration file for example service
+    #[arg(long, short, default_value = "/etc/example")]
+    config_file: PathBuf
+}
+
+impl Default for ExampleTroubleshooter {
+    fn default() -> Self {
+        Self {
+            config_file: PathBuf::from("/etc/example")
+        }
+    }
+}
+
+impl Troubleshooter for ExampleTroubleshooter {
+    fn checks<'a>(&'a self) -> anyhow::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
+        Ok(vec![
+            systemd_service_check("example")
+        ])
+    }
+}
+```
+
+Register it in `src/checks/mod.rs`:
+
+``` rust
+pub mod example;
+```
+
+Finally, in `src/commands/check.rs` edit the `define_checks!` section to add your check:
+
+``` rust
+define_checks! {
+    CheckCommands {
+        // other checks up here...
+        
+        /// Troubleshoot the example service - anything, you say here will show up when using
+        /// -h with the `check` or `check-daemon` commands
+        Example, "example" => checks::example::ExampleTroubleshooter
+    }
+}
+```
+
 ## Adding a package
 
 To add a package, run `cargo add PACKAGE_NAME`. Then, verify that everything still builds with `nix build`. If there are issues, review the feature flags to identify a way to include a package that makes use of pure Rust.
@@ -154,7 +210,8 @@ Documentation for libraries frequently used:
 - serde: https://docs.rs/serde/latest/serde/
 - serde_json: https://docs.rs/serde_json/latest/serde_json/
 - clap: https://docs.rs/clap/latest/clap/
+- tokio: https://docs.rs/tokio/latest/tokio/
 
 ## Kibana dashboards
 
-To contribute Kibana dashboards, just add them to `src/commands/elk/dashboards`. It will be included the next time the project is built
+To contribute Kibana dashboards, follow the setup commands from before and just add the new Kibana dashboards to `src/commands/elk/dashboards`. It will be included the next time the project is built
