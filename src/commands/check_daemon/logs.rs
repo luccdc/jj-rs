@@ -29,16 +29,29 @@ pub enum LogEvent {
 }
 
 async fn get_log_file(p: &Path) -> Option<File> {
-    tokio::fs::OpenOptions::new()
+    match tokio::fs::OpenOptions::new()
         .append(true)
         .write(true)
+        .create(true)
         .open(p)
         .await
-        .ok()
+    {
+        Ok(v) => Some(v),
+        Err(e) => {
+            eprintln!("Could not open specified log file: {e}");
+            None
+        }
+    }
 }
 
 async fn get_log_socket(ip: SocketAddr) -> Option<TcpStream> {
-    tokio::net::TcpStream::connect(ip).await.ok()
+    match tokio::net::TcpStream::connect(ip).await {
+        Ok(v) => Some(v),
+        Err(e) => {
+            eprintln!("Could not open connection to log server: {e}");
+            None
+        }
+    }
 }
 
 pub async fn log_handler_thread(

@@ -287,7 +287,11 @@ async fn basic_log_runner<'scope, 'env: 'scope>(
                     },
                 )?;
 
-                for (_, check) in res.steps {
+                let mut keys = res.steps.keys().collect::<Vec<_>>();
+                keys.sort();
+
+                for key in keys {
+                    let check = &res.steps[key];
                     let details_str = serde_json::to_string(&check.1.extra_details);
                     if show_extra_details {
                         writeln!(
