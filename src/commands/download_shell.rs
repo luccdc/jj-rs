@@ -113,7 +113,7 @@ impl super::Command for DownloadShell {
                         if let Err(e) = child.wait() {
                             eprintln!("Could not wait for command to finish! {e}");
                             exit(127);
-                        };
+                        }
                         drop(fd);
                         exit(0);
                     }
@@ -148,7 +148,7 @@ impl super::Command for DownloadShell {
                         if let Err(e) = child.wait() {
                             eprintln!("Could not wait for command to finish! {e}");
                             exit(127);
-                        };
+                        }
                         exit(0);
                     }
                     ForkResult::Parent { child } => {
@@ -180,7 +180,7 @@ impl super::Command for DownloadShell {
                         if let Err(e) = child.wait() {
                             eprintln!("Could not wait for command to finish! {e}");
                             exit(127);
-                        };
+                        }
                         exit(0);
                     }
                     ForkResult::Parent { child } => {
@@ -212,7 +212,7 @@ impl super::Command for DownloadShell {
                         if let Err(e) = child.wait() {
                             eprintln!("Could not wait for command to finish! {e}");
                             exit(127);
-                        };
+                        }
                         exit(0);
                     }
                     ForkResult::Parent { child } => {

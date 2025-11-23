@@ -88,12 +88,11 @@ async fn respond(
     let uri = uri.path();
     path.push(&uri[1..]);
 
-    let path = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => {
-            tracing::warn!("404 {}", uri);
-            return not_found();
-        }
+    let path = if let Ok(p) = path.canonicalize() {
+        p
+    } else {
+        tracing::warn!("404 {}", uri);
+        return not_found();
     };
 
     if !path.starts_with(root_path) {
@@ -101,12 +100,11 @@ async fn respond(
         return not_found();
     }
 
-    let metadata = match tokio::fs::metadata(&path).await {
-        Ok(m) => m,
-        Err(_) => {
-            tracing::warn!("404 {}", uri);
-            return not_found();
-        }
+    let metadata = if let Ok(m) = tokio::fs::metadata(&path).await {
+        m
+    } else {
+        tracing::warn!("404 {}", uri);
+        return not_found();
     };
 
     match if metadata.is_dir() {
@@ -154,7 +152,7 @@ async fn respond_dir(
         .collect::<Vec<_>>();
 
     string_entries.sort_by_key(|(n, m)| {
-        let dir = m.as_ref().map(|m| m.is_dir()).unwrap_or_default();
+        let dir = m.as_ref().is_ok_and(std::fs::Metadata::is_dir);
         (!dir, n.clone())
     });
 
@@ -180,8 +178,7 @@ async fn respond_dir(
         .headers()
         .get("accept")
         .and_then(|s| s.to_str().ok())
-        .map(|s| s.contains("text/html"))
-        .unwrap_or_default()
+        .is_some_and(|s| s.contains("text/html"))
     {
         format!(
             "<!DOCTYPE html>
@@ -218,8 +215,7 @@ async fn respond_dir(
 
                     format!(r#"<tr><td>{dir_spec}</td><td>{size}</td><td><a href="{download_url}">{name}</a></td></tr>"#)
                 })
-                .collect::<Vec<_>>()
-                .join("")
+                .collect::<String>()
         )
     } else {
         format!(

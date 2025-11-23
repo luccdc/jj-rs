@@ -54,7 +54,7 @@ macro_rules! define_checks {
 }
 
 /// Macro that performs very similarly to vec![], except it calls
-/// .to_string() on all items provided to it
+/// .`to_string()` on all items provided to it
 ///
 /// Normal use of vec![] can be confusing with String vecs:
 /// ```compile_fail

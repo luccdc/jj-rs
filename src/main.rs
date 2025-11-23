@@ -1,6 +1,5 @@
 #![feature(unwrap_infallible)]
 #![feature(never_type)]
-#![warn(clippy::pedantic)]
 #![warn(clippy::correctness)]
 #![warn(clippy::suspicious)]
 

@@ -54,7 +54,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 let inodes = ports::socket_inodes_for_pid(pid)
                     .ok()?
                     .into_iter()
-                    .map(|inode| (inode, pid as u64))
+                    .map(|inode| (inode, u64::from(pid)))
                     .collect();
 
                 // Read from /proc/{pid}/net/{tcp,udp}6 instead to make sure that
@@ -93,7 +93,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 )
                 .collect::<Vec<_>>();
 
-                let ports_enriched = ports::enrich_ip_stats(ports, inodes)
+                let ports_enriched = ports::enrich_ip_stats(ports, &inodes)
                     .into_iter()
                     .filter(|port| port.pid == Some(pid.into()))
                     .collect::<Vec<_>>();

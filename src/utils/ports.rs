@@ -108,7 +108,7 @@ pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
                     let socket_re = &socket_re;
                     move |fd| -> Option<(u64, u64)> {
                         let fd_name = fd.file_name().to_string_lossy().to_string();
-                        let path = format!("/proc/{}/fd/{}", dir, fd_name);
+                        let path = format!("/proc/{dir}/fd/{fd_name}");
                         let link = readlink(&*path).ok()?.to_string_lossy().to_string();
 
                         let inode_str = socket_re.captures(&link)?.extract::<1>().1[0];
@@ -142,7 +142,7 @@ pub fn socket_inodes_for_pid(pid: u32) -> anyhow::Result<Vec<u64>> {
         .collect())
 }
 
-/// Internal trait used to allow specifying Ipv4Addr and Ipv6Addr as type arguments
+/// Internal trait used to allow specifying `Ipv4Addr` and `Ipv6Addr` as type arguments
 /// to parsers for /proc/net/{tcp,udp}6
 pub trait IpSize: From<Self::Size> {
     type Size: Num + PrimInt + std::fmt::Debug;
@@ -160,7 +160,7 @@ impl IpSize for Ipv6Addr {
 }
 
 /// Parse the path specified and return just the basic inode data. All the process
-/// specific information in the SocketRecord structs returned are left as None;
+/// specific information in the `SocketRecord` structs returned are left as None;
 /// `pid`, `cmdline`, and `cgroup`
 pub fn parse_raw_ip_stats<P, A>(
     path: P,
@@ -236,22 +236,22 @@ where
 }
 
 /// Given the specified sockets, query the /proc filesystem to identify process
-/// information. Makes use of the provided inode_pids map to avoid querying all
+/// information. Makes use of the provided `inode_pids` map to avoid querying all
 /// of /proc to identify which process has a symbolic link to the socket inode
 ///
-/// inode_pids maps from inodes to pids
+/// `inode_pids` maps from inodes to pids
 pub fn enrich_ip_stats(
     stats: Vec<SocketRecord>,
-    inode_pids: HashMap<u64, u64>,
+    inode_pids: &HashMap<u64, u64>,
 ) -> Vec<SocketRecord> {
     stats
         .into_iter()
         .map(|stat| {
-            let pid = inode_pids.get(&stat.inode).cloned();
+            let pid = inode_pids.get(&stat.inode).copied();
 
             let cmdline = pid
                 .and_then(|p| std::fs::read_to_string(format!("/proc/{p}/cmdline")).ok())
-                .map(|cmd| cmd.replace("\0", " "));
+                .map(|cmd| cmd.replace('\0', " "));
 
             let cgroup = pid
                 .and_then(|p| std::fs::read_to_string(format!("/proc/{p}/cgroup")).ok())
@@ -289,7 +289,7 @@ where
     let inode_pids = socket_inodes()?;
     let ip_stats = parse_raw_ip_stats::<P, A>(path, socket_type)?;
 
-    Ok(enrich_ip_stats(ip_stats, inode_pids))
+    Ok(enrich_ip_stats(ip_stats, &inode_pids))
 }
 
 /// Shortcut to parse statistics from /proc/net/tcp

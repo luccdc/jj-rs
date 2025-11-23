@@ -10,7 +10,7 @@ struct SystemdServiceCheck {
     service_name: String,
 }
 
-impl<'a> CheckStep<'a> for SystemdServiceCheck {
+impl CheckStep<'_> for SystemdServiceCheck {
     fn name(&self) -> &'static str {
         "Check systemd service"
     }
@@ -63,7 +63,7 @@ struct OpenrcServiceCheck {
     service_name: String,
 }
 
-impl<'a> CheckStep<'a> for OpenrcServiceCheck {
+impl CheckStep<'_> for OpenrcServiceCheck {
     fn name(&self) -> &'static str {
         "Check openrc service"
     }
@@ -94,7 +94,7 @@ impl<'a> CheckStep<'a> for OpenrcServiceCheck {
     }
 }
 
-/// A simple check that makes sure an OpenRC service is up
+/// A simple check that makes sure an `OpenRC` service is up
 ///
 /// ```
 /// # use jj_rs::utils::checks::openrc_service_check;

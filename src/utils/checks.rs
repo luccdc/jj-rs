@@ -18,7 +18,7 @@
 //! }
 //! ```
 //!
-//! This SshTroubleshooter can then implement [`Troubleshooter`], which requires
+//! This `SshTroubleshooter` can then implement [`Troubleshooter`], which requires
 //! implementing a function that returns a list of checks. For simple checks,
 //! use [`check_fn`] like below:
 //!
@@ -26,7 +26,7 @@
 //! # use jj_rs::utils::checks::{CheckValue, Troubleshooter, check_fn, CheckStep, CheckResult, TroubleshooterRunner};
 //! # use clap::Parser;
 //! # use serde::Deserialize;
-//! # #[derive(clap::Parser, serde::Deserialize, serde::Serialize, Default)]
+//! # #[derive(clap::Parser, serde::Deserialize, serde::Serialize, Default, Clone)]
 //! # #[serde(default)]
 //! # pub struct SshTroubleshooter {
 //! #     #[arg(long, short, default_value_t = Default::default())]
@@ -133,7 +133,7 @@ use super::qx;
 /// ```no_run
 /// # use jj_rs::utils::checks::{CheckValue, TroubleshooterRunner};
 /// # struct SshTs { password: CheckValue }
-/// # impl SshTs { fn dummy_check(&self, tr: &mut TroubleshooterRunner) -> anyhow::Result<()> {
+/// # impl SshTs { fn dummy_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<()> {
 /// let pass = self.password
 ///     .clone()
 ///     .resolve_prompt(tr, "Enter a password to sign into the SSH server with: ")?;
@@ -181,7 +181,7 @@ fn resolve_value(
     prompt: &str,
 ) -> anyhow::Result<String> {
     match internal {
-        CheckValueInternal::Value(s) => Ok(s.to_string()),
+        CheckValueInternal::Value(s) => Ok(s.clone()),
         CheckValueInternal::Stdin => {
             let input = tr.prompt_user(prompt)?;
             Ok(input.trim().to_string())
@@ -236,8 +236,8 @@ impl CheckValue {
         // I/O; if the Mutex fails to lock, this function will resort to using
         // the original input provided
         if let CheckValueInternal::Value(s) = &self.original {
-            return Ok(s.to_string());
-        };
+            return Ok(s.clone());
+        }
 
         let lock = self.internal.lock();
         let mut internal_ref = match lock {
@@ -248,7 +248,7 @@ impl CheckValue {
         };
 
         if let CheckValueInternal::Value(s) = &*internal_ref {
-            return Ok(s.to_string());
+            return Ok(s.clone());
         }
 
         let value = resolve_value(&internal_ref, tr, prompt.as_ref())?;
@@ -292,7 +292,7 @@ impl<'de> Deserialize<'de> for CheckValue {
     {
         struct CheckValueVisitor;
 
-        impl<'de> Visitor<'de> for CheckValueVisitor {
+        impl Visitor<'_> for CheckValueVisitor {
             type Value = CheckValue;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -326,7 +326,7 @@ impl Serialize for CheckValue {
         match &self.original {
             CheckValueInternal::File(f) => serializer.serialize_str(&format!("@{}", f.display())),
             CheckValueInternal::Stdin => serializer.serialize_str("-"),
-            CheckValueInternal::Value(v) => serializer.serialize_str(&v),
+            CheckValueInternal::Value(v) => serializer.serialize_str(v),
         }
     }
 }
@@ -424,7 +424,7 @@ impl CheckResult {
 ///
 /// Merely used to return a list of checks that constitute a troubleshooting process
 ///
-/// Every troubleshooter should extend clap::Parser so that it can be used at the cli
+/// Every troubleshooter should extend `clap::Parser` so that it can be used at the cli
 /// and for the daemon, Deserialize and Serialize so that it can be parse configuration
 /// from a file for the daemon, and Default so that the daemon tui knows sensible
 /// values when editing a troubleshooter and creating a new one
@@ -506,7 +506,7 @@ impl CliTroubleshooter {
     }
 
     /// Actually runs the troubleshooter specified on the CLI
-    pub fn run_cli(&mut self, t: Box<impl Troubleshooter>) -> anyhow::Result<CheckResultType> {
+    pub fn run_cli(&mut self, t: &impl Troubleshooter) -> anyhow::Result<CheckResultType> {
         let checks = t.checks()?;
         let mut start = CheckResultType::NotRun;
 
@@ -669,8 +669,8 @@ where
     }
 }
 
-/// Utility trait to convert things into a CheckResult but taking a parameter
-/// Mostly used to convert Results into CheckResults
+/// Utility trait to convert things into a `CheckResult` but taking a parameter
+/// Mostly used to convert Results into `CheckResults`
 pub trait IntoCheckResult {
     fn into_check_result<I: Into<String>>(self, a: I) -> CheckResult;
 }
@@ -728,5 +728,5 @@ fn get_logs_systemd(start: DateTime<Utc>, end: DateTime<Utc>) -> anyhow::Result<
             .unwrap_or(end)
             .format(format)
     ))
-    .map(|(_, o)| o.trim().split("\n").map(String::from).collect())
+    .map(|(_, o)| o.lines().map(String::from).collect())
 }

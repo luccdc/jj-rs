@@ -5,28 +5,30 @@
 //! Logging thread:
 //! - Accepts incoming logs from several logging sources, and will dispatch to the
 //!   UI thread, the log file (optional), and the log IP:port (optional)
-//!   All logs will be newline delimited JSON instances of TroubleshooterResult
+//!   All logs will be newline delimited JSON instances of `TroubleshooterResult`
 //!   Logging thread does not own logs, but merely passes them to all designated
 //!   storage targets
+//!
 //! UI thread:
 //! - Display results of check logs, or use ratatui to display a TUI in interactive
 //!   mode. Both cases need to handle reading from stdin to gather user input for
 //!   checks that ask for it
 //! - Can spawn check threads
+//!
 //! Check threads:
 //! - Check threads are used to transition between three states documented below
 //!   When waiting, it is ready to handle some basic IPC messages such as Stop or
-//!   TriggerCheck, but when performing a check the check thread can then fork.
+//!   `TriggerCheck`, but when performing a check the check thread can then fork.
 //!   While forking, the child process actually performs the check, but the
 //!   parent process will switch to translating IPC messages between the nicer
 //!   mpsc channel type and the more powerful pipe channel. Each check will be
 //!   given the same mpsc Sender to respond to IPC messages with, and they will
 //!   be required to use the same Sender to send messages and responses back
-//!   When running, the only message the child will respond to is PromptResponse.
+//!   When running, the only message the child will respond to is `PromptResponse`.
 //!   Other messages are ignored and discarded, removed from the event queue
 //!
 //! Check thread state machine:
-//! - Paused: can transition to Running with TriggerNow or Waiting with Start
+//! - Paused: can transition to Running with `TriggerNow` or Waiting with Start
 //! - Waiting: can transition to Paused with Stop, halt with Die, or Running
 //!   after a timeout
 //! - Running: Performing a check. Returns to the state it was in when it started
@@ -153,7 +155,7 @@ pub enum DaemonConfigArg {
 
 impl super::Command for CheckDaemon {
     fn execute(self) -> anyhow::Result<()> {
-        let log_config = logs::LogConfig::new(self.logs_ip.clone(), self.log_file.clone());
+        let log_config = logs::LogConfig::new(self.logs_ip, self.log_file.clone());
 
         let daemon: RwLock<RuntimeDaemonConfig> = RwLock::new(RuntimeDaemonConfig {
             check_interval: std::time::Duration::from_secs(self.check_interval.into()),
@@ -217,8 +219,10 @@ impl super::Command for CheckDaemon {
                 for (check_name, check) in checks {
                     check_thread::register_check(
                         &daemon,
-                        CheckId(Arc::clone(&host), Arc::clone(&check_name)),
-                        check.clone(),
+                        (
+                            CheckId(Arc::clone(host), Arc::clone(check_name)),
+                            check.clone(),
+                        ),
                         scope,
                         prompt_writer.clone(),
                         log_writer.try_clone()?,
@@ -331,29 +335,33 @@ async fn basic_log_runner<'scope, 'env: 'scope>(
 
                 let bytes = stdin().read(&mut answer_buffer)?;
 
-                let checks = match checks.read() {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!(
-                            "Could not send response back to check {}.{}! {e}",
-                            check_id.0,
-                            check_id.1
-                        );
+                let message_sender = {
+                    let checks = match checks.read() {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!(
+                                "Could not send response back to check {}.{}! {e}",
+                                check_id.0,
+                                check_id.1
+                            );
+                            continue;
+                        }
+                    };
+
+                    let Some(host_handle) = checks.checks.get(&*check_id.0) else {
+                        eprintln!("Could not identify host in current configuration: {}", check_id.0);
                         continue;
-                    }
+                    };
+
+                    let Some(check_handle) = host_handle.get(&*check_id.1) else {
+                        eprintln!("Could not identify check in current configuration: {}", check_id.1);
+                        continue;
+                    };
+
+                    check_handle.1.message_sender.clone()
                 };
 
-                let Some(host_handle) = checks.checks.get(&*check_id.0) else {
-                    eprintln!("Could not identify host in current configuration: {}", check_id.0);
-                    continue;
-                };
-
-                let Some(check_handle) = host_handle.get(&*check_id.1) else {
-                    eprintln!("Could not identify check in current configuration: {}", check_id.1);
-                    continue;
-                };
-
-                if let Err(e) = check_handle.1.message_sender.send(
+                if let Err(e) = message_sender.send(
                     check_thread::OutboundMessage::PromptResponse(
                         String::from_utf8_lossy(&answer_buffer[..bytes]).to_string()
                     )

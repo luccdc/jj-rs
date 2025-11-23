@@ -11,8 +11,7 @@ use crate::{pcre, utils::qx};
 pub fn is_service_active(service_info: &HashMap<String, String>) -> bool {
     service_info
         .get("ActiveState")
-        .map(|field| field == "active")
-        .unwrap_or(false)
+        .is_some_and(|field| field == "active")
 }
 
 /// Pull state and configuration information about a systemd unit

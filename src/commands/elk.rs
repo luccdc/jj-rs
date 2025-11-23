@@ -355,7 +355,7 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Resul
                         "!!! Could not join download thread due to panic!".red()
                     );
                 }
-            };
+            }
         }
 
         Ok(())
@@ -432,8 +432,8 @@ fn setup_elasticsearch(
 
     if let Some(ref mut stdin) = password_change.stdin {
         writeln!(stdin, "y")?;
-        writeln!(stdin, "{}", elastic_password)?;
-        writeln!(stdin, "{}", elastic_password)?;
+        writeln!(stdin, "{elastic_password}")?;
+        writeln!(stdin, "{elastic_password}")?;
     }
 
     password_change.wait()?;
@@ -618,18 +618,17 @@ fn setup_auditbeat(password: &mut Option<String>) -> anyhow::Result<()> {
         "/etc/auditbeat/auditbeat.yml",
         format!(
             r#"
-{}
+{AUDITBEAT_YML}
 
 output.elasticsearch:
   hosts: ["https://localhost:9200"]
   transport: https
   username: elastic
-  password: "{}"
+  password: "{es_password}"
   ssl:
     enabled: true
     certificate_authorities: "/etc/es_certs/http_ca.crt"
-"#,
-            AUDITBEAT_YML, es_password
+"#
         ),
     )?;
 
@@ -639,12 +638,11 @@ output.elasticsearch:
         "/etc/auditbeat/auditbeat.yml",
         format!(
             r#"
-{}
+{AUDITBEAT_YML}
 
 output.logstash:
   hosts: ["localhost:5044"]
-"#,
-            AUDITBEAT_YML
+"#
         ),
     )?;
 
@@ -665,7 +663,7 @@ fn setup_filebeat(password: &mut Option<String>) -> anyhow::Result<()> {
         "/etc/filebeat/filebeat.yml",
         format!(
             r#"
-{}
+{FILEBEAT_YML}
 
   - module: netflow
     log:
@@ -694,12 +692,11 @@ output.elasticsearch:
   hosts: ["https://localhost:9200"]
   transport: https
   username: elastic
-  password: "{}"
+  password: "{es_password}"
   ssl:
     enabled: true
     certificate_authorities: "/etc/es_certs/http_ca.crt"
-"#,
-            FILEBEAT_YML, es_password
+"#
         ),
     )?;
 
@@ -709,7 +706,7 @@ output.elasticsearch:
         "/etc/filebeat/filebeat.yml",
         format!(
             r#"
-{}
+{FILEBEAT_YML}
 
   - module: netflow
     log:
@@ -736,8 +733,7 @@ output.elasticsearch:
 
 output.logstash:
   hosts: ["localhost:5044"]
-"#,
-            FILEBEAT_YML
+"#
         ),
     )?;
 
@@ -758,18 +754,17 @@ fn setup_packetbeat(password: &mut Option<String>) -> anyhow::Result<()> {
         "/etc/packetbeat/packetbeat.yml",
         format!(
             r#"
-{}
+{PACKETBEAT_YML}
 
 output.elasticsearch:
   hosts: ["https://localhost:9200"]
   transport: https
   username: elastic
-  password: "{}"
+  password: "{es_password}"
   ssl:
     enabled: true
     certificate_authorities: "/etc/es_certs/http_ca.crt"
-"#,
-            PACKETBEAT_YML, es_password
+"#
         ),
     )?;
 
@@ -779,12 +774,11 @@ output.elasticsearch:
         "/etc/packetbeat/packetbeat.yml",
         format!(
             r#"
-{}
+{PACKETBEAT_YML}
 
 output.logstash:
   hosts: ["localhost:5044"]
-"#,
-            PACKETBEAT_YML
+"#
         ),
     )?;
 
@@ -842,7 +836,7 @@ fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
                     "!!! Could not join download thread due to panic!".red()
                 );
             }
-        };
+        }
     }
 
     Ok(())

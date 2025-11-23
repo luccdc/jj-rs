@@ -6,9 +6,9 @@ use crate::{checks, define_checks};
 ///
 /// Check the help menu for each subcommand for more information
 ///
-/// Certain parameters may be marked with [CheckValue]; these are fields that
+/// Certain parameters may be marked with [`CheckValue`]; these are fields that
 /// can use special values such as :STDIN: to read from standard input or
-/// :FILE:$FILE_PATH to read the value from a file. This is critical for
+/// :<FILE:$FILE_PATH> to read the value from a file. This is critical for
 /// passwords, to ensure they do not remain in the command line parameters of
 /// a check
 #[derive(Parser, Debug)]
@@ -49,7 +49,7 @@ impl super::Command for Check {
             self.hide_extra_details,
         );
 
-        t.run_cli(self.check_type.troubleshooter())?;
+        t.run_cli(&*self.check_type.troubleshooter())?;
 
         Ok(())
     }

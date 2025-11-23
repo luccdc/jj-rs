@@ -39,7 +39,7 @@ use nix::{
 
 const BUSYBOX_BYTES: &[u8] = include_bytes!(std::env!("BUSYBOX_GZIPPED"));
 
-/// Utility function for converting a list of Strings or strs to a list CStrings
+/// Utility function for converting a list of Strings or strs to a list `CStrings`
 pub fn str_to_cstr<R: AsRef<str>>(args: &[R]) -> anyhow::Result<Vec<CString>> {
     args.iter()
         .map(|arg| CString::from_str(arg.as_ref()))
@@ -140,7 +140,7 @@ impl Busybox {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    /// Constructs a std::process::Command object that makes use of the
+    /// Constructs a `std::process::Command` object that makes use of the
     /// internal Busybox implementation
     pub fn command<R: AsRef<OsStr>>(&self, cmd: R) -> Command {
         let mut cmd_obj = Command::new(format!("/proc/self/fd/{}", self.busybox_file.as_raw_fd()));

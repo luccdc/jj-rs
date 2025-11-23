@@ -140,7 +140,7 @@ impl PassiveTcpdumpCheck {
     }
 }
 
-impl<'a> CheckStep<'a> for PassiveTcpdumpCheck {
+impl CheckStep<'_> for PassiveTcpdumpCheck {
     fn name(&self) -> &'static str {
         "Wait for an inbound connection on port and verify that return packets are sent"
     }

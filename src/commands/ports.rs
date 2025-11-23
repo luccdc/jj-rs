@@ -23,13 +23,9 @@ impl super::Command for Ports {
 
             let pid = port
                 .pid
-                .map(|pid| pid.to_string())
-                .unwrap_or("unknown".to_string());
+                .map_or("unknown".to_string(), |pid| pid.to_string());
             let cmdline = port.cmdline.clone().unwrap_or_default();
-            let cgroup = port
-                .cgroup
-                .map(|cg| format!("({})", cg))
-                .unwrap_or_default();
+            let cgroup = port.cgroup.map(|cg| format!("({cg})")).unwrap_or_default();
 
             println!(
                 "{:>10}:{:<10} {:>12}: {} {}",

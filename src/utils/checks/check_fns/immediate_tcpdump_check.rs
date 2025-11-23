@@ -265,8 +265,9 @@ impl ImmediateTcpdumpCheck {
                 libc::MAP_ANONYMOUS | libc::MAP_SHARED,
                 0,
                 0,
-            ) as *mut _;
-            let semaphore = &mut (*sync).semaphore as *mut _;
+            )
+            .cast();
+            let semaphore = &raw mut (*sync).semaphore;
 
             libc::sem_init(semaphore, 1, 0);
 
@@ -331,13 +332,13 @@ impl ImmediateTcpdumpCheck {
         }
 
         let actual_source_port = unsafe {
-            (*sync).err.map_err(|_| {
+            (*sync).err.map_err(|()| {
                 anyhow::anyhow!("Could not perform net connection and specify source port")
             })
         };
 
         unsafe {
-            libc::munmap(sync as *mut _, SYNC_SIZE);
+            libc::munmap(sync.cast(), SYNC_SIZE);
         }
 
         use serde_json::json;
@@ -382,7 +383,7 @@ impl ImmediateTcpdumpCheck {
     }
 }
 
-impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
+impl CheckStep<'_> for ImmediateTcpdumpCheck {
     fn name(&self) -> &'static str {
         "Verify firewall with tcpdump"
     }
@@ -408,7 +409,7 @@ impl<'a> CheckStep<'a> for ImmediateTcpdumpCheck {
 /// A check that tries to see if packets are able to leave and come back. Only works for checks
 /// where NAT reflection is being used, to allow traffic to leave and go to a specific IP but have
 /// the server reflect the traffic back to the local system. Can be considered a much more advanced
-/// version of the TcpConnectCheck
+/// version of the `TcpConnectCheck`
 ///
 /// It takes an address and port combination to try and make a connection to, and sends
 /// data to the port over a specified protocol. The data is critical to get UDP based

@@ -6,7 +6,7 @@
 //! the namespace to execute functions temporarily before stepping
 //! back out
 //!
-//! This does require root permissions, or at least CAP_SYS_ADMIN
+//! This does require root permissions, or at least `CAP_SYS_ADMIN`
 //!
 //! ```no_run
 //! # use jj_rs::utils::{busybox, download_container::DownloadContainer};
@@ -83,7 +83,7 @@ impl DownloadContainer {
     /// reached. Fortunately, the default max point seems to be closer to either 4,194,304 or
     /// 32,768
     ///
-    /// The sneaky_ip setting allows for the system to perform source NAT as that IP address.
+    /// The `sneaky_ip` setting allows for the system to perform source NAT as that IP address.
     /// It will start to do ARP spoofing as that address to assist the local LAN in routing
     /// return traffic back. If unspecified, it will masquerade as the host IP address
     pub fn new(name: Option<String>, sneaky_ip: Option<Ipv4Addr>) -> anyhow::Result<Self> {
@@ -126,13 +126,13 @@ impl DownloadContainer {
         )
         .context("Could not open parent mount namespace")?;
         let child_net_ns = open(
-            &*format!("/proc/{}/ns/net", child),
+            &*format!("/proc/{child}/ns/net"),
             OFlag::O_RDONLY,
             Mode::empty(),
         )
         .context("Could not open child net namespace")?;
         let child_mnt_ns = open(
-            &*format!("/proc/{}/ns/mnt", child),
+            &*format!("/proc/{child}/ns/mnt"),
             OFlag::O_RDONLY,
             Mode::empty(),
         )
@@ -275,13 +275,13 @@ impl DownloadContainer {
         }
 
         Ok(DownloadContainer {
-            child,
-            nft,
             ns_name,
-            child_net_ns,
-            child_mnt_ns,
+            child,
             original_net_ns,
+            child_net_ns,
             original_mnt_ns,
+            child_mnt_ns,
+            nft,
             wan_ip,
             lan_ip,
         })
@@ -373,7 +373,7 @@ impl Drop for DownloadContainer {
             .nft
             .exec(format!("delete table inet {}", self.ns_name), None)
         {
-            eprintln!("Could not delete nftables namespace: {e}")
+            eprintln!("Could not delete nftables namespace: {e}");
         }
     }
 }
@@ -435,8 +435,9 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
             libc::MAP_ANONYMOUS | libc::MAP_SHARED,
             0,
             0,
-        ) as *mut _;
-        let semaphore = &mut (*sync).semaphore as *mut _;
+        )
+        .cast();
+        let semaphore = &raw mut (*sync).semaphore;
 
         libc::sem_init(semaphore, 1, 0);
 
@@ -444,7 +445,7 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
             ForkResult::Child => {
                 (*sync).err = setup_child();
 
-                libc::msync(sync as *mut _, SYNC_SIZE, libc::MS_SYNC);
+                libc::msync(sync.cast(), SYNC_SIZE, libc::MS_SYNC);
                 libc::sem_post(semaphore);
 
                 let _ = bb.execv(&["sleep", "infinity"]);
@@ -458,7 +459,7 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
 
                 std::ptr::read(sync).err?;
 
-                libc::munmap(semaphore as *mut _, SYNC_SIZE);
+                libc::munmap(semaphore.cast(), SYNC_SIZE);
 
                 Ok(child)
             }

@@ -31,7 +31,7 @@ fn update_stats<F>(
     update_func: F,
 ) -> anyhow::Result<()>
 where
-    F: Fn(&super::RuntimeCheckHandle) -> (),
+    F: Fn(&super::RuntimeCheckHandle),
 {
     let Ok(read) = daemon.read() else {
         anyhow::bail!("Could not acquire read lock to update statistics");
@@ -56,8 +56,7 @@ where
 
 pub fn register_check<'scope, 'env: 'scope>(
     daemon: &'env RwLock<super::RuntimeDaemonConfig>,
-    check_id: super::CheckId,
-    check: super::CheckCommands,
+    (check_id, check): (super::CheckId, super::CheckCommands),
     scope: &'scope Scope<'scope, 'env>,
     prompt_writer: mpsc::Sender<(super::CheckId, String)>,
     log_writer: PipeWriter,
@@ -72,8 +71,7 @@ pub fn register_check<'scope, 'env: 'scope>(
         move || {
             if let Err(e) = check_thread(
                 daemon,
-                check_id,
-                check,
+                (check_id, check),
                 prompt_writer,
                 log_writer,
                 shutdown,
@@ -91,7 +89,7 @@ pub fn register_check<'scope, 'env: 'scope>(
             Err(_) => anyhow::bail!("Could not acquire write lock to register check"),
         };
 
-        let host = (*checks).checks.entry(Arc::clone(&check_id.0)).or_default();
+        let host = checks.checks.entry(Arc::clone(&check_id.0)).or_default();
 
         if host.contains_key(&check_id.1) {
             anyhow::bail!(
@@ -119,8 +117,7 @@ pub fn register_check<'scope, 'env: 'scope>(
 
 fn check_thread<'scope, 'env: 'scope>(
     daemon: &'env RwLock<super::RuntimeDaemonConfig>,
-    check_id: super::CheckId,
-    check: super::CheckCommands,
+    (check_id, check): (super::CheckId, super::CheckCommands),
     mut prompt_writer: mpsc::Sender<(super::CheckId, String)>,
     log_writer: PipeWriter,
     mut shutdown: broadcast::Receiver<()>,
@@ -211,7 +208,7 @@ fn wait_for_trigger(
         .enable_all()
         .build()?
         .block_on(async {
-            let sleep = tokio::time::sleep(timeout.clone());
+            let sleep = tokio::time::sleep(timeout);
             tokio::pin!(sleep);
 
             loop {
@@ -239,7 +236,7 @@ fn wait_for_trigger(
                     }
                 } else {
                     while let Some(msg) = tokio::select! {
-                        _ = &mut sleep => {
+                        () = &mut sleep => {
                             return Ok(false)
                         }
                         _ = shutdown.recv() => {
@@ -318,21 +315,20 @@ async fn run_parent(
                 break;
             }
             ChildToParentMsg::Prompt(p) => {
-                let pr = match check_prompt_values.get(&p) {
-                    Some(pr) => pr.clone(),
-                    None => {
-                        prompt_writer.send((check_id.clone(), p.clone())).await?;
+                let pr = if let Some(pr) = check_prompt_values.get(&p) {
+                    pr.clone()
+                } else {
+                    prompt_writer.send((check_id.clone(), p.clone())).await?;
 
-                        'outer: loop {
-                            while let Some(m) = message_receiver.recv().await {
-                                let OutboundMessage::PromptResponse(r) = m else {
-                                    continue;
-                                };
-
-                                break 'outer r;
-                            }
+                    loop {
+                        let Some(m) = message_receiver.recv().await else {
                             anyhow::bail!("Did not receive prompt response message");
-                        }
+                        };
+                        let OutboundMessage::PromptResponse(r) = m else {
+                            continue;
+                        };
+
+                        break r;
                     }
                 }
                 .trim()
@@ -341,7 +337,7 @@ async fn run_parent(
                 check_prompt_values.insert(p.clone(), pr.clone());
 
                 let resp_json = serde_json::to_string(&ParentToChildMsg::Answer(pr))?;
-                answer_writer_raw.write(resp_json.as_bytes())?;
+                answer_writer_raw.write_all(resp_json.as_bytes())?;
             }
         }
     }
@@ -369,7 +365,7 @@ fn run_child(
     }
 
     let done_msg = serde_json::to_string(&ChildToParentMsg::Done)?;
-    prompt_writer_raw.write(done_msg.as_bytes())?;
+    prompt_writer_raw.write_all(done_msg.as_bytes())?;
 
     Ok(())
 }
@@ -383,7 +379,7 @@ fn run_troubleshooter(
 ) -> anyhow::Result<()> {
     let mut runner = crate::checks::DaemonTroubleshooter::new(move |prompt| {
         let prompt_msg = serde_json::to_string(&ChildToParentMsg::Prompt(prompt.to_string()))?;
-        prompt_writer_raw.write(prompt_msg.as_bytes())?;
+        prompt_writer_raw.write_all(prompt_msg.as_bytes())?;
 
         let mut resp_buffer = [0u8; 32768];
         let bytes = answer_reader_raw.read(&mut resp_buffer)?;
@@ -418,7 +414,7 @@ fn run_troubleshooter(
     });
 
     let result_json = serde_json::to_string(&result)?;
-    log_writer.write(result_json.as_bytes())?;
+    log_writer.write_all(result_json.as_bytes())?;
 
     Ok(())
 }

@@ -23,7 +23,7 @@ pub struct SshTroubleshooter {
     #[arg(long, short, default_value = "root")]
     user: String,
 
-    /// [CheckValue] The password to authenticate with
+    /// [`CheckValue`] The password to authenticate with
     #[arg(long, short = 'P', default_value_t = Default::default())]
     password: CheckValue,
 

@@ -83,7 +83,7 @@ impl CheckStep<'_> for PamCheck {
             Ok(CheckResult::succeed(
                 "Successfully signed in as user",
                 serde_json::json!({
-                    "pam_test_output": stdout.split("\n").collect::<serde_json::Value>(),
+                    "pam_test_output": stdout.split('\n').collect::<serde_json::Value>(),
                     "system_logs": logs,
                     "service_config": service_config
                 }),
@@ -92,7 +92,7 @@ impl CheckStep<'_> for PamCheck {
             Ok(CheckResult::fail(
                 "Failed to sign in as user",
                 serde_json::json!({
-                    "pam_test_output": stdout.split("\n").collect::<serde_json::Value>(),
+                    "pam_test_output": stdout.split('\n').collect::<serde_json::Value>(),
                     "system_logs": logs,
                     "service_config": service_config
                 }),
@@ -121,22 +121,22 @@ impl PamCheck {
         let auth = pam_raw.iter().filter_map(|l| {
             l.strip_prefix("auth")
                 .or_else(|| l.strip_prefix("-auth"))
-                .map(|l2| l2.trim_start())
+                .map(str::trim_start)
         });
         let password = pam_raw.iter().filter_map(|l| {
             l.strip_prefix("password")
                 .or_else(|| l.strip_prefix("-password"))
-                .map(|l2| l2.trim_start())
+                .map(str::trim_start)
         });
         let account = pam_raw.iter().filter_map(|l| {
             l.strip_prefix("account")
                 .or_else(|| l.strip_prefix("-account"))
-                .map(|l2| l2.trim_start())
+                .map(str::trim_start)
         });
         let session = pam_raw.iter().filter_map(|l| {
             l.strip_prefix("session")
                 .or_else(|| l.strip_prefix("-session"))
-                .map(|l2| l2.trim_start())
+                .map(str::trim_start)
         });
 
         Ok(serde_json::json!({
@@ -149,9 +149,9 @@ impl PamCheck {
 
     fn read_pam_file<P: AsRef<Path>>(&self, file: P) -> anyhow::Result<Vec<String>> {
         Ok(std::fs::read_to_string(file)?
-            .split("\n")
-            .flat_map(|line| match line.strip_prefix("@include") {
-                Some(p) => {
+            .split('\n')
+            .flat_map(|line| {
+                if let Some(p) = line.strip_prefix("@include") {
                     let p = p.trim_start();
                     [
                         vec![line.to_string()],
@@ -159,8 +159,7 @@ impl PamCheck {
                             .unwrap_or(vec![]),
                     ]
                     .concat()
-                }
-                None => {
+                } else {
                     let type_stripped = line
                         .strip_prefix("auth")
                         .or_else(|| line.strip_prefix("account"))
@@ -170,7 +169,7 @@ impl PamCheck {
                         .or_else(|| line.strip_prefix("-account"))
                         .or_else(|| line.strip_prefix("-password"))
                         .or_else(|| line.strip_prefix("-session"))
-                        .map(|l| l.trim_start());
+                        .map(str::trim_start);
 
                     let Some(next) = type_stripped else {
                         return vec![line.to_string()];

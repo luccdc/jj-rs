@@ -64,9 +64,9 @@ pub fn load_users<I: Into<Option<S>>, S: AsRef<str>>(uid: I) -> anyhow::Result<V
     };
 
     Ok(passwd
-        .split("\n")
+        .split('\n')
         .filter_map(|row| -> Option<Passwd> {
-            let mut options = row.split(":");
+            let mut options = row.split(':');
             let user = options.next()?.to_string();
             let password = options.next()?.to_string();
             let uid = options.next()?.parse::<u32>().ok()?;

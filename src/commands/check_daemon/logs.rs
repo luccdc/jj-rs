@@ -69,7 +69,7 @@ pub async fn log_handler_thread(
         Some(f) => get_log_file(f).await,
         None => None,
     };
-    let mut log_socket = match config.ip.clone() {
+    let mut log_socket = match config.ip {
         Some(f) => get_log_socket(f).await,
         None => None,
     };
@@ -114,16 +114,16 @@ pub async fn log_handler_thread(
 
             let json = json + "\n";
 
-            if let Some(ref mut lf) = log_file {
-                if let Err(e) = lf.write(json.as_bytes()).await {
-                    eprintln!("Could not write to log file: {e}");
-                }
+            if let Some(ref mut lf) = log_file
+                && let Err(e) = lf.write(json.as_bytes()).await
+            {
+                eprintln!("Could not write to log file: {e}");
             }
 
-            if let Some(ref mut ls) = log_socket {
-                if let Err(e) = ls.write(json.as_bytes()).await {
-                    eprintln!("Could not write to log file: {e}");
-                }
+            if let Some(ref mut ls) = log_socket
+                && let Err(e) = ls.write(json.as_bytes()).await
+            {
+                eprintln!("Could not write to log file: {e}");
             }
         }
 

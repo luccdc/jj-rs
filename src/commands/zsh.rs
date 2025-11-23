@@ -22,7 +22,7 @@ use crate::utils::busybox::str_to_cstr;
 
 /// Runs an embedded copy of zsh
 ///
-/// MWCCDC often provides copies of bash that are modified to load PROMPT_COMMAND
+/// MWCCDC often provides copies of bash that are modified to load `PROMPT_COMMAND`
 /// from somewhere that deletes all firewall rules...
 ///
 /// Use it by specifying -- and then arguments to pass to zsh, e.g.:
@@ -75,10 +75,10 @@ impl super::Command for Zsh {
             let passwd = &std::fs::read("/etc/passwd")?;
             let passwd = String::from_utf8_lossy(passwd);
             let passwd = passwd
-                .split("\n")
+                .split('\n')
                 .map(|line| {
                     if line.starts_with(user) {
-                        let mut parts = line.split(":").map(str::to_string).collect::<Vec<_>>();
+                        let mut parts = line.split(':').map(str::to_string).collect::<Vec<_>>();
                         if !parts.is_empty() {
                             let len = parts.len();
                             parts[len - 1] = self.install_path.display().to_string();

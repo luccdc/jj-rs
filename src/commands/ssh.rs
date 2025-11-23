@@ -19,7 +19,7 @@ impl super::Command for Ssh {
             SshCommands::Check(ssh_troubleshooter) => {
                 let mut t = crate::utils::checks::CliTroubleshooter::new(false, false, false);
 
-                t.run_cli(Box::new(ssh_troubleshooter))?;
+                t.run_cli(&ssh_troubleshooter)?;
                 Ok(())
             }
         }

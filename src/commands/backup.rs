@@ -59,13 +59,13 @@ impl super::Command for Backup {
 
                 println!("{} {}", "--- Adding ".green(), path.green());
 
-                for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+                for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
                     let Ok(mut file) = File::open(entry.path()) else {
                         continue;
                     };
                     let path =
-                        PathBuf::from(entry.path().to_string_lossy().trim_start_matches("/"));
-                    let Ok(_) = archive.append_file(path, &mut file) else {
+                        PathBuf::from(entry.path().to_string_lossy().trim_start_matches('/'));
+                    let Ok(()) = archive.append_file(path, &mut file) else {
                         continue;
                     };
                     println!("{}", entry.path().display());
@@ -75,13 +75,13 @@ impl super::Command for Backup {
             for path in &self.paths {
                 println!("{} {}", "--- Adding ".green(), path.green());
 
-                for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+                for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
                     let Ok(mut file) = File::open(entry.path()) else {
                         continue;
                     };
                     let path =
-                        PathBuf::from(entry.path().to_string_lossy().trim_start_matches("/"));
-                    let Ok(_) = archive.append_file(path, &mut file) else {
+                        PathBuf::from(entry.path().to_string_lossy().trim_start_matches('/'));
+                    let Ok(()) = archive.append_file(path, &mut file) else {
                         continue;
                     };
                     println!("{}", entry.path().display());

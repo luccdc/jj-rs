@@ -12,7 +12,7 @@ struct TcpConnectCheck {
     port: u16,
 }
 
-impl<'a> CheckStep<'a> for TcpConnectCheck {
+impl CheckStep<'_> for TcpConnectCheck {
     fn name(&self) -> &'static str {
         "Check TCP port status"
     }
@@ -33,14 +33,14 @@ impl<'a> CheckStep<'a> for TcpConnectCheck {
             let client2 = TcpStream::connect_timeout(&addr2, timeout).map(|_| ());
 
             Ok(match (client1, client2) {
-                (Ok(_), Ok(_)) => CheckResult::succeed(
+                (Ok(()), Ok(())) => CheckResult::succeed(
                     format!(
                         "Successfully connected to {}:{} and successfully connected to {} from download container",
                         self.ip, self.port, self.port
                     ),
                     serde_json::json!(null),
                 ),
-                (Ok(_), Err(e)) => CheckResult::fail(
+                (Ok(()), Err(e)) => CheckResult::fail(
                     format!(
                         "Failed to connect to {}:{}, but successfully connected to port {} from the download shell",
                         self.ip, self.port, self.port
@@ -49,7 +49,7 @@ impl<'a> CheckStep<'a> for TcpConnectCheck {
                         "local_connection_error": format!("{e:?}")
                     }),
                 ),
-                (Err(e), Ok(_)) => CheckResult::fail(
+                (Err(e), Ok(())) => CheckResult::fail(
                     format!(
                         "Successfully connected to {}:{}, but failed to connect to port {} from the download container",
                         self.ip, self.port, self.port

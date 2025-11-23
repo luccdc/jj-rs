@@ -152,18 +152,15 @@ impl QuickSetup {
             writeln!(ob, "        #### ELK ####")?;
             writeln!(
                 ob,
-                "        ip daddr {} tcp dport 5601 ct state new accept",
-                elk_ip
+                "        ip daddr {elk_ip} tcp dport 5601 ct state new accept"
             )?;
             writeln!(
                 ob,
-                "        ip daddr {} tcp dport 8080 ct state new accept",
-                elk_ip
+                "        ip daddr {elk_ip} tcp dport 8080 ct state new accept"
             )?;
             writeln!(
                 ob,
-                "        ip daddr {} tcp dport 5040 ct state new accept",
-                elk_ip
+                "        ip daddr {elk_ip} tcp dport 5040 ct state new accept"
             )?;
             writeln!(ob)?;
         }
