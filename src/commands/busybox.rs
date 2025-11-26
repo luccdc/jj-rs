@@ -17,7 +17,7 @@ pub struct Busybox {
 }
 
 impl super::Command for Busybox {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let bb = busybox::Busybox::new()?;
 
         let args = if self.args.is_empty() {

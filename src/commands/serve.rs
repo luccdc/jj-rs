@@ -26,7 +26,7 @@ pub struct Serve {
 }
 
 impl super::Command for Serve {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
@@ -36,7 +36,7 @@ impl super::Command for Serve {
     }
 }
 
-async fn serve(args: Serve) -> anyhow::Result<()> {
+async fn serve(args: Serve) -> eyre::Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -68,7 +68,7 @@ async fn serve(args: Serve) -> anyhow::Result<()> {
     }
 }
 
-fn not_found() -> anyhow::Result<Response<BoxBody<Bytes, std::io::Error>>> {
+fn not_found() -> eyre::Result<Response<BoxBody<Bytes, std::io::Error>>> {
     let body = Full::new(Bytes::from("404"))
         .map_err(std::io::Error::other)
         .boxed();
@@ -81,7 +81,7 @@ fn not_found() -> anyhow::Result<Response<BoxBody<Bytes, std::io::Error>>> {
 async fn respond(
     root_path: PathBuf,
     req: Request<hyper::body::Incoming>,
-) -> anyhow::Result<Response<BoxBody<Bytes, std::io::Error>>> {
+) -> eyre::Result<Response<BoxBody<Bytes, std::io::Error>>> {
     let mut path = root_path.clone();
     let uri = req.uri();
 
@@ -134,7 +134,7 @@ async fn respond_dir(
     req: &Request<hyper::body::Incoming>,
     path: PathBuf,
     uri: String,
-) -> anyhow::Result<Response<BoxBody<Bytes, std::io::Error>>> {
+) -> eyre::Result<Response<BoxBody<Bytes, std::io::Error>>> {
     let entries = tokio::fs::read_dir(&path).await?;
     let entries = ReadDirStream::new(entries)
         .collect::<Result<Vec<_>, _>>()
@@ -252,7 +252,7 @@ async fn respond_dir(
     Ok(Response::builder().status(StatusCode::OK).body(body)?)
 }
 
-async fn respond_file(path: PathBuf) -> anyhow::Result<Response<BoxBody<Bytes, std::io::Error>>> {
+async fn respond_file(path: PathBuf) -> eyre::Result<Response<BoxBody<Bytes, std::io::Error>>> {
     let file = tokio::fs::File::open(path).await?;
     let reader_stream = ReaderStream::new(file);
 

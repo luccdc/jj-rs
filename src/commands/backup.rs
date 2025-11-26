@@ -3,9 +3,9 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::Context;
 use clap::Parser;
 use colored::Colorize;
+use eyre::Context;
 use flate2::{Compression, write::GzEncoder};
 use tar::Builder;
 use walkdir::WalkDir;
@@ -34,7 +34,7 @@ pub struct Backup {
 }
 
 impl super::Command for Backup {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         // Scope: by forcing this action to be scoped, `archive`, `encoder`, and
         // `initial_tarball` will be closed, allowing
         {

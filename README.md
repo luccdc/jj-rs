@@ -90,7 +90,7 @@ pub struct Example {
 }
 
 impl super::Command for Example {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         system("systemctl status ssh")?;
         
         let state = qx("systemctl is-active ssh")?.1;
@@ -138,7 +138,7 @@ impl Default for ExampleTroubleshooter {
 }
 
 impl Troubleshooter for ExampleTroubleshooter {
-    fn checks<'a>(&'a self) -> anyhow::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
+    fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
         Ok(vec![
             systemd_service_check("example")
         ])
@@ -177,14 +177,14 @@ As an example, `reqwest`. Under the [feature flags](https://docs.rs/crate/reqwes
 Rust is very specific about how to handle errors. For this project, there are two rules for handling errors:
 
 1. If you are writing a command or a check (anything that goes in `src/commands` or `src/checks`), just use `?` and bubble it up. See the example command above, how after `system` and `qx` it just uses `?`
-2. If you are writing a utility, include `use anyhow::Context;` at the top of your file and use `.context("Add an additional error message here")?` with code that returns a result.
+2. If you are writing a utility, include `use eyre::Context;` at the top of your file and use `.context("Add an additional error message here")?` with code that returns a result.
 
 For situation 2, consider the following example in `src/utils/made_up_util.rs`:
 
 ``` rust
-use anyhow::Context;
+use eyre::Context;
 
-fn do_the_thing() -> anyhow::Result<()> {
+fn do_the_thing() -> eyre::Result<()> {
     crate::utils::system("iptables -A OUTPUT DROP")                 // Function returns Result
         .context("Could not run iptables to drop firewall rules")?; // Context added before using `?`
 }

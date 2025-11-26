@@ -4,7 +4,7 @@
 //!
 //! ```
 //! # use jj_rs::utils::busybox::Busybox;
-//! # fn test_busybox() -> anyhow::Result<()> {
+//! # fn test_busybox() -> eyre::Result<()> {
 //! let busybox = Busybox::new()?;
 //!
 //! assert_eq!(busybox.execute(&["uname"])?, "Linux\n");
@@ -30,7 +30,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{Context, bail};
+use eyre::{Context, bail};
 use flate2::write::GzDecoder;
 use nix::{
     sys::memfd::{MFdFlags, memfd_create},
@@ -40,7 +40,7 @@ use nix::{
 const BUSYBOX_BYTES: &[u8] = include_bytes!(std::env!("BUSYBOX_GZIPPED"));
 
 /// Utility function for converting a list of Strings or strs to a list `CStrings`
-pub fn str_to_cstr<R: AsRef<str>>(args: &[R]) -> anyhow::Result<Vec<CString>> {
+pub fn str_to_cstr<R: AsRef<str>>(args: &[R]) -> eyre::Result<Vec<CString>> {
     args.iter()
         .map(|arg| CString::from_str(arg.as_ref()))
         .collect::<Result<Vec<CString>, _>>()
@@ -51,7 +51,7 @@ pub fn str_to_cstr<R: AsRef<str>>(args: &[R]) -> anyhow::Result<Vec<CString>> {
 ///
 /// ```
 /// # use jj_rs::utils::busybox::Busybox;
-/// # fn test_busybox() -> anyhow::Result<()> {
+/// # fn test_busybox() -> eyre::Result<()> {
 /// let busybox = Busybox::new()?;
 ///
 /// assert_eq!(busybox.execute(&["uname"])?, "Linux\n");
@@ -72,7 +72,7 @@ pub struct Busybox {
 impl Busybox {
     /// Creates a new Busybox container, loading Busybox into memory and preparing to
     /// execute commands
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> eyre::Result<Self> {
         let temp_fd =
             memfd_create("", MFdFlags::empty()).context("Could not create memory file")?;
 
@@ -95,7 +95,7 @@ impl Busybox {
     /// Replaces the current process with busybox
     ///
     /// In the happy path, good case, this function will fail to return
-    pub fn execv<R: AsRef<str>>(&self, args: &[R]) -> anyhow::Result<()> {
+    pub fn execv<R: AsRef<str>>(&self, args: &[R]) -> eyre::Result<()> {
         let args = str_to_cstr(args)?;
 
         execv(
@@ -112,7 +112,7 @@ impl Busybox {
     ///
     /// ```
     /// # use jj_rs::utils::busybox::Busybox;
-    /// # fn test_busybox() -> anyhow::Result<()> {
+    /// # fn test_busybox() -> eyre::Result<()> {
     /// let busybox = Busybox::new()?;
     ///
     /// assert_eq!(busybox.execute(&["uname"])?, "Linux\n");
@@ -126,7 +126,7 @@ impl Busybox {
     /// # }
     /// # test_busybox().expect("could not run busybox test");
     /// ```
-    pub fn execute<R: AsRef<OsStr>>(&self, command: &[R]) -> anyhow::Result<String> {
+    pub fn execute<R: AsRef<OsStr>>(&self, command: &[R]) -> eyre::Result<String> {
         let Some(cmd) = command.first() else {
             bail!("Command not fully specified; empty list provided to Busybox::execute");
         };
@@ -153,14 +153,14 @@ impl Busybox {
 ///
 /// ```
 /// # use jj_rs::utils::busybox::execute;
-/// # fn test_busybox() -> anyhow::Result<()> {
+/// # fn test_busybox() -> eyre::Result<()> {
 /// assert_eq!(execute(&["uname"])?, "Linux\n");
 /// # Ok(())
 /// # }
 /// # assert!(test_busybox().is_ok());
 /// ```
 #[allow(dead_code)]
-pub fn execute<R: AsRef<OsStr>>(args: &[R]) -> anyhow::Result<String> {
+pub fn execute<R: AsRef<OsStr>>(args: &[R]) -> eyre::Result<String> {
     let busybox = Busybox::new()?;
     busybox.execute(args)
 }

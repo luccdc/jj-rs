@@ -59,7 +59,7 @@ pub async fn log_handler_thread(
     log_pipe: tokio::net::unix::pipe::Receiver,
     log_event_sender: tokio::sync::mpsc::Sender<LogEvent>,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     // into_blocking_fd unregisters it from the previous tokio runtime it was
     // created on, and from_owned_fd registers it on the current runtime
     let mut log_pipe =

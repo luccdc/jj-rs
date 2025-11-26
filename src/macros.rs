@@ -12,7 +12,7 @@ macro_rules! define_commands {
         }
 
         impl Commands {
-            fn execute(self) -> anyhow::Result<()> {
+            fn execute(self) -> eyre::Result<()> {
                 use $crate::commands::Command;
 
                 fn _type_check<F: $crate::commands::Command>(_a: &F) {}

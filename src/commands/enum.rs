@@ -7,7 +7,7 @@ use crate::utils::{busybox::Busybox, qx};
 pub struct Enum;
 
 impl super::Command for Enum {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let bb = Busybox::new()?;
 
         println!("\n==== CPU INFO\n");

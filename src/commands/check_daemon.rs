@@ -42,9 +42,9 @@ use std::{
     sync::{Arc, RwLock, atomic::AtomicBool},
 };
 
-use anyhow::Context;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use eyre::Context;
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::unix::pipe,
@@ -154,7 +154,7 @@ pub enum DaemonConfigArg {
 }
 
 impl super::Command for CheckDaemon {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let log_config = logs::LogConfig::new(self.logs_ip, self.log_file.clone());
 
         let daemon: RwLock<RuntimeDaemonConfig> = RwLock::new(RuntimeDaemonConfig {
@@ -164,7 +164,7 @@ impl super::Command for CheckDaemon {
 
         let config = match self.daemon_config {
             DaemonConfigArg::ConfigPath { config_file } => {
-                let config_parsed: anyhow::Result<DaemonConfig> = std::fs::read(config_file)
+                let config_parsed: eyre::Result<DaemonConfig> = std::fs::read(config_file)
                     .context("Could not read daemon configuration")
                     .and_then(|c| {
                         toml::from_slice(&c).context("Could not parse daemon configuration")
@@ -199,7 +199,7 @@ impl super::Command for CheckDaemon {
         let (log_event_sender, log_event_receiver) = mpsc::channel(128);
         let log_writer = std::io::PipeWriter::from(log_writer.into_blocking_fd()?);
 
-        std::thread::scope(|scope| -> anyhow::Result<()> {
+        std::thread::scope(|scope| -> eyre::Result<()> {
             scope.spawn(|| {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -260,7 +260,7 @@ async fn basic_log_runner<'scope, 'env: 'scope>(
     mut prompt_reader: mpsc::Receiver<(CheckId, String)>,
     send_shutdown: broadcast::Sender<()>,
     show_extra_details: bool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
 

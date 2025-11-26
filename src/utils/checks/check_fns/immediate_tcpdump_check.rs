@@ -3,7 +3,7 @@ use std::{
     net::{Ipv4Addr, TcpStream, UdpSocket},
 };
 
-use anyhow::Context;
+use eyre::Context;
 use futures_util::StreamExt;
 
 use crate::utils::{
@@ -25,12 +25,12 @@ impl ImmediateTcpdumpCheck {
         &self,
         wan_ip: Ipv4Addr,
         lan_device: &str,
-    ) -> anyhow::Result<pcap::PacketStream<pcap::Active, TcpdumpCodec>> {
+    ) -> eyre::Result<pcap::PacketStream<pcap::Active, TcpdumpCodec>> {
         let device = pcap::Device::list()
             .context("Could not list pcap devices")?
             .into_iter()
             .find(|dev| dev.name == lan_device)
-            .ok_or(anyhow::anyhow!("Could not find pcap device"))?;
+            .ok_or(eyre::eyre!("Could not find pcap device"))?;
 
         let capture = pcap::Capture::from_device(device)
             .context("Could not load packet capture device for tcpdump check")?
@@ -77,7 +77,7 @@ impl ImmediateTcpdumpCheck {
         inbound_packet_count: &mut usize,
         outbound_packet_count: &mut usize,
         capture: &mut pcap::PacketStream<pcap::Active, TcpdumpCodec>,
-    ) -> anyhow::Result<u16> {
+    ) -> eyre::Result<u16> {
         loop {
             let Some(Ok((header, packet))) = capture.next().await else {
                 continue;
@@ -215,7 +215,7 @@ impl ImmediateTcpdumpCheck {
         }
     }
 
-    fn make_connection(&self, container: &DownloadContainer) -> anyhow::Result<u16> {
+    fn make_connection(&self, container: &DownloadContainer) -> eyre::Result<u16> {
         let ImmediateTcpdumpCheck {
             port,
             protocol,
@@ -239,7 +239,7 @@ impl ImmediateTcpdumpCheck {
             .flatten()
     }
 
-    async fn run_check(&self) -> anyhow::Result<CheckResult> {
+    async fn run_check(&self) -> eyre::Result<CheckResult> {
         let container = DownloadContainer::new(None, None)
             .context("Could not create download container for immediate tcpdump check")?;
 
@@ -333,7 +333,7 @@ impl ImmediateTcpdumpCheck {
 
         let actual_source_port = unsafe {
             (*sync).err.map_err(|()| {
-                anyhow::anyhow!("Could not perform net connection and specify source port")
+                eyre::eyre!("Could not perform net connection and specify source port")
             })
         };
 
@@ -388,7 +388,7 @@ impl CheckStep<'_> for ImmediateTcpdumpCheck {
         "Verify firewall with tcpdump"
     }
 
-    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         if !self.should_run {
             return Ok(CheckResult::not_run(
                 "Cannot check tcpdump when packets do not return to system via NAT reflection"

@@ -7,9 +7,9 @@ use std::{
     thread,
 };
 
-use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use eyre::{Context, bail};
 use nix::unistd::chdir;
 
 use crate::utils::{download_file, system};
@@ -136,7 +136,7 @@ pub struct Elk {
 }
 
 impl super::Command for Elk {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let Some(distro) = get_distro()? else {
             eprintln!("{}", "!!! Could not identify distribution to run on! This utility depends on being able to use package managers".red());
             return Ok(());
@@ -210,7 +210,7 @@ impl super::Command for Elk {
     }
 }
 
-fn get_elastic_password(password: &mut Option<String>) -> anyhow::Result<String> {
+fn get_elastic_password(password: &mut Option<String>) -> eyre::Result<String> {
     if let Some(pass) = password.clone() {
         return Ok(pass);
     }
@@ -231,7 +231,7 @@ fn get_elastic_password(password: &mut Option<String>) -> anyhow::Result<String>
     Ok(new_pass)
 }
 
-fn setup_zram() -> anyhow::Result<()> {
+fn setup_zram() -> eyre::Result<()> {
     let mods = qx("lsmod")?.1;
 
     if pcre!(&mods =~ qr/"zram"/xms) {
@@ -260,8 +260,8 @@ fn setup_zram() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result<()> {
-    let download_packages_internal = || -> anyhow::Result<()> {
+fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<()> {
+    let download_packages_internal = || -> eyre::Result<()> {
         std::fs::create_dir_all(&args.elasticsearch_share_directory)?;
 
         let mut download_threads = vec![];
@@ -377,7 +377,7 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Resul
     Ok(())
 }
 
-fn install_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result<()> {
+fn install_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     chdir(&args.elasticsearch_share_directory)?;
 
     println!("{}", "--- Installing elastic packages...".green());
@@ -414,7 +414,7 @@ fn install_packages(distro: &Distro, args: &ElkSubcommandArgs) -> anyhow::Result
 fn setup_elasticsearch(
     password: &mut Option<String>,
     args: &ElkSubcommandArgs,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     println!("{}", "--- Configuring Elasticsearch".green());
 
     system("systemctl enable elasticsearch")?;
@@ -459,7 +459,7 @@ fn setup_elasticsearch(
     Ok(())
 }
 
-fn setup_kibana(password: &mut Option<String>) -> anyhow::Result<()> {
+fn setup_kibana(password: &mut Option<String>) -> eyre::Result<()> {
     use reqwest::blocking::{
         Client,
         multipart::{Form, Part},
@@ -541,7 +541,7 @@ fn setup_kibana(password: &mut Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn setup_logstash(password: &mut Option<String>) -> anyhow::Result<()> {
+fn setup_logstash(password: &mut Option<String>) -> eyre::Result<()> {
     println!("{}", "--- Configuring Logstash...".green());
 
     #[derive(serde::Deserialize)]
@@ -609,7 +609,7 @@ Environment="ES_API_KEY={}:{}"
     Ok(())
 }
 
-fn setup_auditbeat(password: &mut Option<String>) -> anyhow::Result<()> {
+fn setup_auditbeat(password: &mut Option<String>) -> eyre::Result<()> {
     println!("{}", "--- Setting up auditbeat".green());
 
     let es_password = get_elastic_password(password)?;
@@ -654,7 +654,7 @@ output.logstash:
     Ok(())
 }
 
-fn setup_filebeat(password: &mut Option<String>) -> anyhow::Result<()> {
+fn setup_filebeat(password: &mut Option<String>) -> eyre::Result<()> {
     println!("{}", "--- Setting up filebeat".green());
 
     let es_password = get_elastic_password(password)?;
@@ -745,7 +745,7 @@ output.logstash:
     Ok(())
 }
 
-fn setup_packetbeat(password: &mut Option<String>) -> anyhow::Result<()> {
+fn setup_packetbeat(password: &mut Option<String>) -> eyre::Result<()> {
     println!("{}", "--- Setting up packetbeat".green());
 
     let es_password = get_elastic_password(password)?;
@@ -790,7 +790,7 @@ output.logstash:
     Ok(())
 }
 
-fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
+fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
     println!("{}", "--- Downloading beats...".green());
 
     let mut download_threads = vec![];
@@ -842,7 +842,7 @@ fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn install_beats(distro: Distro, args: &ElkBeatsArgs) -> anyhow::Result<()> {
+fn install_beats(distro: Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
     if args.use_download_shell {
         let container = DownloadContainer::new(None, args.sneaky_ip)?;
 

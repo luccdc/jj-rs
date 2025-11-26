@@ -65,7 +65,7 @@ impl From<&str> for Distro {
 
 /// Load the current distribution. May fail if there is a malformed
 /// /etc/os-release file
-pub fn get_distro() -> anyhow::Result<Option<Distro>> {
+pub fn get_distro() -> eyre::Result<Option<Distro>> {
     let env = std::fs::read_to_string("/etc/os-release")?;
 
     let matches = pcre!(

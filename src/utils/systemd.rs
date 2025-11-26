@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::Context;
+use eyre::Context;
 
 use crate::{pcre, utils::qx};
 
@@ -15,7 +15,7 @@ pub fn is_service_active(service_info: &HashMap<String, String>) -> bool {
 }
 
 /// Pull state and configuration information about a systemd unit
-pub fn get_service_info(service: &str) -> anyhow::Result<HashMap<String, String>> {
+pub fn get_service_info(service: &str) -> eyre::Result<HashMap<String, String>> {
     let service_info = qx(&format!("systemctl show --no-pager {service}"))
         .context("Could not show service info")?
         .1;

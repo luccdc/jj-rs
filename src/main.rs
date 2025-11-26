@@ -52,7 +52,8 @@ struct Cli {
     command: Commands,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
+    color_eyre::install()?;
     cli.command.execute()
 }

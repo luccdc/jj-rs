@@ -16,7 +16,7 @@ impl CheckStep<'_> for PamCheck {
         "PAM check"
     }
 
-    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         if !self.run_local {
             return Ok(CheckResult::not_run(
                 "Cannot run check on remote systems",
@@ -115,7 +115,7 @@ impl PamCheck {
         }
     }
 
-    fn get_service_config_internal(&self, service: &str) -> anyhow::Result<serde_json::Value> {
+    fn get_service_config_internal(&self, service: &str) -> eyre::Result<serde_json::Value> {
         let pam_raw = self.read_pam_file(format!("/etc/pam.d/{service}"))?;
 
         let auth = pam_raw.iter().filter_map(|l| {
@@ -147,7 +147,7 @@ impl PamCheck {
         }))
     }
 
-    fn read_pam_file<P: AsRef<Path>>(&self, file: P) -> anyhow::Result<Vec<String>> {
+    fn read_pam_file<P: AsRef<Path>>(&self, file: P) -> eyre::Result<Vec<String>> {
         Ok(std::fs::read_to_string(file)?
             .split('\n')
             .flat_map(|line| {

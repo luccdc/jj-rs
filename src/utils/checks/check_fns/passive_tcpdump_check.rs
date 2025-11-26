@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 
-use anyhow::Context;
 use chrono::{DateTime, Utc};
+use eyre::Context;
 use futures_util::StreamExt;
 use pcap::{Active, Capture, Device};
 use serde_json::{Value, json};
@@ -21,10 +21,10 @@ struct PassiveTcpdumpCheck {
 }
 
 impl PassiveTcpdumpCheck {
-    fn make_capture(&self) -> anyhow::Result<Capture<Active>> {
+    fn make_capture(&self) -> eyre::Result<Capture<Active>> {
         let device = Device::lookup()
             .context("Could not get default PCAP capture device")?
-            .ok_or(anyhow::anyhow!("Could not find pcap device"))?;
+            .ok_or(eyre::eyre!("Could not find pcap device"))?;
 
         let capture = Capture::from_device(device)
             .context("Could not load packet capture device for passive tcpdump check")?
@@ -46,7 +46,7 @@ impl PassiveTcpdumpCheck {
     fn get_first_packet(
         &self,
         capture: &mut Capture<Active>,
-    ) -> anyhow::Result<(Ipv4Addr, u16, DateTime<Utc>, CheckIpProtocol)> {
+    ) -> eyre::Result<(Ipv4Addr, u16, DateTime<Utc>, CheckIpProtocol)> {
         loop {
             let p = capture
                 .next_packet()
@@ -89,7 +89,7 @@ impl PassiveTcpdumpCheck {
         source_ip: Ipv4Addr,
         source_port: u16,
         proto: CheckIpProtocol,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         let mut stream = capture.setnonblock()?.stream(TcpdumpCodec)?;
         while let Some(p) = stream.next().await {
             let p = p?.1;
@@ -124,7 +124,7 @@ impl PassiveTcpdumpCheck {
             return Ok(());
         }
 
-        anyhow::bail!("Tcpdump stream ran out of packets")
+        eyre::bail!("Tcpdump stream ran out of packets")
     }
 
     fn get_debug_route(&self, source_ip: Ipv4Addr) -> serde_json::Value {
@@ -145,7 +145,7 @@ impl CheckStep<'_> for PassiveTcpdumpCheck {
         "Wait for an inbound connection on port and verify that return packets are sent"
     }
 
-    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         if !self.run {
             return Ok(CheckResult::not_run(
                 "Check was not specified as required for troubleshooting",

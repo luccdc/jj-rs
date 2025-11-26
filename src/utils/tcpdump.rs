@@ -7,9 +7,9 @@
 //!
 //! ```no_run
 //! # use std::{io::{BufReader, prelude::*}, process::Stdio};
-//! # use anyhow::anyhow;
+//! # use eyre::eyre;
 //! # use jj_rs::utils::tcpdump::Tcpdump;
-//! # fn test_tcpdump() -> anyhow::Result<()> {
+//! # fn test_tcpdump() -> eyre::Result<()> {
 //! let tcpdump = Tcpdump::new()?;
 //! let mut command: std::process::Command = tcpdump.command_inst();
 //!
@@ -17,7 +17,7 @@
 //!     .stdout(Stdio::inherit())
 //!     .spawn()?;
 //!
-//! let stdout = child.stdout.take().ok_or(anyhow!("Could not get stdout"))?;
+//! let stdout = child.stdout.take().ok_or(eyre!("Could not get stdout"))?;
 //! let mut stdout = BufReader::new(stdout);
 //!
 //! for line in stdout.lines() {
@@ -36,7 +36,7 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-use anyhow::Context;
+use eyre::Context;
 use flate2::write::GzDecoder;
 use nix::sys::memfd::{MFdFlags, memfd_create};
 
@@ -49,7 +49,7 @@ pub struct Tcpdump {
 
 impl Tcpdump {
     /// Create a new Tcpdump handle to prepare for execution of commands
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> eyre::Result<Self> {
         let temp_fd =
             memfd_create("", MFdFlags::empty()).context("Could not create memory file")?;
 
@@ -80,7 +80,7 @@ impl Tcpdump {
         &self,
         args: &[R],
         stderr: S,
-    ) -> anyhow::Result<ExitStatus> {
+    ) -> eyre::Result<ExitStatus> {
         Command::new(format!("/proc/self/fd/{}", self.tcpdump_file.as_raw_fd()))
             .args(args)
             .stderr(stderr.into().unwrap_or_else(Stdio::inherit))

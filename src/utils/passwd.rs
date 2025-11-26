@@ -23,7 +23,7 @@ pub struct Passwd {
 ///
 /// ```
 /// # use jj_rs::utils::passwd::load_users;
-/// # fn test_load_users() -> anyhow::Result<()> {
+/// # fn test_load_users() -> eyre::Result<()> {
 /// // load all users
 /// let users = load_users::<_, &str>(None)?;
 /// for user in users {
@@ -36,7 +36,7 @@ pub struct Passwd {
 ///
 /// ```
 /// # use jj_rs::utils::passwd::load_users;
-/// # fn test_load_users() -> anyhow::Result<()> {
+/// # fn test_load_users() -> eyre::Result<()> {
 /// // load a specific user
 /// let root = &load_users("root")?[0];
 /// assert_eq!(&root.user, "root");
@@ -48,7 +48,7 @@ pub struct Passwd {
 /// # }
 /// # test_load_users().expect("could not load root");
 /// ```
-pub fn load_users<I: Into<Option<S>>, S: AsRef<str>>(uid: I) -> anyhow::Result<Vec<Passwd>> {
+pub fn load_users<I: Into<Option<S>>, S: AsRef<str>>(uid: I) -> eyre::Result<Vec<Passwd>> {
     // getent passwd works better for domain joined systems and systems with weird
     // /etc/nsswitch.conf, but fall back to directly reading from /etc/passwd
     let cmd = match uid.into() {

@@ -5,7 +5,7 @@
 //!
 //! Not all commands are going to require the same consistency to run on all systems, and
 //! those modules can relax and use the tools from category 2
-use anyhow::Context;
+use eyre::Context;
 
 use std::{fs::OpenOptions, path::Path, process::ExitStatus};
 
@@ -29,7 +29,7 @@ pub mod tcpdump;
 ///
 /// ```
 /// # use jj_rs::utils::qx;
-/// # fn demo_qx() -> anyhow::Result<()> {
+/// # fn demo_qx() -> eyre::Result<()> {
 /// let os = qx("uname")?.1;
 /// assert_eq!(os, "Linux\n");
 /// assert_eq!(os.trim(), "Linux");
@@ -37,7 +37,7 @@ pub mod tcpdump;
 /// # }
 /// # assert!(demo_qx().is_ok());
 /// ```
-pub fn qx(command: &str) -> anyhow::Result<(ExitStatus, String)> {
+pub fn qx(command: &str) -> eyre::Result<(ExitStatus, String)> {
     let output = std::process::Command::new("sh")
         .args(["-c", command])
         .stderr(std::process::Stdio::piped())
@@ -59,7 +59,7 @@ pub fn qx(command: &str) -> anyhow::Result<(ExitStatus, String)> {
 /// assert!(system("true").unwrap().success());
 /// assert!(!system("false").unwrap().success());
 /// ```
-pub fn system(command: &str) -> anyhow::Result<ExitStatus> {
+pub fn system(command: &str) -> eyre::Result<ExitStatus> {
     std::process::Command::new("/bin/sh")
         .args(["-c", command])
         .spawn()
@@ -72,12 +72,12 @@ pub fn system(command: &str) -> anyhow::Result<ExitStatus> {
 ///
 /// ```no_run
 /// # use jj_rs::utils::download_file;
-/// # fn demo_download() -> anyhow::Result<()> {
+/// # fn demo_download() -> eyre::Result<()> {
 /// download_file("https://artifacts.elastic.co/elasticsearch/elasticsearch-9.2.0-amd64.deb", "/tmp/elasticsearch.deb")?;
 /// # Ok(())
 /// # }
 /// ```
-pub fn download_file<P: AsRef<Path>>(url: &str, to: P) -> anyhow::Result<()> {
+pub fn download_file<P: AsRef<Path>>(url: &str, to: P) -> eyre::Result<()> {
     let mut target_file = OpenOptions::new()
         .truncate(true)
         .create(true)

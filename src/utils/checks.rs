@@ -34,11 +34,11 @@
 //! # }
 //! use serde_json::json;
 //!
-//! fn check_service_is_up() -> anyhow::Result<()> { unimplemented!() }
-//! fn check_login(password: String) -> anyhow::Result<()> { unimplemented!() }
+//! fn check_service_is_up() -> eyre::Result<()> { unimplemented!() }
+//! fn check_login(password: String) -> eyre::Result<()> { unimplemented!() }
 //!
 //! impl Troubleshooter for SshTroubleshooter {
-//!     fn checks<'a>(&'a self) -> anyhow::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
+//!     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
 //!         Ok(vec![
 //!             check_fn("Check systemd service", |_| {
 //!                 match check_service_is_up() {
@@ -133,7 +133,7 @@ use super::qx;
 /// ```no_run
 /// # use jj_rs::utils::checks::{CheckValue, TroubleshooterRunner};
 /// # struct SshTs { password: CheckValue }
-/// # impl SshTs { fn dummy_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<()> {
+/// # impl SshTs { fn dummy_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<()> {
 /// let pass = self.password
 ///     .clone()
 ///     .resolve_prompt(tr, "Enter a password to sign into the SSH server with: ")?;
@@ -179,7 +179,7 @@ fn resolve_value(
     internal: &CheckValueInternal,
     tr: &mut dyn TroubleshooterRunner,
     prompt: &str,
-) -> anyhow::Result<String> {
+) -> eyre::Result<String> {
     match internal {
         CheckValueInternal::Value(s) => Ok(s.clone()),
         CheckValueInternal::Stdin => {
@@ -230,7 +230,7 @@ impl CheckValue {
         &self,
         tr: &mut dyn TroubleshooterRunner,
         prompt: I,
-    ) -> anyhow::Result<String> {
+    ) -> eyre::Result<String> {
         // Yes, this function returns a Result, and yes it deals with Mutexes
         // However, the results are actually based on file system and TTY
         // I/O; if the Mutex fails to lock, this function will resort to using
@@ -433,7 +433,7 @@ impl CheckResult {
 pub trait Troubleshooter:
     clap::Parser + for<'de> Deserialize<'de> + serde::Serialize + Default + Clone
 {
-    fn checks<'a>(&'a self) -> anyhow::Result<Vec<Box<dyn CheckStep<'a> + 'a>>>;
+    fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>>;
 }
 
 /// A check step identifies a part of the troubleshooting process that could potentially
@@ -442,7 +442,7 @@ pub trait Troubleshooter:
 pub trait CheckStep<'a> {
     fn name(&self) -> &'static str;
 
-    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult>;
+    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult>;
 }
 
 impl<'a, T> CheckStep<'a> for Box<T>
@@ -453,14 +453,14 @@ where
         T::name(self)
     }
 
-    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         T::run_check(self, tr)
     }
 }
 
 /// Utility used to allow troubleshooters to interact with users and run steps
 pub trait TroubleshooterRunner {
-    fn prompt_user(&mut self, prompt: &str) -> anyhow::Result<String>;
+    fn prompt_user(&mut self, prompt: &str) -> eyre::Result<String>;
 }
 
 /// Holds troubleshooting settings to change behavior when running a troubleshooter later
@@ -472,7 +472,7 @@ pub struct CliTroubleshooter {
 }
 
 impl TroubleshooterRunner for CliTroubleshooter {
-    fn prompt_user(&mut self, prompt: &str) -> anyhow::Result<String> {
+    fn prompt_user(&mut self, prompt: &str) -> eyre::Result<String> {
         print!(
             "{}{prompt}",
             if self.has_rendered_newline_for_step {
@@ -506,7 +506,7 @@ impl CliTroubleshooter {
     }
 
     /// Actually runs the troubleshooter specified on the CLI
-    pub fn run_cli(&mut self, t: &impl Troubleshooter) -> anyhow::Result<CheckResultType> {
+    pub fn run_cli(&mut self, t: &impl Troubleshooter) -> eyre::Result<CheckResultType> {
         let checks = t.checks()?;
         let mut start = CheckResultType::NotRun;
 
@@ -646,23 +646,23 @@ fn render_extra_details(depth: usize, obj: &serde_json::Value) {
 
 pub struct DaemonTroubleshooter<F>
 where
-    F: FnMut(&str) -> anyhow::Result<String>,
+    F: FnMut(&str) -> eyre::Result<String>,
 {
     prompt_f: F,
 }
 
 impl<F> TroubleshooterRunner for DaemonTroubleshooter<F>
 where
-    F: FnMut(&str) -> anyhow::Result<String>,
+    F: FnMut(&str) -> eyre::Result<String>,
 {
-    fn prompt_user(&mut self, prompt: &str) -> anyhow::Result<String> {
+    fn prompt_user(&mut self, prompt: &str) -> eyre::Result<String> {
         (self.prompt_f)(prompt)
     }
 }
 
 impl<F> DaemonTroubleshooter<F>
 where
-    F: FnMut(&str) -> anyhow::Result<String>,
+    F: FnMut(&str) -> eyre::Result<String>,
 {
     pub fn new(prompt_f: F) -> Self {
         Self { prompt_f }
@@ -712,7 +712,7 @@ pub fn get_system_logs(start: DateTime<Utc>, end: DateTime<Utc>) -> serde_json::
     Value::Null
 }
 
-fn get_logs_systemd(start: DateTime<Utc>, end: DateTime<Utc>) -> anyhow::Result<Vec<String>> {
+fn get_logs_systemd(start: DateTime<Utc>, end: DateTime<Utc>) -> eyre::Result<Vec<String>> {
     let start = start.with_timezone(&Local);
     let end = end.with_timezone(&Local);
 
