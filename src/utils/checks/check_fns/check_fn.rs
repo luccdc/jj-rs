@@ -4,7 +4,7 @@ use crate::utils::checks::{CheckResult, CheckStep, TroubleshooterRunner};
 
 struct CheckFn<'a, F>
 where
-    F: Fn(&mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> + 'a,
+    F: Fn(&mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> + 'a,
 {
     name: &'static str,
     check_fn: F,
@@ -13,13 +13,13 @@ where
 
 impl<'a, F> CheckStep<'a> for CheckFn<'a, F>
 where
-    F: Fn(&mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> + 'a,
+    F: Fn(&mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> + 'a,
 {
     fn name(&self) -> &'static str {
         self.name
     }
 
-    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         (self.check_fn)(tr)
     }
 }
@@ -40,7 +40,7 @@ where
 /// ```
 pub fn check_fn<'a, F>(name: &'static str, f: F) -> Box<dyn CheckStep<'a> + 'a>
 where
-    F: Fn(&mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> + 'a,
+    F: Fn(&mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> + 'a,
 {
     Box::new(CheckFn {
         name,

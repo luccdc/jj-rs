@@ -10,7 +10,7 @@
 //!
 //! ```no_run
 //! # use jj_rs::utils::{busybox, download_container::DownloadContainer};
-//! # fn test_download_container() -> anyhow::Result<()> {
+//! # fn test_download_container() -> eyre::Result<()> {
 //! let container = DownloadContainer::new(Some("dlshell".to_string()), None)?;
 //! let container_ip = container.run(|| {
 //!     busybox::execute(&["ip", "addr"])
@@ -29,7 +29,7 @@ use std::{
     process::Stdio,
 };
 
-use anyhow::{Context, anyhow, bail};
+use eyre::{Context, bail, eyre};
 use nix::{
     fcntl::{OFlag, open},
     sched::{CloneFlags, setns},
@@ -86,7 +86,7 @@ impl DownloadContainer {
     /// The `sneaky_ip` setting allows for the system to perform source NAT as that IP address.
     /// It will start to do ARP spoofing as that address to assist the local LAN in routing
     /// return traffic back. If unspecified, it will masquerade as the host IP address
-    pub fn new(name: Option<String>, sneaky_ip: Option<Ipv4Addr>) -> anyhow::Result<Self> {
+    pub fn new(name: Option<String>, sneaky_ip: Option<Ipv4Addr>) -> eyre::Result<Self> {
         if !geteuid().is_root() {
             bail!("You must be root to make use of download container capabilities");
         }
@@ -150,7 +150,7 @@ impl DownloadContainer {
                 .context("Could not query links")?;
             let peer_name = pcre!(&links =~ m{r"^[0-9]+:\s+" ns_name r"\.0@([^:]+):"}xms)
                 .get(0)
-                .ok_or(anyhow!(
+                .ok_or(eyre!(
                     "Could not find peer name for interface in download container"
                 ))?
                 .extract::<1>()
@@ -222,7 +222,7 @@ impl DownloadContainer {
 
         let public_if = pcre!(&routes =~ m/r"default[^\n]*dev\s+([^\s]+)"/xms)
             .get(0)
-            .ok_or(anyhow!("Could not find default route!"))?
+            .ok_or(eyre!("Could not find default route!"))?
             .extract::<1>()
             .1[0];
 
@@ -291,7 +291,7 @@ impl DownloadContainer {
     ///
     /// ```no_run
     /// # use jj_rs::utils::{busybox, download_container::DownloadContainer};
-    /// # fn test_download_container() -> anyhow::Result<()> {
+    /// # fn test_download_container() -> eyre::Result<()> {
     /// let container = DownloadContainer::new(Some("dlshell".to_string()), None)?;
     /// let container_ip = container.run(|| {
     ///     busybox::execute(&["ip", "addr"])
@@ -302,7 +302,7 @@ impl DownloadContainer {
     /// # }
     /// # test_download_container().expect("could not run download container");
     /// ```
-    pub fn run<T, F: FnOnce() -> T>(&self, f: F) -> anyhow::Result<T> {
+    pub fn run<T, F: FnOnce() -> T>(&self, f: F) -> eyre::Result<T> {
         let cwd = unsafe { self.enter() }?;
 
         let v = f();
@@ -319,7 +319,7 @@ impl DownloadContainer {
     ///
     /// # Safety
     /// Needs to be matched with a call to [`DownloadContainer::leave`]
-    pub unsafe fn enter(&self) -> anyhow::Result<PathBuf> {
+    pub unsafe fn enter(&self) -> eyre::Result<PathBuf> {
         let cwd = std::env::current_dir().context("Could not get current working directory")?;
 
         setns(&self.child_net_ns, CloneFlags::CLONE_NEWNET)
@@ -332,7 +332,7 @@ impl DownloadContainer {
     }
 
     /// Internal function for leaving the environment for run
-    pub fn leave(&self, cwd: PathBuf) -> anyhow::Result<()> {
+    pub fn leave(&self, cwd: PathBuf) -> eyre::Result<()> {
         setns(&self.original_net_ns, CloneFlags::CLONE_NEWNET)
             .context("Could not change to parent net namespace while leaving container")?;
         setns(&self.original_mnt_ns, CloneFlags::CLONE_NEWNS)
@@ -386,7 +386,7 @@ impl Drop for DownloadContainer {
 /// This will also create a new mount namespace that bind mounts a new file over
 /// /etc/resolv.conf to enable outbound, external DNS that doesn't depend on the domain
 /// controller
-fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
+fn get_namespace(bb: &Busybox) -> eyre::Result<Pid> {
     // Semaphores are nasty but one of the simplest ways to communicate across
     // processes. We have to wait for the process to finish initializing, hence
     // shared memory and a shared semaphore
@@ -394,12 +394,12 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
 
     struct Sync {
         semaphore: sem_t,
-        err: anyhow::Result<()>,
+        err: eyre::Result<()>,
     }
 
     const SYNC_SIZE: usize = std::mem::size_of::<Sync>();
 
-    let setup_child = || -> anyhow::Result<()> {
+    let setup_child = || -> eyre::Result<()> {
         nix::sched::unshare(CloneFlags::CLONE_NEWNET | CloneFlags::CLONE_NEWNS)
             .context("Could not unshare as child")?;
 
@@ -469,7 +469,7 @@ fn get_namespace(bb: &Busybox) -> anyhow::Result<Pid> {
 
 /// Finds a /30 subnet that can be used in the 172.16.0.0/12 range
 /// to allow for tunneling between the host and the container
-fn find_tunnel_net(bb: &Busybox) -> anyhow::Result<Ipv4Addr> {
+fn find_tunnel_net(bb: &Busybox) -> eyre::Result<Ipv4Addr> {
     let mut start_ip = 0xAC_20_00_00u32;
 
     let subnets = {

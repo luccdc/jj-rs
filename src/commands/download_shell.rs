@@ -6,8 +6,8 @@ use std::{
     process::{Command, exit},
 };
 
-use anyhow::Context;
 use clap::{Parser, ValueEnum};
+use eyre::Context;
 use flate2::write::GzDecoder;
 use nix::{
     sys::{
@@ -48,7 +48,7 @@ pub struct DownloadShell {
     command: Vec<String>,
 }
 
-fn zsh_command() -> anyhow::Result<(OwnedFd, Command)> {
+fn zsh_command() -> eyre::Result<(OwnedFd, Command)> {
     let temp_fd = memfd_create("", MFdFlags::empty())?;
     let raw_fd = temp_fd.into_raw_fd();
 
@@ -67,7 +67,7 @@ fn zsh_command() -> anyhow::Result<(OwnedFd, Command)> {
 }
 
 impl super::Command for DownloadShell {
-    fn execute(mut self) -> anyhow::Result<()> {
+    fn execute(mut self) -> eyre::Result<()> {
         let container = DownloadContainer::new(self.name.take(), self.sneaky_ip)?;
 
         let bash_cmd = format!(
@@ -79,7 +79,7 @@ impl super::Command for DownloadShell {
 
         let sh_ps1 = format!(r"\033[0;32m({})\033[0m \u@\h:\w\$ ", container.name());
 
-        container.run(|| -> anyhow::Result<()> {
+        container.run(|| -> eyre::Result<()> {
             match (
                 std::env::var("SUDO_UID")
                     .ok()

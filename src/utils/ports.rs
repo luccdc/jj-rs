@@ -9,7 +9,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::Context;
+use eyre::Context;
 use nix::fcntl::readlink;
 use num_traits::{Num, PrimInt};
 
@@ -86,7 +86,7 @@ pub struct SocketRecord {
 }
 
 /// Returns a mapping of inodes to the process ID that has the inode
-pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
+pub fn socket_inodes() -> eyre::Result<HashMap<u64, u64>> {
     let dir_re = regex::Regex::new(r"[0-9]+")?;
     let socket_re = regex::Regex::new(r"socket:\[([0-9]+)\]")?;
 
@@ -124,7 +124,7 @@ pub fn socket_inodes() -> anyhow::Result<HashMap<u64, u64>> {
 
 /// Given a specified PID, load the file descriptors that map to sockets and
 /// extract the inode number of the socket internally
-pub fn socket_inodes_for_pid(pid: u32) -> anyhow::Result<Vec<u64>> {
+pub fn socket_inodes_for_pid(pid: u32) -> eyre::Result<Vec<u64>> {
     let socket_re = regex::Regex::new(r"socket:\[([0-9]+)\]")?;
 
     Ok(std::fs::read_dir(format!("/proc/{pid}/fd"))?
@@ -162,10 +162,7 @@ impl IpSize for Ipv6Addr {
 /// Parse the path specified and return just the basic inode data. All the process
 /// specific information in the `SocketRecord` structs returned are left as None;
 /// `pid`, `cmdline`, and `cgroup`
-pub fn parse_raw_ip_stats<P, A>(
-    path: P,
-    socket_type: SocketType,
-) -> anyhow::Result<Vec<SocketRecord>>
+pub fn parse_raw_ip_stats<P, A>(path: P, socket_type: SocketType) -> eyre::Result<Vec<SocketRecord>>
 where
     P: AsRef<Path>,
     A: IpSize + Into<IpAddr>,
@@ -210,7 +207,7 @@ where
                 _timeout,
                 inode,
             ]|
-             -> anyhow::Result<SocketRecord> {
+             -> eyre::Result<SocketRecord> {
                 let inode = inode.parse()?;
 
                 let local_address = A::Size::from_be(A::Size::from_str_radix(loc_addr, 16)?);
@@ -280,7 +277,7 @@ pub fn enrich_ip_stats(
 /// # use {jj_rs::utils::ports::{SocketType, parse_ip_stats}, std::net::Ipv6Addr};
 /// parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp6", SocketType::Udp);
 /// ```
-pub fn parse_ip_stats<P, A>(path: P, socket_type: SocketType) -> anyhow::Result<Vec<SocketRecord>>
+pub fn parse_ip_stats<P, A>(path: P, socket_type: SocketType) -> eyre::Result<Vec<SocketRecord>>
 where
     P: AsRef<Path>,
     A: IpSize + Into<IpAddr>,
@@ -294,7 +291,7 @@ where
 
 /// Shortcut to parse statistics from /proc/net/tcp
 #[allow(dead_code)]
-pub fn parse_net_tcp() -> anyhow::Result<Vec<SocketRecord>> {
+pub fn parse_net_tcp() -> eyre::Result<Vec<SocketRecord>> {
     Ok([
         parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp)?,
         parse_ip_stats::<_, Ipv6Addr>("/proc/net/tcp6", SocketType::Tcp)?,
@@ -304,7 +301,7 @@ pub fn parse_net_tcp() -> anyhow::Result<Vec<SocketRecord>> {
 
 /// Shortcut to parse statistics from /proc/net/udp
 #[allow(dead_code)]
-pub fn parse_net_udp() -> anyhow::Result<Vec<SocketRecord>> {
+pub fn parse_net_udp() -> eyre::Result<Vec<SocketRecord>> {
     Ok([
         parse_ip_stats::<_, Ipv4Addr>("/proc/net/udp", SocketType::Udp)?,
         parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp6", SocketType::Udp)?,
@@ -313,7 +310,7 @@ pub fn parse_net_udp() -> anyhow::Result<Vec<SocketRecord>> {
 }
 
 /// Shortcut to parse statistics from both /proc/net/tcp and /proc/net/udp
-pub fn parse_ports() -> anyhow::Result<Vec<SocketRecord>> {
+pub fn parse_ports() -> eyre::Result<Vec<SocketRecord>> {
     Ok([
         parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp)?,
         parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp", SocketType::Udp)?,

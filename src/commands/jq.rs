@@ -6,8 +6,8 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::Context;
 use clap::Parser;
+use eyre::Context;
 use flate2::write::GzDecoder;
 use nix::{
     sys::memfd::{MFdFlags, memfd_create},
@@ -33,7 +33,7 @@ pub struct Jq {
 const JQ_BYTES: &[u8] = include_bytes!(std::env!("JQ_GZIPPED"));
 
 impl super::Command for Jq {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let temp_fd =
             memfd_create("", MFdFlags::empty()).context("Could not create memory file")?;
 

@@ -35,7 +35,7 @@ pub struct Firewall {
 }
 
 impl super::Command for Firewall {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         match self.cmd {
             FirewallCmd::QuickSetup(qs) => qs.execute(),
             FirewallCmd::NatRedirect(nr) => nr.execute(),
@@ -63,7 +63,7 @@ struct QuickSetup {
 }
 
 impl QuickSetup {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let sockets = parse_ports()?;
 
         let mut ob: Box<dyn Write> = match self.output_file {
@@ -194,7 +194,7 @@ struct NatRedirect {
 }
 
 impl NatRedirect {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let nft = Nft::new()?;
 
         let NatRedirect {

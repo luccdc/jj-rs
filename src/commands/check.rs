@@ -42,7 +42,7 @@ define_checks! {
 }
 
 impl super::Command for Check {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let mut t = checks::CliTroubleshooter::new(
             self.show_successful_steps,
             self.show_not_run_steps,

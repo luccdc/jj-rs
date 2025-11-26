@@ -17,7 +17,7 @@ pub struct Tcpdump {
 }
 
 impl super::Command for Tcpdump {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let tcpdump = tcpdump::Tcpdump::new()?;
 
         tcpdump.command(&self.args, None)?;

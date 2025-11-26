@@ -17,7 +17,7 @@ pub struct Nft {
 }
 
 impl super::Command for Nft {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let nft = nft::Nft::new()?;
 
         nft.command().args(self.args).spawn()?.wait()?;

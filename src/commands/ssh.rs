@@ -14,7 +14,7 @@ pub enum SshCommands {
 }
 
 impl super::Command for Ssh {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         match self.command {
             SshCommands::Check(ssh_troubleshooter) => {
                 let mut t = crate::utils::checks::CliTroubleshooter::new(false, false, false);

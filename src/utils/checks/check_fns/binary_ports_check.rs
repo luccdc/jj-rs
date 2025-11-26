@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use anyhow::Context;
+use eyre::Context;
 
 use crate::utils::{
     checks::{CheckResult, CheckStep, TroubleshooterRunner},
@@ -21,7 +21,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
         "Sockstat check"
     }
 
-    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         if !self.run_local {
             return Ok(CheckResult::not_run(
                 "Cannot check listening ports on a remote system",

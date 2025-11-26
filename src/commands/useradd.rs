@@ -1,4 +1,4 @@
-use anyhow::bail;
+use eyre::bail;
 use nix::unistd::geteuid;
 
 use crate::{
@@ -19,7 +19,7 @@ pub struct Useradd {
 }
 
 impl super::Command for Useradd {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         if !geteuid().is_root() {
             bail!("You must be root to add backup users");
         }

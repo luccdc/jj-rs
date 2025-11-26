@@ -1,7 +1,7 @@
 use std::{net::Ipv4Addr, sync::Arc};
 
-use anyhow::Context;
 use chrono::Utc;
+use eyre::Context;
 
 use crate::utils::distro::get_distro;
 
@@ -53,7 +53,7 @@ impl Default for SshTroubleshooter {
 }
 
 impl Troubleshooter for SshTroubleshooter {
-    fn checks<'a>(&'a self) -> anyhow::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
+    fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         let distro = get_distro().context("could not load distribution for ssh check")?;
 
         Ok(vec![
@@ -101,7 +101,7 @@ impl Troubleshooter for SshTroubleshooter {
 }
 
 impl SshTroubleshooter {
-    fn try_remote_login(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn try_remote_login(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         let host = self.host;
         let port = self.port;
         let user = self.user.clone();
@@ -140,7 +140,7 @@ impl SshTroubleshooter {
         port: u16,
         user: &str,
         password: &str,
-    ) -> anyhow::Result<CheckResult> {
+    ) -> eyre::Result<CheckResult> {
         struct Client;
 
         impl russh::client::Handler for Client {

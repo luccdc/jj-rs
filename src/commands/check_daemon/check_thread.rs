@@ -29,20 +29,20 @@ fn update_stats<F>(
     daemon: &RwLock<super::RuntimeDaemonConfig>,
     id: &super::CheckId,
     update_func: F,
-) -> anyhow::Result<()>
+) -> eyre::Result<()>
 where
     F: Fn(&super::RuntimeCheckHandle),
 {
     let Ok(read) = daemon.read() else {
-        anyhow::bail!("Could not acquire read lock to update statistics");
+        eyre::bail!("Could not acquire read lock to update statistics");
     };
 
     let Some(checks) = read.checks.get(&id.0) else {
-        anyhow::bail!("Could not find host `{}` in runtime configuration", &id.0);
+        eyre::bail!("Could not find host `{}` in runtime configuration", &id.0);
     };
 
     let Some(check) = checks.get(&id.1) else {
-        anyhow::bail!(
+        eyre::bail!(
             "Could not find check `{}.{}` in runtime configuration",
             &id.0,
             &id.1
@@ -62,7 +62,7 @@ pub fn register_check<'scope, 'env: 'scope>(
     log_writer: PipeWriter,
     shutdown: broadcast::Receiver<()>,
     autostart: bool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     let (message_sender, message_receiver) = tokio::sync::mpsc::channel(128);
 
     scope.spawn({
@@ -86,13 +86,13 @@ pub fn register_check<'scope, 'env: 'scope>(
     {
         let mut checks = match daemon.write() {
             Ok(v) => v,
-            Err(_) => anyhow::bail!("Could not acquire write lock to register check"),
+            Err(_) => eyre::bail!("Could not acquire write lock to register check"),
         };
 
         let host = checks.checks.entry(Arc::clone(&check_id.0)).or_default();
 
         if host.contains_key(&check_id.1) {
-            anyhow::bail!(
+            eyre::bail!(
                 "Check `{}.{}` is already registered!",
                 &check_id.0,
                 &check_id.1
@@ -123,7 +123,7 @@ fn check_thread<'scope, 'env: 'scope>(
     mut shutdown: broadcast::Receiver<()>,
     mut message_receiver: mpsc::Receiver<OutboundMessage>,
     autostart: bool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     let mut paused = !autostart;
     let mut check_prompt_values = HashMap::new();
 
@@ -195,10 +195,10 @@ fn wait_for_trigger(
     message_receiver: &mut mpsc::Receiver<OutboundMessage>,
     shutdown: &mut broadcast::Receiver<()>,
     paused: &mut bool,
-) -> anyhow::Result<bool> {
+) -> eyre::Result<bool> {
     let timeout = {
         let Ok(read) = daemon.read() else {
-            anyhow::bail!("Could not acquire lock to read interval time!");
+            eyre::bail!("Could not acquire lock to read interval time!");
         };
 
         read.check_interval
@@ -290,7 +290,7 @@ async fn run_parent(
     message_receiver: &mut mpsc::Receiver<OutboundMessage>,
     check_prompt_values: &mut HashMap<String, String>,
     child: nix::unistd::Pid,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     let mut message_buffer = [0u8; 16384];
 
     loop {
@@ -322,7 +322,7 @@ async fn run_parent(
 
                     loop {
                         let Some(m) = message_receiver.recv().await else {
-                            anyhow::bail!("Did not receive prompt response message");
+                            eyre::bail!("Did not receive prompt response message");
                         };
                         let OutboundMessage::PromptResponse(r) = m else {
                             continue;
@@ -353,7 +353,7 @@ fn run_child(
     mut prompt_writer_raw: PipeWriter,
     answer_reader_raw: PipeReader,
     log_writer: PipeWriter,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     if let Err(e) = run_troubleshooter(
         check_id,
         check,
@@ -376,7 +376,7 @@ fn run_troubleshooter(
     prompt_writer_raw: &mut PipeWriter,
     mut answer_reader_raw: PipeReader,
     mut log_writer: PipeWriter,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     let mut runner = crate::checks::DaemonTroubleshooter::new(move |prompt| {
         let prompt_msg = serde_json::to_string(&ChildToParentMsg::Prompt(prompt.to_string()))?;
         prompt_writer_raw.write_all(prompt_msg.as_bytes())?;

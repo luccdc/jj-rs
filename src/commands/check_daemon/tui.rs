@@ -11,7 +11,7 @@
 //     _prompt_reader: Receiver,
 //     _answer_writer: Sender,
 //     _scope: &std::thread::Scope<'_, '_>,
-// ) -> anyhow::Result<()> {
+// ) -> eyre::Result<()> {
 //     let mut terminal = ratatui::init();
 //     loop {
 //         terminal.draw(|frame| {

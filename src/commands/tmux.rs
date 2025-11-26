@@ -6,8 +6,8 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::Context;
 use clap::Parser;
+use eyre::Context;
 use flate2::write::GzDecoder;
 use nix::{
     sys::memfd::{MFdFlags, memfd_create},
@@ -31,7 +31,7 @@ pub struct Tmux {
 const TMUX_BYTES: &[u8] = include_bytes!(std::env!("TMUX_GZIPPED"));
 
 impl super::Command for Tmux {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let temp_fd =
             memfd_create("", MFdFlags::empty()).context("Could not create memory file")?;
 

@@ -8,7 +8,7 @@ use crate::utils::ports::{self, SocketState};
 pub struct Ports;
 
 impl super::Command for Ports {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         let tcp_ports = ports::parse_net_tcp()?;
 
         println!(

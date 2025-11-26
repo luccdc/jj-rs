@@ -4,7 +4,7 @@
 //! ```no_run
 //! # // don't run the unit test to delete the firewall...
 //! # use jj_rs::utils::nft::Nft;
-//! # fn test_nft() -> anyhow::Result<()> {
+//! # fn test_nft() -> eyre::Result<()> {
 //! let nft = Nft::new()?;
 //!
 //! nft.exec("flush ruleset", None)?;
@@ -19,7 +19,7 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-use anyhow::Context;
+use eyre::Context;
 use flate2::write::GzDecoder;
 use nix::sys::memfd::{MFdFlags, memfd_create};
 
@@ -32,7 +32,7 @@ pub struct Nft {
 
 impl Nft {
     /// Create a new nft handle that can be used later to manipulate firewall rules
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> eyre::Result<Self> {
         let temp_fd =
             memfd_create("", MFdFlags::empty()).context("Could not create memory file")?;
 
@@ -57,7 +57,7 @@ impl Nft {
     /// ```no_run
     /// # // don't run the unit test to add a chain called "sneaky_ip"...
     /// # use jj_rs::utils::nft::Nft;
-    /// # fn test_nft() -> anyhow::Result<()> {
+    /// # fn test_nft() -> eyre::Result<()> {
     /// let nft = Nft::new()?;
     ///
     /// nft.exec("add table inet sneaky_shell", None)?;
@@ -69,7 +69,7 @@ impl Nft {
         &self,
         command: R,
         stderr: S,
-    ) -> anyhow::Result<ExitStatus> {
+    ) -> eyre::Result<ExitStatus> {
         Command::new(format!("/proc/self/fd/{}", self.nft_file.as_raw_fd()))
             .arg(command.as_ref())
             .stderr(stderr.into().unwrap_or_else(Stdio::inherit))

@@ -4,7 +4,7 @@
 //! ```no_run
 //! # // don't run the unit test to authenticate as root...
 //! # use jj_rs::utils::pamtester::Pamtester;
-//! # fn test_pamtester() -> anyhow::Result<()> {
+//! # fn test_pamtester() -> eyre::Result<()> {
 //! let pamtester = Pamtester::new()?;
 //! pamtester.command().args(["login", "root", "authenticate"]).spawn()?.wait()?;
 //! # Ok(())
@@ -21,7 +21,7 @@ use std::{
     process::Command,
 };
 
-use anyhow::Context;
+use eyre::Context;
 use flate2::write::GzDecoder;
 use nix::sys::memfd::{MFdFlags, memfd_create};
 
@@ -34,7 +34,7 @@ pub struct Pamtester {
 
 impl Pamtester {
     /// Create a new pamtester handle that can be used later to manipulate firewall rules
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> eyre::Result<Self> {
         let temp_fd =
             memfd_create("", MFdFlags::empty()).context("Could not create memory file")?;
 

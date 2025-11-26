@@ -1,4 +1,4 @@
-use anyhow::Context;
+use eyre::Context;
 
 use crate::utils::{
     checks::{CheckResult, CheckStep, TroubleshooterRunner},
@@ -60,7 +60,7 @@ where
         self.check.name()
     }
 
-    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> anyhow::Result<CheckResult> {
+    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         let distro = crate::utils::distro::get_distro().context(
             "Could not query current Linux distribution to determine if a check should run",
         )?;

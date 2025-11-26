@@ -17,7 +17,7 @@ pub enum StatCommands {
 }
 
 impl super::Command for Stat {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         match self.command {
             StatCommands::Cpu => {
                 let stat = std::fs::read_to_string("/proc/stat")?;

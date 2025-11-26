@@ -10,8 +10,8 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::Context;
 use clap::Parser;
+use eyre::Context;
 use flate2::write::GzDecoder;
 use nix::{
     sys::memfd::{MFdFlags, memfd_create},
@@ -52,7 +52,7 @@ pub struct Zsh {
 pub const ZSH_BYTES: &[u8] = include_bytes!(std::env!("ZSH_GZIPPED"));
 
 impl super::Command for Zsh {
-    fn execute(self) -> anyhow::Result<()> {
+    fn execute(self) -> eyre::Result<()> {
         if self.install {
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
@@ -63,7 +63,7 @@ impl super::Command for Zsh {
 
             let current_file = std::env::args()
                 .next()
-                .ok_or(anyhow::anyhow!("Could not get current binary"))?;
+                .ok_or(eyre::eyre!("Could not get current binary"))?;
 
             writeln!(file, "#!{} zsh", &current_file)?;
             writeln!(file, "exec {} zsh $@", &current_file)?;

@@ -18,5 +18,5 @@ pub mod useradd;
 pub mod zsh;
 
 pub trait Command: clap::Parser {
-    fn execute(self) -> anyhow::Result<()>;
+    fn execute(self) -> eyre::Result<()>;
 }
