@@ -77,6 +77,7 @@
 //! See [`check_fns`] for more check utility functions
 
 use std::{
+    convert::Infallible,
     fmt,
     io::{BufRead, Write},
     ops::BitAndAssign,
@@ -259,7 +260,7 @@ impl CheckValue {
 }
 
 impl FromStr for CheckValue {
-    type Err = !;
+    type Err = Infallible;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == ":STDIN:" {
@@ -303,7 +304,8 @@ impl<'de> Deserialize<'de> for CheckValue {
             where
                 E: serde::de::Error,
             {
-                Ok(CheckValue::from_str(v).into_ok())
+                let Ok(v) = CheckValue::from_str(v);
+                Ok(v)
             }
 
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
