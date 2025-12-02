@@ -127,7 +127,7 @@ impl PassiveTcpdumpCheck {
         eyre::bail!("Tcpdump stream ran out of packets")
     }
 
-    fn get_debug_route(&self, source_ip: Ipv4Addr) -> serde_json::Value {
+    fn get_debug_route(source_ip: Ipv4Addr) -> serde_json::Value {
         let bb = match Busybox::new() {
             Ok(bb) => bb,
             Err(e) => return format!("Could not load busybox: {e:?}").into(),
@@ -156,24 +156,27 @@ impl CheckStep<'_> for PassiveTcpdumpCheck {
         let mut capture = self.make_capture()?;
         let (source_ip, source_port, start, proto) = self.get_first_packet(&mut capture)?;
 
-        use tokio::{
-            runtime::Builder,
-            time::{Duration, timeout},
+        let result = {
+            use tokio::{
+                runtime::Builder,
+                time::{Duration, timeout},
+            };
+
+            Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(async {
+                    timeout(
+                        Duration::from_secs(5),
+                        self.get_response_packet(capture, source_ip, source_port, proto),
+                    )
+                    .await
+                })
         };
-        let result = Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(async {
-                timeout(
-                    Duration::from_secs(5),
-                    self.get_response_packet(capture, source_ip, source_port, proto),
-                )
-                .await
-            });
 
         let end = Utc::now();
 
-        let route = self.get_debug_route(source_ip);
+        let route = Self::get_debug_route(source_ip);
         let logs = (self.log_func)(start, end);
 
         Ok(match result {

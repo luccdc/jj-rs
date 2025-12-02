@@ -1,5 +1,9 @@
-#![warn(clippy::correctness)]
+#![deny(clippy::correctness)]
 #![warn(clippy::suspicious)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::wildcard_imports)]
 
 use clap::Parser;
 

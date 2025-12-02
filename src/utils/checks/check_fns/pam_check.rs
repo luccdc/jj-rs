@@ -107,7 +107,7 @@ impl PamCheck {
             return serde_json::json!(null);
         };
 
-        match self.get_service_config_internal(svc) {
+        match Self::get_service_config_internal(svc) {
             Ok(v) => v,
             Err(e) => serde_json::json!(format!(
                 "Could not read PAM configuration for service: {e:?}"
@@ -115,8 +115,8 @@ impl PamCheck {
         }
     }
 
-    fn get_service_config_internal(&self, service: &str) -> eyre::Result<serde_json::Value> {
-        let pam_raw = self.read_pam_file(format!("/etc/pam.d/{service}"))?;
+    fn get_service_config_internal(service: &str) -> eyre::Result<serde_json::Value> {
+        let pam_raw = Self::read_pam_file(format!("/etc/pam.d/{service}"))?;
 
         let auth = pam_raw.iter().filter_map(|l| {
             l.strip_prefix("auth")
@@ -147,7 +147,7 @@ impl PamCheck {
         }))
     }
 
-    fn read_pam_file<P: AsRef<Path>>(&self, file: P) -> eyre::Result<Vec<String>> {
+    fn read_pam_file<P: AsRef<Path>>(file: P) -> eyre::Result<Vec<String>> {
         Ok(std::fs::read_to_string(file)?
             .split('\n')
             .flat_map(|line| {
@@ -155,8 +155,7 @@ impl PamCheck {
                     let p = p.trim_start();
                     [
                         vec![line.to_string()],
-                        self.read_pam_file(format!("/etc/pam.d/{p}"))
-                            .unwrap_or(vec![]),
+                        Self::read_pam_file(format!("/etc/pam.d/{p}")).unwrap_or(vec![]),
                     ]
                     .concat()
                 } else {
@@ -188,7 +187,7 @@ impl PamCheck {
                         vec![line.to_string()]
                             .into_iter()
                             .chain(
-                                self.read_pam_file(format!("/etc/pam.d/{fp}"))
+                                Self::read_pam_file(format!("/etc/pam.d/{fp}"))
                                     .unwrap_or(vec![])
                                     .into_iter()
                                     .filter(|line| {

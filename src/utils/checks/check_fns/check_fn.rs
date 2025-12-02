@@ -7,7 +7,7 @@ where
     F: Fn(&mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> + 'a,
 {
     name: &'static str,
-    check_fn: F,
+    internal_fn: F,
     _lifetime: PhantomData<&'a F>,
 }
 
@@ -20,7 +20,7 @@ where
     }
 
     fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
-        (self.check_fn)(tr)
+        (self.internal_fn)(tr)
     }
 }
 
@@ -44,7 +44,7 @@ where
 {
     Box::new(CheckFn {
         name,
-        check_fn: f,
+        internal_fn: f,
         _lifetime: PhantomData,
     })
 }

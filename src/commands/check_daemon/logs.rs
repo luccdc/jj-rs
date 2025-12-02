@@ -74,7 +74,7 @@ pub async fn log_handler_thread(
         None => None,
     };
 
-    let mut log_buffer = [0u8; 65536];
+    let mut log_buffer = vec![0u8; 65536];
 
     loop {
         let bytes_res = tokio::select! {

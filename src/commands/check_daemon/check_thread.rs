@@ -73,7 +73,7 @@ pub fn register_check<'scope, 'env: 'scope>(
                 daemon,
                 (check_id, check),
                 prompt_writer,
-                log_writer,
+                &log_writer,
                 shutdown,
                 message_receiver,
                 autostart,
@@ -84,9 +84,8 @@ pub fn register_check<'scope, 'env: 'scope>(
     });
 
     {
-        let mut checks = match daemon.write() {
-            Ok(v) => v,
-            Err(_) => eyre::bail!("Could not acquire write lock to register check"),
+        let Ok(mut checks) = daemon.write() else {
+            eyre::bail!("Could not acquire write lock to register check");
         };
 
         let host = checks.checks.entry(Arc::clone(&check_id.0)).or_default();
@@ -119,7 +118,7 @@ fn check_thread<'scope, 'env: 'scope>(
     daemon: &'env RwLock<super::RuntimeDaemonConfig>,
     (check_id, check): (super::CheckId, super::CheckCommands),
     mut prompt_writer: mpsc::Sender<(super::CheckId, String)>,
-    log_writer: PipeWriter,
+    log_writer: &PipeWriter,
     mut shutdown: broadcast::Receiver<()>,
     mut message_receiver: mpsc::Receiver<OutboundMessage>,
     autostart: bool,
@@ -158,7 +157,7 @@ fn check_thread<'scope, 'env: 'scope>(
                     .enable_all()
                     .build()?
                     .block_on(async {
-                        run_parent(
+                        Box::pin(run_parent(
                             &check_id,
                             prompt_reader_raw,
                             answer_writer_raw,
@@ -166,7 +165,7 @@ fn check_thread<'scope, 'env: 'scope>(
                             &mut message_receiver,
                             &mut check_prompt_values,
                             child,
-                        )
+                        ))
                         .await
                     })
                 {
@@ -381,7 +380,7 @@ fn run_troubleshooter(
         let prompt_msg = serde_json::to_string(&ChildToParentMsg::Prompt(prompt.to_string()))?;
         prompt_writer_raw.write_all(prompt_msg.as_bytes())?;
 
-        let mut resp_buffer = [0u8; 32768];
+        let mut resp_buffer = vec![0u8; 32768];
         let bytes = answer_reader_raw.read(&mut resp_buffer)?;
 
         let ParentToChildMsg::Answer(answer) = serde_json::from_slice(&resp_buffer[..bytes])?;

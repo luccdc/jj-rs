@@ -493,7 +493,7 @@ fn find_tunnel_net(bb: &Busybox) -> eyre::Result<Ipv4Addr> {
                 sn_res.map(|(ip, sn)| {
                     (
                         u32::from(ip),
-                        0xFFFFFFFFu32
+                        0xFF_FF_FF_FFu32
                             .overflowing_shr(32 - sn)
                             .0
                             .overflowing_shl(32 - sn)
@@ -513,7 +513,7 @@ fn find_tunnel_net(bb: &Busybox) -> eyre::Result<Ipv4Addr> {
             }
         }
 
-        if (start_ip & 0xFFF00000) != 0xAC100000 {
+        if (start_ip & 0xFF_F0_00_00) != 0xAC_10_00_00 {
             bail!(
                 "IP address exhaustion when trying to find an IP address for download container!"
             );

@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{fmt::Write, net::SocketAddr, path::PathBuf};
 
 use clap::Parser;
 use futures_util::TryStreamExt;
@@ -88,9 +88,7 @@ async fn respond(
     let uri = uri.path();
     path.push(&uri[1..]);
 
-    let path = if let Ok(p) = path.canonicalize() {
-        p
-    } else {
+    let Ok(path) = path.canonicalize() else {
         tracing::warn!("404 {}", uri);
         return not_found();
     };
@@ -100,9 +98,7 @@ async fn respond(
         return not_found();
     }
 
-    let metadata = if let Ok(m) = tokio::fs::metadata(&path).await {
-        m
-    } else {
+    let Ok(metadata) = tokio::fs::metadata(&path).await else {
         tracing::warn!("404 {}", uri);
         return not_found();
     };
@@ -195,7 +191,7 @@ async fn respond_dir(
             },
             string_entries
                 .iter()
-                .map(|(name, m)| {
+                .fold(String::new(), |mut output, (name, m)| {
                     let (dir_spec, size) = m
                         .as_ref()
                         .map(|metadata| {
@@ -213,9 +209,9 @@ async fn respond_dir(
                         format!("{uri}/{name}")
                     };
 
-                    format!(r#"<tr><td>{dir_spec}</td><td>{size}</td><td><a href="{download_url}">{name}</a></td></tr>"#)
+                    let _ = writeln!(output, r#"<tr><td>{dir_spec}</td><td>{size}</td><td><a href="{download_url}">{name}</a></td></tr>"#);
+                    output
                 })
-                .collect::<String>()
         )
     } else {
         format!(
