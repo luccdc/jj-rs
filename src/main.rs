@@ -33,10 +33,11 @@ define_commands! {
         Stat, st => stat::Stat,
 
         // admin commands
-        Backup, bu => backup::Backup,
-        [unix] Useradd, ua => useradd::Useradd,
-        [unix] Firewall, fw => firewall::Firewall,
-        [unix] Ssh => ssh::Ssh,
+        Backup, bu => commands::backup::Backup,
+        Useradd, ua => commands::useradd::Useradd,
+        Firewall, fw => commands::firewall::Firewall,
+        Ssh => commands::ssh::Ssh,
+        File => commands::file::File,
 
         // Embedded binaries
         [unix] Nft => nft::Nft,
