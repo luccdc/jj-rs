@@ -89,6 +89,11 @@ impl super::Command for DownloadShell {
             ) {
                 (Some(uid), ShellType::Zsh, true) => match unsafe { fork()? } {
                     ForkResult::Child => {
+                        let _ = std::env::var("SUDO_GID")
+                            .ok()
+                            .and_then(|u| u.parse::<u32>().ok())
+                            .and_then(|g| nix::unistd::setgid(g.into()).ok());
+
                         let _ = nix::unistd::setuid(uid.into());
 
                         let (fd, mut cmd) = zsh_command()?;
@@ -123,6 +128,11 @@ impl super::Command for DownloadShell {
                 },
                 (Some(uid), ShellType::Sh, true) => match unsafe { fork()? } {
                     ForkResult::Child => {
+                        let _ = std::env::var("SUDO_GID")
+                            .ok()
+                            .and_then(|u| u.parse::<u32>().ok())
+                            .and_then(|g| nix::unistd::setgid(g.into()).ok());
+
                         let _ = nix::unistd::setuid(uid.into());
 
                         let bb = Busybox::new()?;
@@ -157,6 +167,11 @@ impl super::Command for DownloadShell {
                 },
                 (Some(uid), ShellType::Bash, true) => match unsafe { fork()? } {
                     ForkResult::Child => {
+                        let _ = std::env::var("SUDO_GID")
+                            .ok()
+                            .and_then(|u| u.parse::<u32>().ok())
+                            .and_then(|g| nix::unistd::setgid(g.into()).ok());
+
                         let _ = nix::unistd::setuid(uid.into());
 
                         let mut cmd = Command::new("bash");
@@ -189,6 +204,11 @@ impl super::Command for DownloadShell {
                 },
                 (Some(uid), _, false) => match unsafe { fork()? } {
                     ForkResult::Child => {
+                        let _ = std::env::var("SUDO_GID")
+                            .ok()
+                            .and_then(|u| u.parse::<u32>().ok())
+                            .and_then(|g| nix::unistd::setgid(g.into()).ok());
+
                         let _ = nix::unistd::setuid(uid.into());
 
                         let mut cmd = Command::new(&self.command[0]);
