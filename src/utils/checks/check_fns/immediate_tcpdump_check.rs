@@ -5,6 +5,8 @@ use std::{
 
 use eyre::Context;
 use futures_util::StreamExt;
+use serde_json::json;
+use tokio::time;
 
 use crate::utils::{
     checks::{CheckResult, CheckStep, IntoCheckResult, TroubleshooterRunner},
@@ -240,9 +242,6 @@ impl ImmediateTcpdumpCheck {
     }
 
     async fn run_check(&self) -> eyre::Result<CheckResult> {
-        let container = DownloadContainer::new(None, None)
-            .context("Could not create download container for immediate tcpdump check")?;
-
         use nix::unistd::{ForkResult, fork};
 
         // Semaphores are nasty but one of the simplest ways to communicate across
@@ -256,6 +255,9 @@ impl ImmediateTcpdumpCheck {
         }
 
         const SYNC_SIZE: usize = std::mem::size_of::<Sync>();
+
+        let container = DownloadContainer::new(None, None)
+            .context("Could not create download container for immediate tcpdump check")?;
 
         let (child, mut capture, sync) = unsafe {
             let sync: *mut Sync = libc::mmap(
@@ -309,8 +311,6 @@ impl ImmediateTcpdumpCheck {
         let mut inbound_packet_count = 0;
         let mut outbound_packet_count = 0;
 
-        use tokio::time;
-
         let guess_source_port = time::timeout(
             time::Duration::from_secs(4),
             self.run_check_watch(
@@ -340,8 +340,6 @@ impl ImmediateTcpdumpCheck {
         unsafe {
             libc::munmap(sync.cast(), SYNC_SIZE);
         }
-
-        use serde_json::json;
 
         match (guess_source_port, actual_source_port) {
             (Ok(Ok(gsp)), Ok(asp)) if gsp == asp => Ok(CheckResult::succeed(

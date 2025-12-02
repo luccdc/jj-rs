@@ -27,7 +27,7 @@ pub struct Check {
     hide_extra_details: bool,
 
     #[command(subcommand)]
-    check_type: CheckCommands,
+    command: CheckCommands,
 }
 
 // Add checks here:
@@ -49,7 +49,7 @@ impl super::Command for Check {
             self.hide_extra_details,
         );
 
-        t.run_cli(&*self.check_type.troubleshooter())?;
+        t.run_cli(&self.command.troubleshooter())?;
 
         Ok(())
     }

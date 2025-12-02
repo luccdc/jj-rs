@@ -80,7 +80,7 @@ use std::{
     convert::Infallible,
     fmt,
     io::{BufRead, Write},
-    ops::BitAndAssign,
+    ops::{BitAndAssign, Deref},
     path::PathBuf,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -241,11 +241,8 @@ impl CheckValue {
         }
 
         let lock = self.internal.lock();
-        let mut internal_ref = match lock {
-            Ok(r) => r,
-            Err(_) => {
-                return resolve_value(&self.original, tr, prompt.as_ref());
-            }
+        let Ok(mut internal_ref) = lock else {
+            return resolve_value(&self.original, tr, prompt.as_ref());
         };
 
         if let CheckValueInternal::Value(s) = &*internal_ref {
@@ -345,10 +342,7 @@ impl BitAndAssign for CheckResultType {
     fn bitand_assign(&mut self, rhs: Self) {
         use CheckResultType as CRT;
         match (*self, rhs) {
-            (CRT::Failure, _) => {
-                *self = CRT::Failure;
-            }
-            (_, CRT::Failure) => {
+            (CRT::Failure, _) | (_, CRT::Failure) => {
                 *self = CRT::Failure;
             }
             (CRT::Success, CRT::Success) => {
@@ -436,6 +430,15 @@ pub trait Troubleshooter:
     clap::Parser + for<'de> Deserialize<'de> + serde::Serialize + Default + Clone
 {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>>;
+}
+
+impl<T> Troubleshooter for Box<T>
+where
+    T: Troubleshooter,
+{
+    fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
+        self.deref().checks()
+    }
 }
 
 /// A check step identifies a part of the troubleshooting process that could potentially

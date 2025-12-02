@@ -205,12 +205,12 @@ impl super::Command for CheckDaemon {
                     .enable_all()
                     .build()?
                     .block_on(async {
-                        logs::log_handler_thread(
+                        Box::pin(logs::log_handler_thread(
                             log_config,
                             log_receiver,
                             log_event_sender,
                             shutdown,
-                        )
+                        ))
                         .await
                     })
             });

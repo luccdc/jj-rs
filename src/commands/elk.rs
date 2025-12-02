@@ -137,6 +137,8 @@ pub struct Elk {
 
 impl super::Command for Elk {
     fn execute(self) -> eyre::Result<()> {
+        use ElkCommands as EC;
+
         let Some(distro) = get_distro()? else {
             eprintln!("{}", "!!! Could not identify distribution to run on! This utility depends on being able to use package managers".red());
             return Ok(());
@@ -150,10 +152,8 @@ impl super::Command for Elk {
             return Ok(());
         }
 
-        use ElkCommands as EC;
-
         if let EC::InstallBeats(args) = &self.command {
-            return install_beats(distro, args);
+            return install_beats(&distro, args);
         }
 
         let hostname = qx("hostnamectl")?.1;
@@ -542,8 +542,6 @@ fn setup_kibana(password: &mut Option<String>) -> eyre::Result<()> {
 }
 
 fn setup_logstash(password: &mut Option<String>) -> eyre::Result<()> {
-    println!("{}", "--- Configuring Logstash...".green());
-
     #[derive(serde::Deserialize)]
     #[allow(dead_code)]
     struct ElasticApiKeys {
@@ -552,6 +550,8 @@ fn setup_logstash(password: &mut Option<String>) -> eyre::Result<()> {
         api_key: String,
         encoded: String,
     }
+
+    println!("{}", "--- Configuring Logstash...".green());
 
     std::fs::create_dir_all("/etc/systemd/system/logstash.service.d")?;
 
@@ -842,13 +842,13 @@ fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
     Ok(())
 }
 
-fn install_beats(distro: Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
+fn install_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
     if args.use_download_shell {
         let container = DownloadContainer::new(None, args.sneaky_ip)?;
 
-        container.run(|| download_beats(&distro, args))??;
+        container.run(|| download_beats(distro, args))??;
     } else {
-        download_beats(&distro, args)?;
+        download_beats(distro, args)?;
     }
 
     println!("--- Done downloading beats packages! Installing beats packages...");

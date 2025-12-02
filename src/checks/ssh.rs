@@ -42,7 +42,7 @@ pub struct SshTroubleshooter {
 impl Default for SshTroubleshooter {
     fn default() -> Self {
         SshTroubleshooter {
-            host: Ipv4Addr::from(0x7F000001),
+            host: Ipv4Addr::from(0x7F_00_00_01),
             port: 22,
             user: "root".to_string(),
             password: CheckValue::stdin(),
@@ -141,6 +141,9 @@ impl SshTroubleshooter {
         user: &str,
         password: &str,
     ) -> eyre::Result<CheckResult> {
+        use russh::client::AuthResult as AR;
+        use tokio::time;
+
         struct Client;
 
         impl russh::client::Handler for Client {
@@ -159,8 +162,6 @@ impl SshTroubleshooter {
             ..Default::default()
         };
         let client_config = Arc::new(client_config);
-
-        use tokio::time;
         let mut session = match time::timeout(
             time::Duration::from_secs(5),
             russh::client::connect(client_config, (host, port), Client),
@@ -183,8 +184,6 @@ impl SshTroubleshooter {
                 ));
             }
         };
-
-        use russh::client::AuthResult as AR;
 
         Ok(
             match time::timeout(
