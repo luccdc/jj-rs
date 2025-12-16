@@ -84,7 +84,7 @@
 
           pkgsStatic = pkgs.pkgsStatic;
 
-          devShellTools = with pkgs; [
+          wslDevShellTools = with pkgs; [
             rust-analyzer
 
             # Debuggers
@@ -96,7 +96,6 @@
 
             # Test runner
             cargo-nextest
-            vagrant
 
             # Docs
             man-pages
@@ -104,6 +103,8 @@
 
             cargo-expand
           ];
+
+          devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant ]);
 
           libraries = [ libpcap-static ];
 
@@ -195,22 +196,41 @@
             inherit jiujitsu busybox-gzipped;
           };
 
-          devShells.default = craneLib.devShell ({
-            name = "jj";
+          devShells = {
+            default = craneLib.devShell ({
+              name = "jj";
 
-            packages = devShellTools ++ libraries;
+              packages = devShellTools ++ libraries;
 
-            CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-            CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+              CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+              CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
-            BUSYBOX_GZIPPED = busybox-gzipped;
-            JQ_GZIPPED = jq-gzipped;
-            NFT_GZIPPED = nft-gzipped;
-            TMUX_GZIPPED = tmux-gzipped;
-            TCPDUMP_GZIPPED = tcpdump-gzipped;
-            ZSH_GZIPPED = zsh-gzipped;
-            PAMTESTER_GZIPPED = pamtester-gzipped;
-          });
+              BUSYBOX_GZIPPED = busybox-gzipped;
+              JQ_GZIPPED = jq-gzipped;
+              NFT_GZIPPED = nft-gzipped;
+              TMUX_GZIPPED = tmux-gzipped;
+              TCPDUMP_GZIPPED = tcpdump-gzipped;
+              ZSH_GZIPPED = zsh-gzipped;
+              PAMTESTER_GZIPPED = pamtester-gzipped;
+            });
+
+            wsl = craneLib.devShell ({
+              name = "jj";
+
+              packages = wslDevShellTools ++ libraries;
+
+              CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+              CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+
+              BUSYBOX_GZIPPED = busybox-gzipped;
+              JQ_GZIPPED = jq-gzipped;
+              NFT_GZIPPED = nft-gzipped;
+              TMUX_GZIPPED = tmux-gzipped;
+              TCPDUMP_GZIPPED = tcpdump-gzipped;
+              ZSH_GZIPPED = zsh-gzipped;
+              PAMTESTER_GZIPPED = pamtester-gzipped;
+            });
+          };
         };
     };
 }

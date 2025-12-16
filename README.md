@@ -30,6 +30,7 @@ install -m755 /tmp/jj-rs /usr/bin/jj-rs
 4. From a Linux system, install the [Nix package manager](https://nixos.org/download/).
 5. Enable [Flake support](https://nixos.wiki/wiki/Flakes), usually by adding `experimental-features = nix-command flakes` to either `~/.config/nix/nix.conf` or `/etc/nix/nix.conf` and restarting the `nix` daemon
 6. Run `nix develop` in this folder (should take about 4 or 5 minutes the first time as it downloads dependencies, and 5-10 seconds afterwards)
+   1. If you are on WSL, use `nix develop .#wsl` instead
 
 ## Building and testing
 
