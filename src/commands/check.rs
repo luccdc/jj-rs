@@ -37,7 +37,7 @@ pub struct Check {
 define_checks! {
     CheckCommands {
         /// Troubleshoot an SSH connection
-        Ssh, "ssh" => checks::ssh::SshTroubleshooter
+        Ssh, "ssh" => checks::ssh::SshTroubleshooter,
     }
 }
 
@@ -49,7 +49,7 @@ impl super::Command for Check {
             self.hide_extra_details,
         );
 
-        t.run_cli(&self.command.troubleshooter())?;
+        t.run_cli(&*self.command.troubleshooter())?;
 
         Ok(())
     }

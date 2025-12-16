@@ -42,7 +42,7 @@ macro_rules! define_checks {
         }
 
         impl $cname {
-            pub fn troubleshooter(self) -> impl $crate::utils::checks::Troubleshooter {
+            pub fn troubleshooter(self) -> Box<dyn $crate::utils::checks::Troubleshooter> {
                 match self {
                     $(
                         Self::$name(inner) => Box::new(inner)

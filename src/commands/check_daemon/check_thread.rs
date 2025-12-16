@@ -14,7 +14,7 @@ use std::{
 use nix::sys::{signal, wait};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::checks::{CheckResultType, Troubleshooter};
+use crate::checks::CheckResultType;
 
 #[allow(dead_code)]
 pub enum OutboundMessage {

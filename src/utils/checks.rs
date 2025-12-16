@@ -426,9 +426,7 @@ impl CheckResult {
 /// values when editing a troubleshooter and creating a new one
 ///
 /// See [`crate::utils::checks`] for a description of how to make use of this trait
-pub trait Troubleshooter:
-    clap::Parser + for<'de> Deserialize<'de> + serde::Serialize + Default + Clone
-{
+pub trait Troubleshooter {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>>;
 }
 
@@ -511,7 +509,7 @@ impl CliTroubleshooter {
     }
 
     /// Actually runs the troubleshooter specified on the CLI
-    pub fn run_cli(&mut self, t: &impl Troubleshooter) -> eyre::Result<CheckResultType> {
+    pub fn run_cli(&mut self, t: &dyn Troubleshooter) -> eyre::Result<CheckResultType> {
         let checks = t.checks()?;
         let mut start = CheckResultType::NotRun;
 
