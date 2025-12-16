@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 use eyre::Context;
 use reqwest::blocking::Client;
 use super::*;
@@ -5,8 +6,8 @@ use super::*;
 #[derive(clap::Parser, serde::Serialize, serde::Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct WebTroubleshooter {
-    #[arg(long, short = 'H', default_value = "localhost")]
-    host: String,
+    #[arg(long, short = 'H', default_value = "127.0.0.1")]
+    host: Ipv4Addr,
 
     #[arg(long, short, default_value_t = 80)]
     port: u16,
@@ -24,7 +25,7 @@ pub struct WebTroubleshooter {
 impl Default for WebTroubleshooter {
     fn default() -> Self {
         Self {
-            host: "localhost".to_string(),
+            host: Ipv4Addr::new(127, 0, 0, 1),
             port: 80,
             secure: false,
             service: "nginx".to_string(),
@@ -35,10 +36,16 @@ impl Default for WebTroubleshooter {
 
 impl Troubleshooter for WebTroubleshooter {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
+        let is_local_target = self.host.is_loopback() || self.local;
         Ok(vec![
            filter_check(
                systemd_service_check(&self.service),
-               self.local,
+               is_local_target,
+               "Skipping service check (not local)"
+           ),
+           filter_check(
+               openrc_service_check(&self.service),
+               is_local_target,
                "Skipping service check (not local)"
            ),
            filter_check(
@@ -48,9 +55,10 @@ impl Troubleshooter for WebTroubleshooter {
                    CheckIpProtocol::Tcp,
                    true
                ),
-               self.local,
+               is_local_target,
                "Skipping local port ownership check"
            ),
+           tcp_connect_check(self.host, self.port),
            check_fn("Verify HTTP Response", |tr| self.check_http_response(tr)),
         ])
     }
@@ -73,7 +81,7 @@ impl WebTroubleshooter {
                 let status = resp.status();
                 if status.is_success() {
                     Ok(CheckResult::succeed(
-                            "Web server returned 200 OK",
+                            "Web server returned 2xx OK",
                             serde_json::json!({ "status_code": status.as_u16(), "url": url }),
                     ))
                 } else{
