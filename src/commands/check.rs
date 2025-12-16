@@ -38,6 +38,9 @@ define_checks! {
     CheckCommands {
         /// Troubleshoot an SSH connection
         Ssh, "ssh" => checks::ssh::SshTroubleshooter,
+
+        /// Troubleshoot a web connection
+        Web, "web" => checks::web::WebTroubleshooter,
     }
 }
 
