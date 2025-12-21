@@ -20,4 +20,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: result/bin/jj-rs
+          files: |
+            result/bin/jj-rs
+            result/bin/jj-rs.exe
+            result/bin/jj
+            result/bin/jj.exe
