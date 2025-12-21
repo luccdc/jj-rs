@@ -199,6 +199,13 @@
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
             cargoTestExtraArgs = "--all";
           });
+
+          jiujitsu = pkgs.runCommand "jiujitsu" { } ''
+            mkdir -p $out/bin
+
+            cp ${jiujitsu-linux}/bin/jj-rs $out/bin
+            cp ${jiujitsu-windows}/bin/jj-rs $out/bin/jj-rs.exe
+          '';
         in {
           _module.args.pkgs = pkgs;
 
@@ -223,9 +230,9 @@
           };
 
           packages = {
-            default = jiujitsu-linux;
+            default = jiujitsu;
 
-            inherit jiujitsu-linux jiujitsu-windows;
+            inherit jiujitsu jiujitsu-linux jiujitsu-windows;
           };
 
           devShells = {
