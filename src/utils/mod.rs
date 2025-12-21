@@ -9,17 +9,25 @@ use eyre::Context;
 
 use std::{fs::OpenOptions, path::Path, process::ExitStatus};
 
+#[cfg(unix)]
 pub mod busybox;
 pub mod checks;
-pub mod distro;
+#[cfg(unix)]
 pub mod download_container;
+#[cfg(unix)]
 pub mod nft;
+pub mod os_version;
+#[cfg(unix)]
 pub mod pamtester;
+#[cfg(unix)]
 pub mod passwd;
+#[cfg(unix)]
 pub mod ports;
 #[allow(dead_code)]
 pub mod regex;
+#[cfg(unix)]
 pub mod systemd;
+#[cfg(unix)]
 pub mod tcpdump;
 
 /// Alias for Perl's qx
@@ -37,9 +45,38 @@ pub mod tcpdump;
 /// # }
 /// # assert!(demo_qx().is_ok());
 /// ```
+#[cfg(unix)]
 pub fn qx(command: &str) -> eyre::Result<(ExitStatus, String)> {
     let output = std::process::Command::new("sh")
         .args(["-c", command])
+        .stderr(std::process::Stdio::piped())
+        .output()?;
+
+    Ok((
+        output.status,
+        String::from_utf8_lossy(&output.stdout).to_string(),
+    ))
+}
+
+/// Alias for Perl's qx
+///
+/// Runs the command provided and returns the output as a string as well as the exit code.
+/// Stderr is displayed to the user
+///
+/// ```
+/// # use jj_rs::utils::qx;
+/// # fn demo_qx() -> eyre::Result<()> {
+/// let os = qx("uname")?.1;
+/// assert_eq!(os, "Linux\n");
+/// assert_eq!(os.trim(), "Linux");
+/// # Ok(())
+/// # }
+/// # assert!(demo_qx().is_ok());
+/// ```
+#[cfg(windows)]
+pub fn qx(command: &str) -> eyre::Result<(ExitStatus, String)> {
+    let output = std::process::Command::new("cmd")
+        .args(["/c", command])
         .stderr(std::process::Stdio::piped())
         .output()?;
 
@@ -59,9 +96,30 @@ pub fn qx(command: &str) -> eyre::Result<(ExitStatus, String)> {
 /// assert!(system("true").unwrap().success());
 /// assert!(!system("false").unwrap().success());
 /// ```
+#[cfg(unix)]
 pub fn system(command: &str) -> eyre::Result<ExitStatus> {
     std::process::Command::new("/bin/sh")
         .args(["-c", command])
+        .spawn()
+        .context("Could not spawn sh")?
+        .wait()
+        .context("Could not wait for command to finish")
+}
+
+/// Runs the command provided, inheriting stdin, stdout, and stderr from the shell
+///
+/// Useful for running one of commands where the operator cares about the result,
+/// but not the programmer. Returns only the exit code
+///
+/// ```
+/// # use jj_rs::utils::system;
+/// assert!(system("true").unwrap().success());
+/// assert!(!system("false").unwrap().success());
+/// ```
+#[cfg(windows)]
+pub fn system(command: &str) -> eyre::Result<ExitStatus> {
+    std::process::Command::new("cmd")
+        .args(["/c", command])
         .spawn()
         .context("Could not spawn sh")?
         .wait()

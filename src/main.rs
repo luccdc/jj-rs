@@ -20,31 +20,33 @@ mod utils;
 //
 // Name should be in camel case
 define_commands! {
-    // utility commands
-    DownloadShell, ds => commands::download_shell::DownloadShell,
-    Check, c => commands::check::Check,
-    CheckDaemon, cd => commands::check_daemon::CheckDaemon,
-    Elk => commands::elk::Elk,
-    Serve, s => commands::serve::Serve,
+    Commands {
+        // utility commands
+        [unix] DownloadShell, ds => commands::download_shell::DownloadShell,
+        Check, c => commands::check::Check,
+        [unix] CheckDaemon, cd => commands::check_daemon::CheckDaemon,
+        [unix] Elk => commands::elk::Elk,
+        Serve, s => commands::serve::Serve,
 
-    // sysinfo commands
-    Enum, e => commands::r#enum::Enum,
-    Ports, p => commands::ports::Ports,
-    Stat => commands::stat::Stat,
+        // sysinfo commands
+        [unix] Enum, e => commands::r#enum::Enum,
+        [unix] Ports, p => commands::ports::Ports,
+        [unix] Stat => commands::stat::Stat,
 
-    // admin commands
-    Backup, bu => commands::backup::Backup,
-    Useradd, ua => commands::useradd::Useradd,
-    Firewall, fw => commands::firewall::Firewall,
-    Ssh => commands::ssh::Ssh,
+        // admin commands
+        Backup, bu => commands::backup::Backup,
+        [unix] Useradd, ua => commands::useradd::Useradd,
+        [unix] Firewall, fw => commands::firewall::Firewall,
+        [unix] Ssh => commands::ssh::Ssh,
 
-    // Embedded binaries
-    Nft => commands::nft::Nft,
-    Jq => commands::jq::Jq,
-    Tmux => commands::tmux::Tmux,
-    Tcpdump, td => commands::tcpdump::Tcpdump,
-    Zsh => commands::zsh::Zsh,
-    Busybox, bb => commands::busybox::Busybox,
+        // Embedded binaries
+        [unix] Nft => commands::nft::Nft,
+        [unix] Jq => commands::jq::Jq,
+        [unix] Tmux => commands::tmux::Tmux,
+        [unix] Tcpdump, td => commands::tcpdump::Tcpdump,
+        [unix] Zsh => commands::zsh::Zsh,
+        [unix] Busybox, bb => commands::busybox::Busybox,
+    }
 }
 
 #[derive(Parser, Debug)]

@@ -84,6 +84,13 @@
 
           pkgsStatic = pkgs.pkgsStatic;
 
+          libraries = [ libpcap-static ];
+
+          windowsLibraries = (with pkgs; [
+            pkgsCross.mingwW64.stdenv.cc
+            pkgsCross.mingwW64.windows.pthreads
+          ]) ++ libraries; # include Linux libraries for unit tests
+
           wslDevShellTools = with pkgs; [
             rust-analyzer
 
@@ -104,9 +111,10 @@
             cargo-expand
           ];
 
-          devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant ]);
+          winDevShellTools = with pkgs;
+            [ wineWow64Packages.minimal ] ++ windowsLibraries;
 
-          libraries = [ libpcap-static ];
+          devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant ]);
 
           gzip-binary = name: binary:
             pkgs.runCommand "${name}-gzipped" { } ''
@@ -131,7 +139,7 @@
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
             p.rust-bin.nightly.latest.default.override {
               extensions = [ "rust-src" ];
-              targets = [ "x86_64-unknown-linux-musl" ];
+              targets = [ "x86_64-unknown-linux-musl" "x86_64-pc-windows-gnu" ];
             });
 
           src = ./.;
@@ -139,10 +147,6 @@
           commonArgs = {
             inherit src;
 
-            buildInputs = libraries;
-            nativeBuildInputs = libraries;
-
-            CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
             BUSYBOX_GZIPPED = busybox-gzipped;
@@ -154,15 +158,43 @@
             PAMTESTER_GZIPPED = pamtester-gzipped;
           };
 
-          cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
+          linuxCommonArgs = commonArgs // {
+            buildInputs = libraries;
+            nativeBuildInputs = libraries;
+
+            CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+          };
+
+          windowsCommonArgs = commonArgs // {
+            buildInputs = windowsLibraries;
+            nativeBuildInputs = windowsLibraries;
+
+            CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
+          };
+
+          linuxCargoArtifacts = craneLib.buildDepsOnly (linuxCommonArgs // {
             name = "jiujitsu-deps-linux";
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
           });
 
-          jiujitsu = craneLib.buildPackage (commonArgs // {
-            inherit cargoArtifacts;
+          windowsCargoArtifacts = craneLib.buildDepsOnly (windowsCommonArgs // {
+            name = "jiujitsu-deps-windows";
+            cargoExtraArgs = "--locked --target=x86_64-pc-windows-gnu";
+          });
 
-            name = "jiujitsu";
+          jiujitsu-linux = craneLib.buildPackage (linuxCommonArgs // {
+            cargoArtifacts = linuxCargoArtifacts;
+
+            name = "jiujitsu-linux";
+
+            cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
+            cargoTestExtraArgs = "--all";
+          });
+
+          jiujitsu-windows = craneLib.buildPackage (windowsCommonArgs // {
+            cargoArtifacts = windowsCargoArtifacts;
+
+            name = "jiujitsu-windows";
 
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
             cargoTestExtraArgs = "--all";
@@ -171,10 +203,10 @@
           _module.args.pkgs = pkgs;
 
           checks = {
-            inherit jiujitsu;
+            inherit jiujitsu-linux jiujitsu-windows;
 
-            jj-clippy =
-              craneLib.cargoClippy (commonArgs // { inherit cargoArtifacts; });
+            jj-clippy = craneLib.cargoClippy
+              (linuxCommonArgs // { cargoArtifacts = linuxCargoArtifacts; });
 
             jj-format = craneLib.cargoFmt { inherit src; };
 
@@ -182,8 +214,8 @@
               src = pkgs.lib.sources.sourceFilesBySuffices src [ ".toml" ];
             };
 
-            jj-nextest = craneLib.cargoNextest (commonArgs // {
-              inherit cargoArtifacts;
+            jj-nextest = craneLib.cargoNextest (linuxCommonArgs // {
+              cargoArtifacts = linuxCargoArtifacts;
               partitions = 1;
               partitionType = "count";
               cargoNextestPartitionsExtraArgs = "--no-tests=pass";
@@ -191,9 +223,9 @@
           };
 
           packages = {
-            default = jiujitsu;
+            default = jiujitsu-linux;
 
-            inherit jiujitsu busybox-gzipped;
+            inherit jiujitsu-linux jiujitsu-windows;
           };
 
           devShells = {
@@ -203,6 +235,23 @@
               packages = devShellTools ++ libraries;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+              CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+
+              BUSYBOX_GZIPPED = busybox-gzipped;
+              JQ_GZIPPED = jq-gzipped;
+              NFT_GZIPPED = nft-gzipped;
+              TMUX_GZIPPED = tmux-gzipped;
+              TCPDUMP_GZIPPED = tcpdump-gzipped;
+              ZSH_GZIPPED = zsh-gzipped;
+              PAMTESTER_GZIPPED = pamtester-gzipped;
+            });
+
+            windows = craneLib.devShell ({
+              name = "jj";
+
+              packages = wslDevShellTools ++ winDevShellTools;
+
+              CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
               BUSYBOX_GZIPPED = busybox-gzipped;

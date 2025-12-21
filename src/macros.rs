@@ -2,26 +2,35 @@
 /// clap argument parser
 #[macro_export]
 macro_rules! define_commands {
-    ($($cmd:ident$(, $alias:ident)? => $($struct:ident)::+),+$(,)?) => {
+    ($cname:ident { $($(#[$($attr:tt)*])* $([$($cfg:tt),+$(,)?])? $cmd:ident$(, $alias:ident)? => $($struct:ident)::+),+$(,)? }) => {
         #[derive(::clap::Subcommand, Debug)]
-        enum Commands {
+        enum $cname {
             $(
+                $(#[$($attr)*])*
+                $($(
+                    #[cfg($cfg)]
+                )*)?
                 $(#[command(visible_alias(stringify!($alias)))])?
                 $cmd($($struct)::+)
             ),+,
         }
 
-        impl Commands {
+        impl $cname {
             fn execute(self) -> eyre::Result<()> {
                 use $crate::commands::Command;
 
                 fn _type_check<F: $crate::commands::Command>(_a: &F) {}
 
                 match self {
-                    $(Self::$cmd(inner) => {
-                        _type_check(&inner);
-                        inner.execute()
-                    }),+,
+                    $(
+                        $($(
+                            #[cfg($cfg)]
+                        )*)?
+                        Self::$cmd(inner) => {
+                            _type_check(&inner);
+                            inner.execute()
+                        }
+                    ),+,
                 }
             }
         }

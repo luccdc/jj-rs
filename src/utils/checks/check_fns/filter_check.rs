@@ -2,7 +2,7 @@ use eyre::Context;
 
 use crate::utils::{
     checks::{CheckResult, CheckStep, TroubleshooterRunner},
-    distro::Distro,
+    os_version::Distro,
 };
 
 /// Control whether or not run the underlying check for [`filter_check`] or [`filter_check_when`]
@@ -45,7 +45,7 @@ where
 
 struct CheckFilter<'a, F, T>
 where
-    F: Fn(Option<Distro>) -> T + 'a,
+    F: Fn(Distro) -> T + 'a,
 {
     check: Box<dyn CheckStep<'a> + 'a>,
     filter_func: F,
@@ -53,7 +53,7 @@ where
 
 impl<'a, F, T> CheckStep<'a> for CheckFilter<'a, F, T>
 where
-    F: Fn(Option<Distro>) -> T + 'a,
+    F: Fn(Distro) -> T + 'a,
     T: IntoCheckFilterResult + 'a,
 {
     fn name(&self) -> &'static str {
@@ -61,7 +61,7 @@ where
     }
 
     fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
-        let distro = crate::utils::distro::get_distro().context(
+        let distro = crate::utils::os_version::get_distro().context(
             "Could not query current Linux distribution to determine if a check should run",
         )?;
         match (self.filter_func)(distro).into_check_filter_result() {
@@ -88,7 +88,7 @@ where
 ///             ))
 ///         }
 ///     ),
-///     |distro| Ok::<_, ()>(if distro.map(|d| d.is_deb_based()).unwrap_or(false) {
+///     |distro| Ok::<_, ()>(if distro.is_deb_based() {
 ///         CheckFilterResult::Run
 ///     } else {
 ///         CheckFilterResult::NoRun("Test not designed for non-Debian systems".into())
@@ -100,7 +100,7 @@ pub fn filter_check_when<'a, F, T>(
     filter_func: F,
 ) -> Box<dyn CheckStep<'a> + 'a>
 where
-    F: Fn(Option<Distro>) -> T + 'a,
+    F: Fn(Distro) -> T + 'a,
     T: IntoCheckFilterResult + 'a,
 {
     Box::new(CheckFilter { check, filter_func })
