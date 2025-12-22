@@ -8,7 +8,6 @@
 use clap::Parser;
 
 mod checks;
-mod commands;
 mod macros;
 mod utils;
 
@@ -20,32 +19,32 @@ mod utils;
 //
 // Name should be in camel case
 define_commands! {
-    Commands {
+    commands::Commands {
         // utility commands
-        [unix] DownloadShell, ds => commands::download_shell::DownloadShell,
-        Check, c => commands::check::Check,
-        [unix] CheckDaemon, cd => commands::check_daemon::CheckDaemon,
-        [unix] Elk => commands::elk::Elk,
-        Serve, s => commands::serve::Serve,
+        [unix] DownloadShell, ds => download_shell::DownloadShell,
+        Check, c => check::Check,
+        [unix] CheckDaemon, cd => check_daemon::CheckDaemon,
+        [unix] Elk => elk::Elk,
+        Serve, s => serve::Serve,
 
         // sysinfo commands
-        [unix] Enum, e => commands::r#enum::Enum,
-        [unix] Ports, p => commands::ports::Ports,
-        [unix] Stat => commands::stat::Stat,
+        [unix] Enum, e => r#enum::Enum,
+        [unix] Ports, p => ports::Ports,
+        [unix] Stat => stat::Stat,
 
         // admin commands
-        Backup, bu => commands::backup::Backup,
-        [unix] Useradd, ua => commands::useradd::Useradd,
-        [unix] Firewall, fw => commands::firewall::Firewall,
-        [unix] Ssh => commands::ssh::Ssh,
+        Backup, bu => backup::Backup,
+        [unix] Useradd, ua => useradd::Useradd,
+        [unix] Firewall, fw => firewall::Firewall,
+        [unix] Ssh => ssh::Ssh,
 
         // Embedded binaries
-        [unix] Nft => commands::nft::Nft,
-        [unix] Jq => commands::jq::Jq,
-        [unix] Tmux => commands::tmux::Tmux,
-        [unix] Tcpdump, td => commands::tcpdump::Tcpdump,
-        [unix] Zsh => commands::zsh::Zsh,
-        [unix] Busybox, bb => commands::busybox::Busybox,
+        [unix] Nft => nft::Nft,
+        [unix] Jq => jq::Jq,
+        [unix] Tmux => tmux::Tmux,
+        [unix] Tcpdump, td => tcpdump::Tcpdump,
+        [unix] Zsh => zsh::Zsh,
+        [unix] Busybox, bb => busybox::Busybox,
     }
 }
 
@@ -53,7 +52,7 @@ define_commands! {
 #[command(version, about)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: commands::Commands,
 }
 
 fn main() -> eyre::Result<()> {

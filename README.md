@@ -14,10 +14,16 @@ A generic swiss army knife tool that is meant to be easily deployed to a system 
 
 ## Installing
 
-To install, simply download the latest release and move it to `/usr/bin`:
+To install on Linux, simply download the latest release and move it to `/usr/bin`:
 ``` sh
 wget -O /tmp/jj-rs https://github.com/luccdc/jj-rs/releases/latest/download/jj-rs
-install -m755 /tmp/jj-rs /usr/bin/jj-rs
+install -m755 /tmp/jj-rs /usr/bin/jj
+```
+
+To install on Windows, simply download the latest release and run from `cmd` or `powershell`:
+
+``` powershell
+Start-BitsTransfer https://github.com/luccdc/jj-rs/releases/latest/download/jj-rs.exe C:\Windows\System32\jj.exe
 ```
 
 ## Getting set up for development
@@ -99,17 +105,21 @@ impl super::Command for Example {
 }
 ```
 
-Then, register it in `src/commands/mod.rs`:
-
-``` rust
-pub mod example; // should match the filename you used for your command
-```
-
 Finally, add it to `src/main.rs`:
 
 ``` rust
 // somewhere after line 16, after the other commands
-Example, ex => commands::example::Example
+// the first `example` matches the name of the file (`example.rs`), and the second Example matches
+// the name of the struct in the file
+Example, ex => example::Example
+```
+
+### OS Specific Commands
+
+To register a command as being unix only or windows only, prefix your command in `src/main.rs` with either `[unix]` or `[windows]`, like so:
+
+``` rust
+[unix] Example, ex => commands::example::Example
 ```
 
 ## Adding a check
@@ -138,11 +148,19 @@ impl Default for ExampleTroubleshooter {
     }
 }
 
+#[cfg(unix)]
 impl Troubleshooter for ExampleTroubleshooter {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
         Ok(vec![
             systemd_service_check("example")
         ])
+    }
+}
+
+#[cfg(windows)]
+impl Troubleshooter for ExampleTroubleshooter {
+    fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
+        Ok(vec![])
     }
 }
 ```
