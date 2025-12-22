@@ -2,36 +2,49 @@
 /// clap argument parser
 #[macro_export]
 macro_rules! define_commands {
-    ($cname:ident { $($(#[$($attr:tt)*])* $([$($cfg:tt),+$(,)?])? $cmd:ident$(, $alias:ident)? => $($struct:ident)::+),+$(,)? }) => {
-        #[derive(::clap::Subcommand, Debug)]
-        enum $cname {
+    ($mname:ident::$cname:ident { $($(#[$($attr:tt)*])* $([$($cfg:tt),+$(,)?])? $cmd:ident$(, $alias:ident)? => $mod:ident::$struct:ident),+$(,)? }) => {
+        mod $mname {
             $(
-                $(#[$($attr)*])*
                 $($(
                     #[cfg($cfg)]
                 )*)?
-                $(#[command(visible_alias(stringify!($alias)))])?
-                $cmd($($struct)::+)
-            ),+,
-        }
+                mod $mod;
+            )+
 
-        impl $cname {
-            fn execute(self) -> eyre::Result<()> {
-                use $crate::commands::Command;
+            #[derive(::clap::Subcommand, Debug)]
+            pub enum $cname {
+                $(
+                    $(#[$($attr)*])*
+                    $($(
+                        #[cfg($cfg)]
+                    )*)?
+                    $(#[command(visible_alias(stringify!($alias)))])?
+                    $cmd($mod::$struct)
+                ),+,
+            }
 
-                fn _type_check<F: $crate::commands::Command>(_a: &F) {}
+            impl $cname {
+                pub fn execute(self) -> eyre::Result<()> {
+                    use $crate::commands::Command;
 
-                match self {
-                    $(
-                        $($(
-                            #[cfg($cfg)]
-                        )*)?
-                        Self::$cmd(inner) => {
-                            _type_check(&inner);
-                            inner.execute()
-                        }
-                    ),+,
+                    fn _type_check<F: $crate::commands::Command>(_a: &F) {}
+
+                    match self {
+                        $(
+                            $($(
+                                #[cfg($cfg)]
+                            )*)?
+                            Self::$cmd(inner) => {
+                                _type_check(&inner);
+                                inner.execute()
+                            }
+                        ),+,
+                    }
                 }
+            }
+
+            pub trait Command: clap::Parser {
+                fn execute(self) -> eyre::Result<()>;
             }
         }
     };
