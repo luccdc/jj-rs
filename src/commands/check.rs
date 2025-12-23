@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::{checks, define_checks};
+use crate::checks;
 
 /// Troubleshoot network services, remotely or locally
 ///
@@ -27,18 +27,7 @@ pub struct Check {
     hide_extra_details: bool,
 
     #[command(subcommand)]
-    command: CheckCommands,
-}
-
-// Add checks here:
-//
-// /// Comments describing how to use troubleshooter
-// Name, serialized_name => module::Troubleshooter
-define_checks! {
-    CheckCommands {
-        /// Troubleshoot an SSH connection
-        Ssh, "ssh" => checks::ssh::SshTroubleshooter,
-    }
+    command: crate::checks::CheckTypes,
 }
 
 impl super::Command for Check {

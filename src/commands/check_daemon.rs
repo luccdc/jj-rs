@@ -53,7 +53,7 @@ use tokio::{
 
 use crate::checks::{CheckResult, CheckResultType};
 
-pub use super::check::CheckCommands;
+pub use crate::checks::CheckTypes;
 
 mod check_thread;
 mod logs;
@@ -70,7 +70,7 @@ struct TroubleshooterResult {
     steps: HashMap<String, (String, CheckResult)>,
 }
 
-type HostCheck = HashMap<Arc<str>, crate::commands::check::CheckCommands>;
+type HostCheck = HashMap<Arc<str>, CheckTypes>;
 type ChecksConfig = HashMap<Arc<str>, HostCheck>;
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -88,7 +88,7 @@ struct RuntimeCheckHandle {
     started: AtomicBool,
 }
 
-type RuntimeHostCheck = HashMap<Arc<str>, (CheckCommands, RuntimeCheckHandle)>;
+type RuntimeHostCheck = HashMap<Arc<str>, (CheckTypes, RuntimeCheckHandle)>;
 type RuntimeChecksConfig = HashMap<Arc<str>, RuntimeHostCheck>;
 
 #[derive(Default)]
@@ -146,7 +146,7 @@ pub enum DaemonConfigArg {
         service: String,
 
         #[command(subcommand)]
-        check: CheckCommands,
+        check: CheckTypes,
     },
     #[command(visible_alias("c"))]
     /// Load from a file path different checks to perform

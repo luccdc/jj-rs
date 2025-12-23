@@ -7,7 +7,6 @@
 
 use clap::Parser;
 
-mod checks;
 mod macros;
 mod utils;
 
@@ -45,6 +44,17 @@ define_commands! {
         [unix] Tcpdump, td => tcpdump::Tcpdump,
         [unix] Zsh => zsh::Zsh,
         [unix] Busybox, bb => busybox::Busybox,
+    }
+}
+
+// Add checks here:
+//
+// /// Comments describing how to use troubleshooter
+// Name, serialized_name => module::Troubleshooter
+define_checks! {
+    checks::CheckTypes {
+        /// Troubleshoot an SSH connection
+        Ssh, "ssh" => ssh::SshTroubleshooter,
     }
 }
 

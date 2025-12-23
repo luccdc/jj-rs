@@ -53,22 +53,30 @@ macro_rules! define_commands {
 /// One time macro used to define the list of checks the system is aware of
 #[macro_export]
 macro_rules! define_checks {
-    ($cname:ident { $($(#[$($attr:tt)*])* $name:ident$(, $alias:expr)? => $($ts:ident)::+),+$(,)? }) => {
-        #[derive(::clap::Subcommand, ::serde::Serialize, ::serde::Deserialize, Debug, Clone)]
-        pub enum $cname {
+    ($mname:ident::$cname:ident { $($(#[$($attr:tt)*])* $name:ident$(, $alias:expr)? => $mod:ident::$struct:ident),+$(,)? }) => {
+        mod $mname {
             $(
-                $(#[$($attr)*])*
-                $(#[serde(rename = $alias)])?
-                $name($($ts)::+)
-            ),+,
-        }
+                pub mod $mod;
+            )+
 
-        impl $cname {
-            pub fn troubleshooter(self) -> Box<dyn $crate::utils::checks::Troubleshooter> {
-                match self {
-                    $(
-                        Self::$name(inner) => Box::new(inner)
-                    ),+,
+            pub use $crate::utils::checks::*;
+
+            #[derive(::clap::Subcommand, ::serde::Serialize, ::serde::Deserialize, Debug, Clone)]
+            pub enum $cname {
+                $(
+                    $(#[$($attr)*])*
+                    $(#[serde(rename = $alias)])?
+                    $name($mod::$struct)
+                ),+,
+            }
+
+            impl $cname {
+                pub fn troubleshooter(self) -> Box<dyn $crate::utils::checks::Troubleshooter> {
+                    match self {
+                        $(
+                            Self::$name(inner) => Box::new(inner)
+                        ),+,
+                    }
                 }
             }
         }
