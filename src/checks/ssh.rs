@@ -3,7 +3,7 @@ use std::{net::Ipv4Addr, sync::Arc};
 use chrono::Utc;
 use eyre::Context;
 
-use crate::utils::distro::get_distro;
+use crate::utils::os_version::get_distro;
 
 use super::*;
 
@@ -52,16 +52,14 @@ impl Default for SshTroubleshooter {
     }
 }
 
+#[cfg(unix)]
 impl Troubleshooter for SshTroubleshooter {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         let distro = get_distro().context("could not load distribution for ssh check")?;
 
         Ok(vec![
             filter_check(
-                systemd_service_check(match &distro {
-                    Some(d) if d.is_deb_based() => "ssh",
-                    _ => "sshd",
-                }),
+                systemd_service_check(if distro.is_deb_based() { "ssh" } else { "sshd" }),
                 self.host.is_loopback() || self.local,
                 "Cannot check systemd service on remote host",
             ),
@@ -96,6 +94,16 @@ impl Troubleshooter for SshTroubleshooter {
                 !self.host.is_loopback() && !self.local,
                 get_system_logs,
             ),
+        ])
+    }
+}
+
+#[cfg(windows)]
+impl Troubleshooter for SshTroubleshooter {
+    fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
+        Ok(vec![
+            tcp_connect_check(self.host, self.port),
+            check_fn("Try remote login", |tr| self.try_remote_login(tr)),
         ])
     }
 }

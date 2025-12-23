@@ -2,10 +2,10 @@ use std::net::{IpAddr, SocketAddr, TcpStream};
 
 use eyre::Context;
 
-use crate::utils::{
-    checks::{CheckResult, CheckStep, TroubleshooterRunner},
-    download_container::DownloadContainer,
-};
+use crate::utils::checks::{CheckResult, CheckStep, TroubleshooterRunner};
+
+#[cfg(unix)]
+use crate::utils::download_container::DownloadContainer;
 
 struct TcpConnectCheck {
     ip: IpAddr,
@@ -17,6 +17,7 @@ impl CheckStep<'_> for TcpConnectCheck {
         "Check TCP port status"
     }
 
+    #[cfg(unix)]
     fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         let timeout = std::time::Duration::from_secs(2);
 
@@ -90,6 +91,28 @@ impl CheckStep<'_> for TcpConnectCheck {
                     serde_json::json!(null),
                 ))
             }
+        }
+    }
+
+    #[cfg(windows)]
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
+        let timeout = std::time::Duration::from_secs(2);
+
+        let addr = SocketAddr::new(self.ip, self.port);
+        let client = TcpStream::connect_timeout(&addr, timeout).map(|_| ());
+
+        if let Err(e) = client {
+            Ok(CheckResult::fail(
+                format!("Could not connect to {}:{}", self.ip, self.port),
+                serde_json::json!({
+                    "error": format!("{e:?}")
+                }),
+            ))
+        } else {
+            Ok(CheckResult::succeed(
+                format!("Successfully connected to {}:{}", self.ip, self.port),
+                serde_json::json!(null),
+            ))
         }
     }
 }

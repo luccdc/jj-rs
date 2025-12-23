@@ -2,20 +2,28 @@
 //! includes building blocks for applying simple checks or applying filters
 //! to checks
 
+#[cfg(unix)]
 mod binary_ports_check;
 mod check_fn;
 mod filter_check;
+#[cfg(unix)]
 mod immediate_tcpdump_check;
+#[cfg(unix)]
 mod pam_check;
+#[cfg(unix)]
 mod passive_tcpdump_check;
 mod service_checks;
 mod tcp_connect_check;
 
+#[cfg(unix)]
 pub use binary_ports_check::*;
 pub use check_fn::*;
 pub use filter_check::*;
+#[cfg(unix)]
 pub use immediate_tcpdump_check::*;
+#[cfg(unix)]
 pub use pam_check::*;
+#[cfg(unix)]
 pub use passive_tcpdump_check::*;
 pub use service_checks::*;
 pub use tcp_connect_check::*;
@@ -38,8 +46,10 @@ impl CheckIpProtocol {
     }
 }
 
+#[cfg(unix)]
 struct TcpdumpCodec;
 
+#[cfg(unix)]
 impl pcap::PacketCodec for TcpdumpCodec {
     type Item = (pcap::PacketHeader, Vec<u8>);
 

@@ -7,8 +7,6 @@
 
 use clap::Parser;
 
-mod checks;
-mod commands;
 mod macros;
 mod utils;
 
@@ -20,38 +18,51 @@ mod utils;
 //
 // Name should be in camel case
 define_commands! {
-    // utility commands
-    DownloadShell, ds => commands::download_shell::DownloadShell,
-    Check, c => commands::check::Check,
-    CheckDaemon, cd => commands::check_daemon::CheckDaemon,
-    Elk => commands::elk::Elk,
-    Serve, s => commands::serve::Serve,
+    commands::Commands {
+        // utility commands
+        [unix] DownloadShell, ds => download_shell::DownloadShell,
+        Check, c => check::Check,
+        [unix] CheckDaemon, cd => check_daemon::CheckDaemon,
+        [unix] Elk => elk::Elk,
+        Serve, s => serve::Serve,
 
-    // sysinfo commands
-    Enum, e => commands::r#enum::Enum,
-    Ports, p => commands::ports::Ports,
-    Stat => commands::stat::Stat,
+        // sysinfo commands
+        [unix] Enum, e => r#enum::Enum,
+        [unix] Ports, p => ports::Ports,
+        [unix] Stat => stat::Stat,
 
-    // admin commands
-    Backup, bu => commands::backup::Backup,
-    Useradd, ua => commands::useradd::Useradd,
-    Firewall, fw => commands::firewall::Firewall,
-    Ssh => commands::ssh::Ssh,
+        // admin commands
+        Backup, bu => backup::Backup,
+        [unix] Useradd, ua => useradd::Useradd,
+        [unix] Firewall, fw => firewall::Firewall,
+        [unix] Ssh => ssh::Ssh,
 
-    // Embedded binaries
-    Nft => commands::nft::Nft,
-    Jq => commands::jq::Jq,
-    Tmux => commands::tmux::Tmux,
-    Tcpdump, td => commands::tcpdump::Tcpdump,
-    Zsh => commands::zsh::Zsh,
-    Busybox, bb => commands::busybox::Busybox,
+        // Embedded binaries
+        [unix] Nft => nft::Nft,
+        [unix] Jq => jq::Jq,
+        [unix] Tmux => tmux::Tmux,
+        [unix] Tcpdump, td => tcpdump::Tcpdump,
+        [unix] Zsh => zsh::Zsh,
+        [unix] Busybox, bb => busybox::Busybox,
+    }
+}
+
+// Add checks here:
+//
+// /// Comments describing how to use troubleshooter
+// Name, serialized_name => module::Troubleshooter
+define_checks! {
+    checks::CheckTypes {
+        /// Troubleshoot an SSH connection
+        Ssh, "ssh" => ssh::SshTroubleshooter,
+    }
 }
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: commands::Commands,
 }
 
 fn main() -> eyre::Result<()> {

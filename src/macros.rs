@@ -2,27 +2,49 @@
 /// clap argument parser
 #[macro_export]
 macro_rules! define_commands {
-    ($($cmd:ident$(, $alias:ident)? => $($struct:ident)::+),+$(,)?) => {
-        #[derive(::clap::Subcommand, Debug)]
-        enum Commands {
+    ($mname:ident::$cname:ident { $($(#[$($attr:tt)*])* $([$($cfg:tt),+$(,)?])? $cmd:ident$(, $alias:ident)? => $mod:ident::$struct:ident),+$(,)? }) => {
+        mod $mname {
             $(
-                $(#[command(visible_alias(stringify!($alias)))])?
-                $cmd($($struct)::+)
-            ),+,
-        }
+                $($(
+                    #[cfg($cfg)]
+                )*)?
+                mod $mod;
+            )+
 
-        impl Commands {
-            fn execute(self) -> eyre::Result<()> {
-                use $crate::commands::Command;
+            #[derive(::clap::Subcommand, Debug)]
+            pub enum $cname {
+                $(
+                    $(#[$($attr)*])*
+                    $($(
+                        #[cfg($cfg)]
+                    )*)?
+                    $(#[command(visible_alias(stringify!($alias)))])?
+                    $cmd($mod::$struct)
+                ),+,
+            }
 
-                fn _type_check<F: $crate::commands::Command>(_a: &F) {}
+            impl $cname {
+                pub fn execute(self) -> eyre::Result<()> {
+                    use $crate::commands::Command;
 
-                match self {
-                    $(Self::$cmd(inner) => {
-                        _type_check(&inner);
-                        inner.execute()
-                    }),+,
+                    fn _type_check<F: $crate::commands::Command>(_a: &F) {}
+
+                    match self {
+                        $(
+                            $($(
+                                #[cfg($cfg)]
+                            )*)?
+                            Self::$cmd(inner) => {
+                                _type_check(&inner);
+                                inner.execute()
+                            }
+                        ),+,
+                    }
                 }
+            }
+
+            pub trait Command: clap::Parser {
+                fn execute(self) -> eyre::Result<()>;
             }
         }
     };
@@ -31,22 +53,30 @@ macro_rules! define_commands {
 /// One time macro used to define the list of checks the system is aware of
 #[macro_export]
 macro_rules! define_checks {
-    ($cname:ident { $($(#[$($attr:tt)*])* $name:ident$(, $alias:expr)? => $($ts:ident)::+),+$(,)? }) => {
-        #[derive(::clap::Subcommand, ::serde::Serialize, ::serde::Deserialize, Debug, Clone)]
-        pub enum $cname {
+    ($mname:ident::$cname:ident { $($(#[$($attr:tt)*])* $name:ident$(, $alias:expr)? => $mod:ident::$struct:ident),+$(,)? }) => {
+        mod $mname {
             $(
-                $(#[$($attr)*])*
-                $(#[serde(rename = $alias)])?
-                $name($($ts)::+)
-            ),+,
-        }
+                pub mod $mod;
+            )+
 
-        impl $cname {
-            pub fn troubleshooter(self) -> Box<dyn $crate::utils::checks::Troubleshooter> {
-                match self {
-                    $(
-                        Self::$name(inner) => Box::new(inner)
-                    ),+,
+            pub use $crate::utils::checks::*;
+
+            #[derive(::clap::Subcommand, ::serde::Serialize, ::serde::Deserialize, Debug, Clone)]
+            pub enum $cname {
+                $(
+                    $(#[$($attr)*])*
+                    $(#[serde(rename = $alias)])?
+                    $name($mod::$struct)
+                ),+,
+            }
+
+            impl $cname {
+                pub fn troubleshooter(self) -> Box<dyn $crate::utils::checks::Troubleshooter> {
+                    match self {
+                        $(
+                            Self::$name(inner) => Box::new(inner)
+                        ),+,
+                    }
                 }
             }
         }

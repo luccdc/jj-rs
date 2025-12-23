@@ -56,7 +56,7 @@ where
 
 pub fn register_check<'scope, 'env: 'scope>(
     daemon: &'env RwLock<super::RuntimeDaemonConfig>,
-    (check_id, check): (super::CheckId, super::CheckCommands),
+    (check_id, check): (super::CheckId, super::CheckTypes),
     scope: &'scope Scope<'scope, 'env>,
     prompt_writer: mpsc::Sender<(super::CheckId, String)>,
     log_writer: PipeWriter,
@@ -116,7 +116,7 @@ pub fn register_check<'scope, 'env: 'scope>(
 
 fn check_thread<'scope, 'env: 'scope>(
     daemon: &'env RwLock<super::RuntimeDaemonConfig>,
-    (check_id, check): (super::CheckId, super::CheckCommands),
+    (check_id, check): (super::CheckId, super::CheckTypes),
     mut prompt_writer: mpsc::Sender<(super::CheckId, String)>,
     log_writer: &PipeWriter,
     mut shutdown: broadcast::Receiver<()>,
@@ -348,7 +348,7 @@ async fn run_parent(
 
 fn run_child(
     check_id: super::CheckId,
-    check: super::CheckCommands,
+    check: super::CheckTypes,
     mut prompt_writer_raw: PipeWriter,
     answer_reader_raw: PipeReader,
     log_writer: PipeWriter,
@@ -371,7 +371,7 @@ fn run_child(
 
 fn run_troubleshooter(
     check_id: super::CheckId,
-    check: super::CheckCommands,
+    check: super::CheckTypes,
     prompt_writer_raw: &mut PipeWriter,
     mut answer_reader_raw: PipeReader,
     mut log_writer: PipeWriter,

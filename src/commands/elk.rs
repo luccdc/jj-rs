@@ -17,8 +17,8 @@ use crate::utils::{download_file, system};
 use crate::{
     pcre,
     utils::{
-        distro::{Distro, get_distro},
         download_container::DownloadContainer,
+        os_version::{Distro, get_distro},
         qx,
     },
 };
@@ -139,10 +139,7 @@ impl super::Command for Elk {
     fn execute(self) -> eyre::Result<()> {
         use ElkCommands as EC;
 
-        let Some(distro) = get_distro()? else {
-            eprintln!("{}", "!!! Could not identify distribution to run on! This utility depends on being able to use package managers".red());
-            return Ok(());
-        };
+        let distro = get_distro()?;
 
         if !distro.is_rhel_or_deb_based() {
             eprintln!(

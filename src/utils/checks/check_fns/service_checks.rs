@@ -3,13 +3,17 @@ use eyre::Context;
 use crate::utils::{
     checks::{CheckResult, CheckStep, TroubleshooterRunner},
     qx,
-    systemd::{get_service_info, is_service_active},
 };
 
+#[cfg(unix)]
+use crate::utils::systemd::{get_service_info, is_service_active};
+
+#[cfg(unix)]
 struct SystemdServiceCheck {
     service_name: String,
 }
 
+#[cfg(unix)]
 impl CheckStep<'_> for SystemdServiceCheck {
     fn name(&self) -> &'static str {
         "Check systemd service"
@@ -53,16 +57,19 @@ impl CheckStep<'_> for SystemdServiceCheck {
 /// # use jj_rs::utils::checks::systemd_service_check;
 /// systemd_service_check("ssh");
 /// ```
+#[cfg(unix)]
 pub fn systemd_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(SystemdServiceCheck {
         service_name: name.into(),
     })
 }
 
+#[cfg(unix)]
 struct OpenrcServiceCheck {
     service_name: String,
 }
 
+#[cfg(unix)]
 impl CheckStep<'_> for OpenrcServiceCheck {
     fn name(&self) -> &'static str {
         "Check openrc service"
@@ -100,6 +107,7 @@ impl CheckStep<'_> for OpenrcServiceCheck {
 /// # use jj_rs::utils::checks::openrc_service_check;
 /// openrc_service_check("ssh");
 /// ```
+#[cfg(unix)]
 pub fn openrc_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(OpenrcServiceCheck {
         service_name: name.into(),
