@@ -165,17 +165,11 @@ impl Troubleshooter for ExampleTroubleshooter {
 }
 ```
 
-Register it in `src/checks/mod.rs`:
-
-``` rust
-pub mod example;
-```
-
-Finally, in `src/commands/check.rs` edit the `define_checks!` section to add your check:
+Finally, in `src/main.rs` edit the `define_checks!` section to add your check:
 
 ``` rust
 define_checks! {
-    CheckCommands {
+    checks::CheckTypes {
         // other checks up here...
         
         /// Troubleshoot the example service - anything, you say here will show up when using
