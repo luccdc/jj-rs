@@ -25,6 +25,7 @@ define_commands! {
         [unix] CheckDaemon, cd => check_daemon::CheckDaemon,
         [unix] Elk => elk::Elk,
         Serve, s => serve::Serve,
+        Get, g => get::Get,
 
         // sysinfo commands
         [unix] Enum, e => r#enum::Enum,

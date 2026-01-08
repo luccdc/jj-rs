@@ -166,6 +166,16 @@ pub fn download_file<P: AsRef<Path>>(url: &str, to: P) -> eyre::Result<()> {
         .create(true)
         .write(true)
         .open(to)?;
-    reqwest::blocking::get(url)?.copy_to(&mut target_file)?;
+
+    let mut response = reqwest::blocking::get(url)?;
+    if !response.status().is_success() {
+        eyre::bail!(
+            "Got response of {} when downloading {url}",
+            response.status()
+        );
+    }
+
+    response.copy_to(&mut target_file)?;
+
     Ok(())
 }
