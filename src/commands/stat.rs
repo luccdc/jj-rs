@@ -13,12 +13,17 @@ pub struct Stat {
 #[derive(Subcommand, Debug)]
 pub enum StatCommands {
     /// Print the current CPU statistics based on `/proc/stat`
+    #[cfg(unix)]
     Cpu,
+    /// Print the current memory statistics
+    #[cfg(windows)]
+    Memory,
 }
 
 impl super::Command for Stat {
     fn execute(self) -> eyre::Result<()> {
         match self.command {
+            #[cfg(unix)]
             StatCommands::Cpu => {
                 let stat = std::fs::read_to_string("/proc/stat")?;
 
@@ -38,6 +43,20 @@ impl super::Command for Stat {
 
                 println!("{usage:.5}%");
             }
+            #[cfg(windows)]
+            StatCommands::Memory => unsafe {
+                use windows::Win32::System::SystemInformation::{
+                    GlobalMemoryStatusEx, MEMORYSTATUSEX,
+                };
+
+                let mut memory: MEMORYSTATUSEX = std::mem::zeroed();
+
+                memory.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+
+                GlobalMemoryStatusEx(&mut memory as _)?;
+
+                println!("{}", memory.dwMemoryLoad);
+            },
         }
 
         Ok(())
