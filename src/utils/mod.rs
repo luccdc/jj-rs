@@ -86,6 +86,31 @@ pub fn qx(command: &str) -> eyre::Result<(ExitStatus, String)> {
     ))
 }
 
+/// Alias for Perl's qx
+///
+/// Runs the command provided and returns the output as a string as well as the exit code.
+/// Stderr is displayed to the user
+/// Runs the commands provided with PowerShell
+#[cfg(windows)]
+pub fn qxp(command: &str) -> eyre::Result<(ExitStatus, String)> {
+    use base64::prelude::*;
+
+    let command = command
+        .encode_utf16()
+        .flat_map(|c| c.to_le_bytes())
+        .collect::<Vec<_>>();
+
+    let output = std::process::Command::new("powershell")
+        .args(["-EncodedCommand", &BASE64_STANDARD.encode(command)])
+        .stderr(std::process::Stdio::piped())
+        .output()?;
+
+    Ok((
+        output.status,
+        String::from_utf8_lossy(&output.stdout).to_string(),
+    ))
+}
+
 /// Runs the command provided, inheriting stdin, stdout, and stderr from the shell
 ///
 /// Useful for running one of commands where the operator cares about the result,
