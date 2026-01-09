@@ -69,7 +69,7 @@ pcap = { version = "2.3.0", features = ["capture-stream"] }
 ratatui = "0.29.0"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = ["Win32_System_SystemInformation"] }
+windows = { version = "0.62.2", features = ["Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [profile.release]
 strip = true

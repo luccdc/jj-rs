@@ -13,7 +13,6 @@ pub struct Stat {
 #[derive(Subcommand, Debug)]
 pub enum StatCommands {
     /// Print the current CPU statistics based on `/proc/stat`
-    #[cfg(unix)]
     Cpu,
     /// Print the current memory statistics
     Memory,
@@ -42,6 +41,53 @@ impl super::Command for Stat {
 
                 println!("{usage:.5}%");
             }
+            #[cfg(windows)]
+            StatCommands::Cpu => unsafe {
+                use windows::Win32::{Foundation::FILETIME, System::Threading::GetSystemTimes};
+
+                let mut idle1: FILETIME = std::mem::zeroed();
+                let mut kern1: FILETIME = std::mem::zeroed();
+                let mut user1: FILETIME = std::mem::zeroed();
+                let mut idle2: FILETIME = std::mem::zeroed();
+                let mut kern2: FILETIME = std::mem::zeroed();
+                let mut user2: FILETIME = std::mem::zeroed();
+
+                GetSystemTimes(
+                    Some(&mut idle1 as _),
+                    Some(&mut kern1 as _),
+                    Some(&mut user1 as _),
+                )?;
+
+                std::thread::sleep(std::time::Duration::from_millis(200));
+
+                GetSystemTimes(
+                    Some(&mut idle2 as _),
+                    Some(&mut kern2 as _),
+                    Some(&mut user2 as _),
+                )?;
+
+                fn merge_time(f: FILETIME) -> u64 {
+                    ((f.dwLowDateTime as u64) << 32) | (f.dwHighDateTime as u64)
+                }
+
+                let idle1 = merge_time(idle1);
+                let kern1 = merge_time(kern1);
+                let user1 = merge_time(user1);
+                let idle2 = merge_time(idle2);
+                let kern2 = merge_time(kern2);
+                let user2 = merge_time(user2);
+
+                let didle = idle2 - idle1;
+                let duser = user2 - user1;
+                let dkern = kern2 - kern1;
+
+                let dtotal = dkern + duser;
+                let dbusy = dtotal - didle;
+
+                let cpu_usage = 100.0 * (dbusy as f32) / (dtotal as f32);
+
+                println!("{cpu_usage:.1}");
+            },
             #[cfg(target_os = "linux")]
             StatCommands::Memory => {
                 let meminfo = std::fs::read_to_string("/proc/meminfo")?;
