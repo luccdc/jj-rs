@@ -16,7 +16,6 @@ pub enum StatCommands {
     #[cfg(unix)]
     Cpu,
     /// Print the current memory statistics
-    #[cfg(windows)]
     Memory,
 }
 
@@ -42,6 +41,29 @@ impl super::Command for Stat {
                 let usage = (user + system) * 100.0 / (user + system + idle);
 
                 println!("{usage:.5}%");
+            }
+            #[cfg(target_os = "linux")]
+            StatCommands::Memory => {
+                let meminfo = std::fs::read_to_string("/proc/meminfo")?;
+
+                let lines = meminfo.split("\n").collect::<Vec<_>>();
+
+                let total = pcre!(
+                    &(lines[0]) =~ m{r"^MemTotal: \s+ ([0-9]+) \s+ kB"}xms
+                )[0]
+                .extract::<1>()
+                .1[0];
+
+                let available = pcre!(
+                    &(lines[2]) =~ m{ r"^MemAvailable: \s+ ([0-9]+) \s+ kB" }xms
+                )[0]
+                .extract::<1>()
+                .1[0];
+
+                let total = total.parse::<u32>()? as f32;
+                let available = available.parse::<u32>()? as f32;
+
+                println!("{:.1}", (total - available) * 100.0 / total);
             }
             #[cfg(windows)]
             StatCommands::Memory => unsafe {
