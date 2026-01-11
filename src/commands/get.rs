@@ -44,7 +44,32 @@ impl super::Command for Get {
             path
         };
 
-        crate::utils::download_file(self.url.as_str(), path)?;
+        let mut target_file = std::fs::OpenOptions::new()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .open(&path)?;
+
+        let client = reqwest::blocking::Client::new();
+        let request = client.get(self.url.clone());
+
+        let request = if path.extension().map(|e| e == "zip").unwrap_or(false) {
+            request.header("accept", "application/zip")
+        } else {
+            request
+        };
+
+        let mut response = request.send()?;
+
+        if !response.status().is_success() {
+            eyre::bail!(
+                "Got response of {} when downloading {}",
+                response.status(),
+                self.url
+            );
+        }
+
+        response.copy_to(&mut target_file)?;
 
         println!("File successfully downloaded!");
 
