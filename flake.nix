@@ -109,6 +109,7 @@
             man-pages-posix
 
             cargo-expand
+            mold
           ];
 
           winDevShellTools = with pkgs;
