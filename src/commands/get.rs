@@ -9,6 +9,7 @@ pub struct Get {
     url: reqwest::Url,
 
     /// Filepath to store to. Defaults to filename in URL
+    /// If passed `-`, output is printed to standard out
     path: Option<PathBuf>,
 }
 
@@ -44,11 +45,17 @@ impl super::Command for Get {
             path
         };
 
-        let mut target_file = std::fs::OpenOptions::new()
-            .truncate(true)
-            .create(true)
-            .write(true)
-            .open(&path)?;
+        let mut output: Box<dyn std::io::Write> = if &*path == "-" {
+            Box::new(std::io::stdout())
+        } else {
+            Box::new(
+                std::fs::OpenOptions::new()
+                    .truncate(true)
+                    .create(true)
+                    .write(true)
+                    .open(&path)?,
+            )
+        };
 
         let client = reqwest::blocking::Client::new();
         let request = client.get(self.url.clone());
@@ -69,7 +76,7 @@ impl super::Command for Get {
             );
         }
 
-        response.copy_to(&mut target_file)?;
+        response.copy_to(&mut output)?;
 
         println!("File successfully downloaded!");
 
