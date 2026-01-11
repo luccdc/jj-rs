@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 accept-header = "0.2.3"
+ansi_term = "0.12.1"
 async-walkdir = "2.1.0"
 async_zip = { version = "0.0.18", features = ["deflate", "tokio"] }
 base64 = "0.22.1"

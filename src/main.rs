@@ -66,6 +66,10 @@ struct Cli {
 }
 
 fn main() -> eyre::Result<()> {
+    #[cfg(windows)]
+    if let Err(e) = ansi_term::enable_ansi_support() {
+        eprintln!("Could not enable ANSI colors");
+    }
     let cli = Cli::parse();
     color_eyre::install()?;
     cli.command.execute()
