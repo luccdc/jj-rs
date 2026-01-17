@@ -84,7 +84,7 @@
 
           pkgsStatic = pkgs.pkgsStatic;
 
-          libraries = [ libpcap-static ];
+          libraries = [ libpcap-static pkgs.mold ];
 
           windowsLibraries = (with pkgs; [
             pkgsCross.mingwW64.stdenv.cc
