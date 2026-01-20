@@ -3,7 +3,7 @@
 //! Utilities are built using the download container and package manager to download
 //! packages, and then use the package manager to further install packages
 
-use std::{net::Ipv4Addr, os::unix::fs::PermissionsExt};
+use std::{net::Ipv4Addr, ops::Not, os::unix::fs::PermissionsExt};
 
 use eyre::Context;
 use nix::{
@@ -11,8 +11,9 @@ use nix::{
     sched::{CloneFlags, unshare},
 };
 
-use crate::utils::{busybox::Busybox, download_container::DownloadContainer, system};
+use crate::utils::{busybox::Busybox, download_container::DownloadContainer, qx, system};
 
+#[derive(Debug)]
 pub enum DownloadSettings {
     NoContainer,
     Container {
@@ -27,6 +28,24 @@ pub fn install_apt_packages<S: AsRef<str>>(
     packages: &[S],
 ) -> eyre::Result<()> {
     unshare(CloneFlags::CLONE_NEWNS).context("Could not unshare to get mount namespace")?;
+
+    let package_list = qx("dpkg -l")?.1;
+
+    let packages = packages
+        .iter()
+        .flat_map(|p| {
+            package_list
+                .split('\n')
+                .any(|i| i.starts_with(&format!("ii  {}", p.as_ref())))
+                .not()
+                .then(|| p.as_ref())
+        })
+        .collect::<Vec<_>>();
+
+    if packages.is_empty() {
+        println!("All packages specified have already been installed!");
+        return Ok(());
+    }
 
     let bb = Busybox::new()?;
     let file_raw = bb.execute(&["mktemp"])?;
@@ -80,11 +99,7 @@ pub fn install_apt_packages<S: AsRef<str>>(
 
                 system(&format!(
                     "apt install --download-only -y {}",
-                    packages
-                        .iter()
-                        .map(AsRef::as_ref)
-                        .collect::<Vec<_>>()
-                        .join(" ")
+                    packages.join(" ")
                 ))?;
 
                 Ok(())
@@ -95,11 +110,7 @@ pub fn install_apt_packages<S: AsRef<str>>(
 
             system(&format!(
                 "apt install --download-only -y {}",
-                packages
-                    .iter()
-                    .map(AsRef::as_ref)
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                packages.join(" ")
             ))?;
         }
     }
@@ -131,7 +142,22 @@ pub fn install_dnf_packages<S: AsRef<str>>(
     let packages_dir_raw = bb.execute(&["mktemp", "-d"])?;
     let packages_dir = packages_dir_raw.trim();
 
-    dbg!(packages.iter().map(AsRef::as_ref).collect::<Vec<_>>());
+    let package_list = qx("rpm -qa")?.1;
+    let packages = packages
+        .iter()
+        .flat_map(|p| {
+            package_list
+                .split('\n')
+                .any(|i| i.starts_with(p.as_ref()))
+                .not()
+                .then(|| p.as_ref())
+        })
+        .collect::<Vec<_>>();
+
+    if packages.is_empty() {
+        println!("All packages specified have already been installed!");
+        return Ok(());
+    }
 
     match settings {
         DownloadSettings::Container { name, sneaky_ip } => {
@@ -141,14 +167,7 @@ pub fn install_dnf_packages<S: AsRef<str>>(
                 std::process::Command::new("/bin/sh")
                     .args([
                         "-c",
-                        &format!(
-                            "dnf download --resolve {}",
-                            packages
-                                .iter()
-                                .map(AsRef::as_ref)
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        ),
+                        &format!("dnf download --resolve {}", packages.join(" ")),
                     ])
                     .current_dir(&packages_dir)
                     .spawn()
@@ -163,14 +182,7 @@ pub fn install_dnf_packages<S: AsRef<str>>(
             std::process::Command::new("/bin/sh")
                 .args([
                     "-c",
-                    &format!(
-                        "dnf download --resolve {}",
-                        packages
-                            .iter()
-                            .map(AsRef::as_ref)
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    ),
+                    &format!("dnf download --resolve {}", packages.join(" ")),
                 ])
                 .current_dir(&packages_dir)
                 .spawn()
@@ -191,6 +203,8 @@ pub fn install_dnf_packages<S: AsRef<str>>(
         "dnf install -y {}",
         downloaded_package_paths.join(" ")
     ))?;
+
+    let _ = std::fs::remove_dir_all(&packages_dir)?;
 
     Ok(())
 }
