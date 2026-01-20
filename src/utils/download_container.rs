@@ -86,6 +86,9 @@ impl DownloadContainer {
     /// The `sneaky_ip` setting allows for the system to perform source NAT as that IP address.
     /// It will start to do ARP spoofing as that address to assist the local LAN in routing
     /// return traffic back. If unspecified, it will masquerade as the host IP address
+    ///
+    /// If sneaky_ip is not set but the environment variable SNEAKY_IP is available, that variable
+    /// will be used
     pub fn new(name: Option<String>, sneaky_ip: Option<Ipv4Addr>) -> eyre::Result<Self> {
         if !geteuid().is_root() {
             bail!("You must be root to make use of download container capabilities");
@@ -238,7 +241,13 @@ impl DownloadContainer {
         nft.exec(format!("add chain inet {ns_name} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}"), None)
             .context("Could not add sneaky chain")?;
 
-        match &sneaky_ip {
+        let sneaky_ip = sneaky_ip.or_else(|| {
+            std::env::var("SNEAKY_IP")
+                .ok()
+                .and_then(|var| var.parse::<Ipv4Addr>().ok())
+        });
+
+        match sneaky_ip {
             Some(ip) => {
                 nft.exec(
                     format!("add rule inet {ns_name} postrouting ip saddr {lan_ip} snat to {ip}"),
