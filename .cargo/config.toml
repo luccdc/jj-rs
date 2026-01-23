@@ -1,2 +1,5 @@
 [target.'cfg(target_os = "linux")']
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.x86_64-unknown-freebsd]
+linker = "x86_64-unknown-freebsd-clang"

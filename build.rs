@@ -26,5 +26,12 @@ fn main() -> std::io::Result<()> {
 
     println!("cargo:rerun-if-changed=src/commands/elk/dashboards");
 
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "freebsd" {
+        let freebsd_libs = std::env::var("FREEBSD_LIBS").unwrap();
+        println!("cargo:rustc-link-arg=--sysroot={freebsd_libs}");
+        println!("cargo:rustc-link-arg=-L{freebsd_libs}/lib");
+        println!("cargo:rustc-link-arg=-L{freebsd_libs}/usr/lib");
+    }
+
     Ok(())
 }
