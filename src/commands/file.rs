@@ -27,10 +27,6 @@ pub struct CommonArgs {
     #[arg(short = 'r', long = "recursive")]
     recursive_arg: bool,
 
-    /// Show hidden files
-    #[arg(short = 'a', long = "all")]
-    hidden_arg: bool,
-
     /// Only output changed files
     #[arg(short = 's', long = "short")]
     short_arg: bool,
@@ -84,6 +80,7 @@ impl SaveHashes {
 
 fn read_files(args: &CommonArgs, paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = Vec::new();
+    let mut more_dirs: Vec<PathBuf> = Vec::new();
 
     let abs_paths: Vec<PathBuf> = paths        
         .into_iter()
@@ -100,9 +97,17 @@ fn read_files(args: &CommonArgs, paths: Vec<PathBuf>) -> Vec<PathBuf> {
                     if p.is_file() {
                         files.push(p);
                     }
+                    else if args.recursive_arg && p.is_dir() {
+                        more_dirs.push(p);
+                    }
                 }
             }
         }
+    }
+
+    if args.recursive_arg && more_dirs.len() > 0 {
+        let mut new_files: Vec<PathBuf> = read_files(args, more_dirs);
+        files.append(&mut new_files);
     }
 
     files
