@@ -5,6 +5,7 @@ macro_rules! define_commands {
     ($mname:ident::$cname:ident { $($(#[$($attr:tt)*])* $([$($cfg:tt),+$(,)?])? $cmd:ident$(, $alias:ident)? => $mod:ident::$struct:ident),+$(,)? }) => {
         mod $mname {
             $(
+                $(#[$($attr)*])*
                 $($(
                     #[cfg($cfg)]
                 )*)?
@@ -31,6 +32,7 @@ macro_rules! define_commands {
 
                     match self {
                         $(
+                            $(#[$($attr)*])*
                             $($(
                                 #[cfg($cfg)]
                             )*)?

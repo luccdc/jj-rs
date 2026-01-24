@@ -52,7 +52,7 @@ impl Default for SshTroubleshooter {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl Troubleshooter for SshTroubleshooter {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         let distro = get_distro().context("could not load distribution for ssh check")?;
@@ -98,7 +98,7 @@ impl Troubleshooter for SshTroubleshooter {
     }
 }
 
-#[cfg(windows)]
+#[cfg(not(target_os = "linux"))]
 impl Troubleshooter for SshTroubleshooter {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         Ok(vec![

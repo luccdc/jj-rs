@@ -5,15 +5,15 @@ use crate::utils::{
     qx,
 };
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use crate::utils::systemd::{get_service_info, is_service_active};
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 struct SystemdServiceCheck {
     service_name: String,
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl CheckStep<'_> for SystemdServiceCheck {
     fn name(&self) -> &'static str {
         "Check systemd service"
@@ -57,19 +57,19 @@ impl CheckStep<'_> for SystemdServiceCheck {
 /// # use jj_rs::utils::checks::systemd_service_check;
 /// systemd_service_check("ssh");
 /// ```
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub fn systemd_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(SystemdServiceCheck {
         service_name: name.into(),
     })
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 struct OpenrcServiceCheck {
     service_name: String,
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl CheckStep<'_> for OpenrcServiceCheck {
     fn name(&self) -> &'static str {
         "Check openrc service"
@@ -107,7 +107,7 @@ impl CheckStep<'_> for OpenrcServiceCheck {
 /// # use jj_rs::utils::checks::openrc_service_check;
 /// openrc_service_check("ssh");
 /// ```
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub fn openrc_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(OpenrcServiceCheck {
         service_name: name.into(),

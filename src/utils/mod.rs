@@ -9,25 +9,25 @@ use eyre::Context;
 
 use std::{fs::OpenOptions, path::Path, process::ExitStatus};
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod busybox;
 pub mod checks;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod download_container;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod nft;
 pub mod os_version;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod pamtester;
 #[cfg(unix)]
 pub mod passwd;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod ports;
 #[allow(dead_code)]
 pub mod regex;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod systemd;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod tcpdump;
 
 /// Alias for Perl's qx

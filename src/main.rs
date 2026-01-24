@@ -20,32 +20,32 @@ mod utils;
 define_commands! {
     commands::Commands {
         // utility commands
-        [unix] DownloadShell, ds => download_shell::DownloadShell,
+        #[cfg(target_os = "linux")] DownloadShell, ds => download_shell::DownloadShell,
         Check, c => check::Check,
-        [unix] CheckDaemon, cd => check_daemon::CheckDaemon,
-        [unix] Elk => elk::Elk,
+        #[cfg(target_os = "linux")] CheckDaemon, cd => check_daemon::CheckDaemon,
+        #[cfg(target_os = "linux")] Elk => elk::Elk,
         Serve, s => serve::Serve,
         Get, g => get::Get,
 
         // sysinfo commands
-        [unix] Enum, e => r#enum::Enum,
-        [unix] Ports, p => ports::Ports,
+        #[cfg(target_os = "linux")] Enum, e => r#enum::Enum,
+        #[cfg(target_os = "linux")] Ports, p => ports::Ports,
         Stat, st => stat::Stat,
 
         // admin commands
         Backup, bu => backup::Backup,
-        [unix] Useradd, ua => useradd::Useradd,
-        [unix] Firewall, fw => firewall::Firewall,
-        [unix] Ssh => ssh::Ssh,
+        #[cfg(target_os = "linux")] Useradd, ua => useradd::Useradd,
+        #[cfg(target_os = "linux")] Firewall, fw => firewall::Firewall,
+        #[cfg(target_os = "linux")] Ssh => ssh::Ssh,
         File => file::File,
 
         // Embedded binaries
-        [unix] Nft => nft::Nft,
-        [unix] Jq => jq::Jq,
-        [unix] Tmux => tmux::Tmux,
-        [unix] Tcpdump, td => tcpdump::Tcpdump,
-        [unix] Zsh => zsh::Zsh,
-        [unix] Busybox, bb => busybox::Busybox,
+        #[cfg(target_os = "linux")] Nft => nft::Nft,
+        #[cfg(target_os = "linux")] Jq => jq::Jq,
+        #[cfg(target_os = "linux")] Tmux => tmux::Tmux,
+        #[cfg(target_os = "linux")] Tcpdump, td => tcpdump::Tcpdump,
+        #[cfg(target_os = "linux")] Zsh => zsh::Zsh,
+        #[cfg(target_os = "linux")] Busybox, bb => busybox::Busybox,
     }
 }
 

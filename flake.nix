@@ -2,7 +2,7 @@
   description = "Jiujitsu Rust";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
 
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -38,8 +38,27 @@
               builtins.elem (lib.getName pkg) [ "vagrant" ];
           };
 
-          libpcap-static = pkgs.stdenv.mkDerivation {
-            name = "libpcap-static";
+          freebsd-libs = let
+            rootxz = builtins.fetchTarball {
+              url =
+                "https://download.freebsd.org/releases/amd64/14.1-RELEASE/base.txz";
+              sha256 = "l9YQPyra0F4guqiI4rW5XsZxGP1Usy//nglUVFlqY1c=";
+            };
+          in pkgs.stdenv.mkDerivation {
+            name = "freebsd-14.1-sysroot";
+
+            buildInputs = with pkgs; [ gnutar ];
+
+            unpackPhase = ''
+              mkdir -p $out
+              tar xvJpf ${rootxz} -C $out ./usr/lib
+              tar xvJpf ${rootxz} -C $out ./usr/include
+              tar xvJpf ${rootxz} -C $out ./lib
+            '';
+          };
+
+          libpcap-static-musl-linux = pkgs.stdenv.mkDerivation {
+            name = "libpcap-static-musl-linux";
 
             buildInputs = with pkgs; [ clang automake bison cmake flex musl ];
 
@@ -72,6 +91,63 @@
             '';
           };
 
+          freebsd-toolchain = with pkgs.pkgsCross.x86_64-freebsd.buildPackages;
+            pkgs.writeText "freebsd-toolchain.cmake" ''
+              set(CMAKE_SYSTEM_NAME FreeBSD)
+
+              set(CMAKE_C_COMPILER   ${clang}/bin/x86_64-unknown-freebsd-clang)
+              set(CMAKE_CXX_COMPILER ${clang}/bin/x86_64-unknown-freebsd-clang++)
+
+              set(CMAKE_FIND_ROOT_PATH ${freebsd-libs})
+
+              set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+              set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+              set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+            '';
+
+          libpcap-freebsd = pkgs.stdenv.mkDerivation {
+            name = "libpcap-static-freebsd";
+
+            nativeBuildInputs =
+              with pkgs.pkgsCross.x86_64-freebsd.buildPackages; [
+                clang
+                lld
+                automake
+                bison
+                cmake
+                flex
+              ];
+
+            src = libpcap-src;
+
+            configurePhase = ''
+              export CC=x86_64-unknown-freebsd-clang
+              export CXX=x86_64-unknown-freebsd-clang++
+              cmake \
+                -DCMAKE_TOOLCHAIN_FILE=${freebsd-toolchain} \
+                -DCMAKE_BUILD_TYPE=MinSizeRel \
+                -DBUILD_SHARED_LIBS=OFF \
+                -DDISABLE_BLUETOOTH=ON \
+                -DDISABLE_DAG=ON \
+                -DDISABLE_DBUS=ON \
+                -DDISABLE_DPDK=ON \
+                -DDISABLE_RDMA=ON \
+                -DDISABLE_SNF=ON \
+                -DPCAP_TYPE=bpf \
+                .
+            '';
+
+            buildPhase = ''
+              cmake --build . --target pcap_static
+            '';
+
+            installPhase = ''
+              mkdir -p $out/lib
+
+              cp libpcap.a $out/lib
+            '';
+          };
+
           pamtester-gzipped = pkgs.runCommand "pamtster-gzipped" { } ''
             TEMP="$(mktemp -d)"
 
@@ -84,7 +160,7 @@
 
           pkgsStatic = pkgs.pkgsStatic;
 
-          libraries = [ libpcap-static pkgs.mold ];
+          libraries = [ libpcap-static-musl-linux pkgs.mold ];
 
           windowsLibraries = (with pkgs; [
             pkgsCross.mingwW64.stdenv.cc
@@ -115,6 +191,10 @@
           winDevShellTools = with pkgs;
             [ wineWow64Packages.minimal ] ++ windowsLibraries;
 
+          freebsdDevShellTools = with pkgs;
+            [ pkgsCross.x86_64-freebsd.buildPackages.clang ]
+            ++ wslDevShellTools;
+
           devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant ]);
 
           gzip-binary = name: binary:
@@ -140,7 +220,11 @@
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
             p.rust-bin.nightly.latest.default.override {
               extensions = [ "rust-src" ];
-              targets = [ "x86_64-unknown-linux-musl" "x86_64-pc-windows-gnu" ];
+              targets = [
+                "x86_64-unknown-linux-musl"
+                "x86_64-pc-windows-gnu"
+                "x86_64-unknown-freebsd"
+              ];
             });
 
           src = ./.;
@@ -288,6 +372,14 @@
               TCPDUMP_GZIPPED = tcpdump-gzipped;
               ZSH_GZIPPED = zsh-gzipped;
               PAMTESTER_GZIPPED = pamtester-gzipped;
+            });
+
+            freebsd = craneLib.devShell ({
+              name = "jj";
+
+              packages = freebsdDevShellTools ++ [ libpcap-freebsd ];
+
+              FREEBSD_LIBS = freebsd-libs;
             });
           };
         };

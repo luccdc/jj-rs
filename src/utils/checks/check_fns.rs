@@ -2,28 +2,28 @@
 //! includes building blocks for applying simple checks or applying filters
 //! to checks
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod binary_ports_check;
 mod check_fn;
 mod filter_check;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod immediate_tcpdump_check;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod pam_check;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod passive_tcpdump_check;
 mod service_checks;
 mod tcp_connect_check;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub use binary_ports_check::*;
 pub use check_fn::*;
 pub use filter_check::*;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub use immediate_tcpdump_check::*;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub use pam_check::*;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub use passive_tcpdump_check::*;
 pub use service_checks::*;
 pub use tcp_connect_check::*;

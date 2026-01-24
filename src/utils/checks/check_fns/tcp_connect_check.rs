@@ -4,7 +4,7 @@ use eyre::Context;
 
 use crate::utils::checks::{CheckResult, CheckStep, TroubleshooterRunner};
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use crate::utils::download_container::DownloadContainer;
 
 struct TcpConnectCheck {
@@ -17,7 +17,7 @@ impl CheckStep<'_> for TcpConnectCheck {
         "Check TCP port status"
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         let timeout = std::time::Duration::from_secs(2);
 
@@ -94,7 +94,7 @@ impl CheckStep<'_> for TcpConnectCheck {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(not(target_os = "linux"))]
     fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         let timeout = std::time::Duration::from_secs(2);
 
