@@ -302,15 +302,7 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
 fn generate_bundle(args: &WazuhSubcommandArgs, bb: &Busybox) -> eyre::Result<()> {
     println!("--- Generating Wazuh bundle...");
 
-    let routes = bb
-        .execute(&["ip", "route"])
-        .context("Could not query host routes")?;
-
-    let public_ip = pcre!(&routes =~ m/r"default[^\n]*src\s+([^\s]+)"/xms)
-        .get(0)
-        .ok_or(eyre!("Could not find default route and associated IP!"))?
-        .extract::<1>()
-        .1[0];
+    let public_ip = get_public_ip(bb)?;
 
     let mut config_yml = args.working_dir.to_owned();
     config_yml.push("config.yml");
@@ -713,15 +705,7 @@ fn install_filebeat(args: &WazuhSubcommandArgs, distro: &Distro, bb: &Busybox) -
 
     chown("/etc/filebeat/certs/", Some(0), Some(0))?;
 
-    let routes = bb
-        .execute(&["ip", "route"])
-        .context("Could not query host routes")?;
-
-    let public_ip = pcre!(&routes =~ m/r"default[^\n]*src\s+([^\s]+)"/xms)
-        .get(0)
-        .ok_or(eyre!("Could not find default route and associated IP!"))?
-        .extract::<1>()
-        .1[0];
+    let public_ip = get_public_ip(bb)?;
 
     let filebeat_config = std::fs::read_to_string("/etc/filebeat/filebeat.yml")
         .context("Could not read filebeat configuration")?;
@@ -881,15 +865,7 @@ fn install_dashboard(
         "/etc/wazuh-dashboard/opensearch_dashboards.yml.bak",
     )?;
 
-    let routes = bb
-        .execute(&["ip", "route"])
-        .context("Could not query host routes")?;
-
-    let public_ip = pcre!(&routes =~ m/r"default[^\n]*src\s+([^\s]+)"/xms)
-        .get(0)
-        .ok_or(eyre!("Could not find default route and associated IP!"))?
-        .extract::<1>()
-        .1[0];
+    let public_ip = get_public_ip(bb)?;
 
     let dashboard_config =
         std::fs::read_to_string("/etc/wazuh-dashboard/opensearch_dashboards.yml")
@@ -991,4 +967,29 @@ fn cleanup(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
 
 fn install_wazuh_agent(_args: WazuhAgentArgs) -> eyre::Result<()> {
     todo!()
+}
+
+fn get_public_ip(bb: &Busybox) -> eyre::Result<String> {
+    let routes = bb
+        .execute(&["ip", "route"])
+        .context("Could not query host routes")?;
+
+    let ips = bb
+        .execute(&["ip", "addr"])
+        .context("Could not query host addresses")?;
+
+    let default_dev = pcre!(&routes =~ m/r"default[^\n]*dev\s([^\s]+)"/xms)
+        .get(0)
+        .ok_or(eyre!("Could not find default route!"))?
+        .extract::<1>()
+        .1[0];
+
+    Ok(
+        pcre!(&ips =~ m{r"^[0-9]+:\s" default_dev r":\s.*?inet\s([^\s]+)"}xms)
+            .get(0)
+            .ok_or(eyre!("Could not find associated IP!"))?
+            .extract::<1>()
+            .1[0]
+            .to_string(),
+    )
 }
