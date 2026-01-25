@@ -29,6 +29,7 @@ define_commands! {
         [unix] DownloadShell, ds => download_shell::DownloadShell,
         [unix] CheckDaemon, cd => check_daemon::CheckDaemon,
         [unix] Elk => elk::Elk,
+        [unix] Wazuh, wz => wazuh::Wazuh,
 
         // sysinfo commands
         Stat, st => stat::Stat,
