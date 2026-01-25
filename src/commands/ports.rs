@@ -12,7 +12,7 @@ impl super::Command for Ports {
         let tcp_ports = ports::parse_net_tcp()?;
 
         println!(
-            "{:>10}:{:<10} {:>12}: Command line (Cgroup)",
+            "{:>15}:{:<10} {:>12}: Command line (Cgroup)",
             "Local addr", "Local port", "PID"
         );
 
@@ -28,7 +28,7 @@ impl super::Command for Ports {
             let cgroup = port.cgroup.map(|cg| format!("({cg})")).unwrap_or_default();
 
             println!(
-                "{:>10}:{:<10} {:>12}: {} {}",
+                "{:>15}:{:<10} {:>12}: {} {}",
                 port.local_address, port.local_port, pid, cmdline, cgroup
             );
         }

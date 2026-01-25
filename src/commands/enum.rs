@@ -14,8 +14,7 @@ impl super::Command for Enum {
         println!(
             "{}",
             qx(r"lscpu | grep -E '^(Core|Thread|CPU)\(s\)'")
-                .map(|(_, lscpu)| lscpu)
-                .unwrap_or_else(|_| "(unable to query cpu info)".to_string())
+                .map_or_else(|_| "(unable to query cpu info)".to_string(), |(_, lscpu)| lscpu)
         );
 
         println!("\n==== MEMORY/STORAGE INFO\n");
@@ -67,12 +66,47 @@ impl super::Command for Enum {
         }
 
         println!("\n--- At Job Spool Files");
-        let at_jobs = crate::utils::scheduling::get_at_jobs()?;
+        let at_jobs = crate::utils::scheduling::get_at_jobs();
         if at_jobs.is_empty() {
             println!("(no at jobs found)");
         } else {
             for job in at_jobs {
                 println!("{job}");
+            }
+        }
+
+        // Container Runtime Audit
+        println!("\n==== CONTAINER RUNTIMES\n");
+        let container_info = crate::utils::containers::get_container_summary();
+        if container_info.is_empty() {
+            println!("No active containers or common runtimes (Docker, Podman, LXC) detected.");
+        } else {
+            for info in container_info {
+                println!("{info}");
+            }
+        }
+
+        // Shell & Environment Audit
+        println!("\n==== SHELL ANOMALIES & ENVIRONMENT\n");
+        let env_alerts = crate::utils::shell_audit::audit_environment_variables();
+        if env_alerts.is_empty() {
+            println!("[-] No high-risk environment variables (LD_PRELOAD, etc.) detected.");
+        } else {
+            for alert in env_alerts {
+                println!("{alert}");
+            }
+        }
+
+        println!("--- Scanning shell configurations for persistence and shadowing...");
+        let shell_findings = crate::utils::shell_audit::scan_shell_configs()?;
+        if shell_findings.is_empty() {
+            println!("[-] No suspicious patterns found in global or user shell configs.");
+        } else {
+            for finding in shell_findings {
+                println!("[!] {} (User: {})", finding.path, finding.user);
+                for alert in finding.alerts {
+                    println!("    -> {alert}");
+                }
             }
         }
 
