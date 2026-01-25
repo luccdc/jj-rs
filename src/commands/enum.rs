@@ -30,10 +30,10 @@ impl super::Command for Enum {
         if keys.is_empty() {
             println!("No authorized_keys found.");
         } else {
-            println!("{:<12} | {:<20} | PATH", "USER", "COMMENT");
-            println!("{:-<12}-+-{:-<20}-+-{:-<30}", "", "", "");
+            println!("{:<12} | {:<30} | PATH", "USER", "COMMENT");
+            println!("{:-<12}-+-{:-<30}-+-{:-<30}", "", "", "");
             for key in keys {
-                println!("{:<12} | {:<20} | {}", key.user, key.comment, key.path);
+                println!("{:<12} | {:<30} | {}", key.user, key.comment, key.path);
             }
         }
 
