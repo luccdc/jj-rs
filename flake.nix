@@ -182,10 +182,7 @@
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
             BUSYBOX_GZIPPED = busybox-gzipped;
-            JQ_GZIPPED = jq-gzipped;
             NFT_GZIPPED = nft-gzipped;
-            TMUX_GZIPPED = tmux-gzipped;
-            TCPDUMP_GZIPPED = tcpdump-gzipped;
             ZSH_GZIPPED = zsh-gzipped;
             PAMTESTER_GZIPPED = pamtester-gzipped;
           };
@@ -279,10 +276,7 @@
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
               BUSYBOX_GZIPPED = busybox-gzipped;
-              JQ_GZIPPED = jq-gzipped;
               NFT_GZIPPED = nft-gzipped;
-              TMUX_GZIPPED = tmux-gzipped;
-              TCPDUMP_GZIPPED = tcpdump-gzipped;
               ZSH_GZIPPED = zsh-gzipped;
               PAMTESTER_GZIPPED = pamtester-gzipped;
             });
@@ -296,10 +290,7 @@
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
               BUSYBOX_GZIPPED = busybox-gzipped;
-              JQ_GZIPPED = jq-gzipped;
               NFT_GZIPPED = nft-gzipped;
-              TMUX_GZIPPED = tmux-gzipped;
-              TCPDUMP_GZIPPED = tcpdump-gzipped;
               ZSH_GZIPPED = zsh-gzipped;
               PAMTESTER_GZIPPED = pamtester-gzipped;
             });
@@ -313,10 +304,7 @@
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
               BUSYBOX_GZIPPED = busybox-gzipped;
-              JQ_GZIPPED = jq-gzipped;
               NFT_GZIPPED = nft-gzipped;
-              TMUX_GZIPPED = tmux-gzipped;
-              TCPDUMP_GZIPPED = tcpdump-gzipped;
               ZSH_GZIPPED = zsh-gzipped;
               PAMTESTER_GZIPPED = pamtester-gzipped;
             });

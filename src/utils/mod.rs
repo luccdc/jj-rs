@@ -27,8 +27,6 @@ pub mod ports;
 pub mod regex;
 #[cfg(unix)]
 pub mod systemd;
-#[cfg(unix)]
-pub mod tcpdump;
 
 /// Alias for Perl's qx
 ///

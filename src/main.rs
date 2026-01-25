@@ -41,9 +41,6 @@ define_commands! {
 
         // Embedded binaries
         [unix] Nft => nft::Nft,
-        [unix] Jq => jq::Jq,
-        [unix] Tmux => tmux::Tmux,
-        [unix] Tcpdump, td => tcpdump::Tcpdump,
         [unix] Zsh => zsh::Zsh,
         [unix] Busybox, bb => busybox::Busybox,
     }
