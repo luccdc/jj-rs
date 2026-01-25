@@ -21,16 +21,13 @@ pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
     let mut entries = Vec::new();
     let mut targets = Vec::new();
 
-    // System-wide
     if Path::new("/etc/crontab").exists() {
         targets.push(("root".to_string(), "/etc/crontab".to_string()));
     }
 
-    // Specify generic arguments to fix inference error E0283
     let users = load_users::<_, &str>(None)?;
-
-    // Common spool directories
     let spool_dirs = ["/var/spool/cron/crontabs", "/var/spool/cron"];
+    
     for dir in spool_dirs {
         for user in &users {
             let p = Path::new(dir).join(&user.user);
@@ -44,7 +41,6 @@ pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
         if let Ok(content) = std::fs::read_to_string(path) {
             for line in content.lines() {
                 let trimmed = line.trim();
-                // Skip comments, empty lines, and standard env vars
                 if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains('=') {
                     continue;
                 }
@@ -57,4 +53,21 @@ pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
     }
 
     Ok(entries)
+}
+
+/// List physical 'at' job files in common spool locations
+pub fn get_at_jobs() -> eyre::Result<Vec<String>> {
+    let mut jobs = Vec::new();
+    let spool_dirs = ["/var/spool/cron/atjobs", "/var/spool/atjobs", "/var/spool/at"];
+
+    for dir in spool_dirs {
+        if let Ok(read_dir) = std::fs::read_dir(dir) {
+            for entry in read_dir.flatten() {
+                if entry.path().is_file() {
+                    jobs.push(entry.path().to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    Ok(jobs)
 }
