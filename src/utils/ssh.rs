@@ -27,13 +27,15 @@ pub fn audit_sshd_config() -> Vec<String> {
     SSHD_CHECKS
         .iter()
         .filter_map(|(setting, risky_val)| {
-            content.lines().find(|l| {
-                let l = l.trim();
-                !l.starts_with('#')
-                    && l.to_lowercase().contains(&setting.to_lowercase())
-                    && l.to_lowercase().contains(risky_val)
-            })
-            .map(|_| format!("Potentially risky setting found: {setting} is {risky_val}"))
+            content
+                .lines()
+                .find(|l| {
+                    let l = l.trim();
+                    !l.starts_with('#')
+                        && l.to_lowercase().contains(&setting.to_lowercase())
+                        && l.to_lowercase().contains(risky_val)
+                })
+                .map(|_| format!("Potentially risky setting found: {setting} is {risky_val}"))
         })
         .collect()
 }

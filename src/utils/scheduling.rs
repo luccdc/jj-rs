@@ -9,14 +9,12 @@ pub struct CronEntry {
     pub command: String,
 }
 
-/// Get a list of active systemd timers
 pub fn get_active_timers() -> Vec<String> {
     qx("systemctl list-timers --all --no-pager --no-legend")
         .map(|(_, out)| out.lines().map(|l| l.trim().to_string()).collect())
         .unwrap_or_default()
 }
 
-/// Find and read crontabs, extracting non-commented command lines
 pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
     let mut entries = Vec::new();
     let mut targets = Vec::new();
@@ -27,7 +25,7 @@ pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
 
     let users = load_users::<_, &str>(None)?;
     let spool_dirs = ["/var/spool/cron/crontabs", "/var/spool/cron"];
-    
+
     for dir in spool_dirs {
         for user in &users {
             let p = Path::new(dir).join(&user.user);
@@ -51,14 +49,16 @@ pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
             }
         }
     }
-
     Ok(entries)
 }
 
-/// List physical 'at' job files in common spool locations
-pub fn get_at_jobs() -> eyre::Result<Vec<String>> {
+pub fn get_at_jobs() -> Vec<String> {
     let mut jobs = Vec::new();
-    let spool_dirs = ["/var/spool/cron/atjobs", "/var/spool/atjobs", "/var/spool/at"];
+    let spool_dirs = [
+        "/var/spool/cron/atjobs",
+        "/var/spool/atjobs",
+        "/var/spool/at",
+    ];
 
     for dir in spool_dirs {
         if let Ok(read_dir) = std::fs::read_dir(dir) {
@@ -69,5 +69,5 @@ pub fn get_at_jobs() -> eyre::Result<Vec<String>> {
             }
         }
     }
-    Ok(jobs)
+    jobs
 }

@@ -13,6 +13,8 @@ use std::{fs::OpenOptions, path::Path, process::ExitStatus};
 pub mod busybox;
 pub mod checks;
 #[cfg(unix)]
+pub mod containers;
+#[cfg(unix)]
 pub mod download_container;
 #[cfg(unix)]
 pub mod nft;
@@ -27,6 +29,8 @@ pub mod ports;
 pub mod regex;
 #[cfg(unix)]
 pub mod scheduling;
+#[cfg(unix)]
+pub mod shell_audit;
 #[cfg(unix)]
 pub mod ssh;
 #[cfg(unix)]
