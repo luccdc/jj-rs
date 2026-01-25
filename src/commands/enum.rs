@@ -11,16 +11,14 @@ impl super::Command for Enum {
         let bb = Busybox::new()?;
 
         println!("\n==== CPU INFO\n");
-
         println!(
             "{}",
             qx(r"lscpu | grep -E '^(Core|Thread|CPU)\(s\)'")
                 .map(|(_, lscpu)| lscpu)
-                .unwrap_or("(unable to query cpu info)".to_string())
+                .unwrap_or_else(|_| "(unable to query cpu info)".to_string())
         );
 
         println!("\n==== MEMORY/STORAGE INFO\n");
-
         bb.command("free").arg("-h").spawn()?.wait()?;
         println!("---");
         bb.command("df").arg("-h").spawn()?.wait()?;
@@ -33,8 +31,10 @@ impl super::Command for Enum {
         if keys.is_empty() {
             println!("No authorized_keys found.");
         } else {
+            println!("{:<12} | {:<20} | PATH", "USER", "COMMENT");
+            println!("{:-<12}-+-{:-<20}-+-{:-<30}", "", "", "");
             for key in keys {
-                println!("{:<15} | {:<2} keys | {}", key.user, key.key_count, key.path);
+                println!("{:<12} | {:<20} | {}", key.user, key.comment, key.path);
             }
         }
 
@@ -66,8 +66,17 @@ impl super::Command for Enum {
             }
         }
 
-        println!("\n==== PORTS INFO\n");
+        println!("\n--- At Job Spool Files");
+        let at_jobs = crate::utils::scheduling::get_at_jobs()?;
+        if at_jobs.is_empty() {
+            println!("(no at jobs found)");
+        } else {
+            for job in at_jobs {
+                println!("{job}");
+            }
+        }
 
+        println!("\n==== PORTS INFO\n");
         super::ports::Ports.execute()?;
 
         Ok(())
