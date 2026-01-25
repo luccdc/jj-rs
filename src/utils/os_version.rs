@@ -16,6 +16,8 @@ pub enum OsFamily {
     CentOS,
     Ubuntu,
     Arch,
+    Rocky,
+    Oracle,
     Other(String),
 }
 
@@ -50,6 +52,9 @@ impl From<&str> for OsFamily {
     fn from(s: &str) -> Self {
         let s = s.to_lowercase();
 
+        if s.contains("rhel") || s.contains("redhat") {
+            return OsFamily::RedHat;
+        }
         if s.contains("centos") {
             return OsFamily::CentOS;
         }
@@ -62,14 +67,17 @@ impl From<&str> for OsFamily {
         if s.contains("debian") {
             return OsFamily::Debian;
         }
-        if s.contains("rhel") || s.contains("redhat") {
-            return OsFamily::RedHat;
-        }
         if s.contains("alpine") {
             return OsFamily::Alpine;
         }
         if s.contains("arch") {
             return OsFamily::Arch;
+        }
+        if s.contains("rocky") {
+            return OsFamily::Rocky;
+        }
+        if s.contains("oracle") {
+            return OsFamily::Oracle;
         }
 
         OsFamily::Other(s)

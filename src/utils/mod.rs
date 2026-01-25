@@ -18,6 +18,8 @@ pub mod download_container;
 pub mod nft;
 pub mod os_version;
 #[cfg(unix)]
+pub mod packages;
+#[cfg(unix)]
 pub mod pamtester;
 #[cfg(unix)]
 pub mod passwd;
