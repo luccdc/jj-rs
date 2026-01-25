@@ -26,6 +26,10 @@ pub mod ports;
 #[allow(dead_code)]
 pub mod regex;
 #[cfg(unix)]
+pub mod scheduling;
+#[cfg(unix)]
+pub mod ssh;
+#[cfg(unix)]
 pub mod systemd;
 
 /// Alias for Perl's qx

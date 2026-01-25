@@ -25,6 +25,47 @@ impl super::Command for Enum {
         println!("---");
         bb.command("df").arg("-h").spawn()?.wait()?;
 
+        println!("\n==== SSH AUDIT\n");
+        for warning in crate::utils::ssh::audit_sshd_config() {
+            println!("[!] {warning}");
+        }
+        let keys = crate::utils::ssh::get_user_keys()?;
+        if keys.is_empty() {
+            println!("No authorized_keys found.");
+        } else {
+            for key in keys {
+                println!("{:<15} | {:<2} keys | {}", key.user, key.key_count, key.path);
+            }
+        }
+
+        println!("\n==== SCHEDULED TASKS\n");
+        println!("--- Systemd Timers");
+        let timers = crate::utils::scheduling::get_active_timers();
+        if timers.is_empty() {
+            println!("(none found)");
+        } else {
+            for timer in timers.iter().take(10) {
+                println!("{timer}");
+            }
+        }
+
+        println!("\n--- Active Crontab Commands");
+        let crons = crate::utils::scheduling::get_cron_entries()?;
+        if crons.is_empty() {
+            println!("(no active cron commands found)");
+        } else {
+            println!("{:<12} | COMMAND", "USER");
+            println!("{:-<12}-+-{:-<40}", "", "");
+            for entry in crons {
+                let cmd = if entry.command.len() > 60 {
+                    format!("{}...", &entry.command[..57])
+                } else {
+                    entry.command
+                };
+                println!("{:<12} | {cmd}", entry.user);
+            }
+        }
+
         println!("\n==== PORTS INFO\n");
 
         super::ports::Ports.execute()?;
