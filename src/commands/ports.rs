@@ -5,7 +5,10 @@ use crate::utils::ports::{self, SocketState};
 /// Enumerate open ports and services on the system
 #[derive(Parser, Debug)]
 #[command(version, about)]
-pub struct Ports;
+pub struct Ports {
+    #[arg(long, short = 'c')]
+    pub display_cmdline: bool,
+}
 
 impl super::Command for Ports {
     fn execute(self) -> eyre::Result<()> {
@@ -25,11 +28,16 @@ impl super::Command for Ports {
                 .pid
                 .map_or("unknown".to_string(), |pid| pid.to_string());
             let cmdline = port.cmdline.clone().unwrap_or_default();
+            let exe = port.exe.clone().unwrap_or_default();
             let cgroup = port.cgroup.map(|cg| format!("({cg})")).unwrap_or_default();
 
             println!(
                 "{:>15}:{:<10} {:>12}: {} {}",
-                port.local_address, port.local_port, pid, cmdline, cgroup
+                port.local_address,
+                port.local_port,
+                pid,
+                if self.display_cmdline { cmdline } else { exe },
+                cgroup
             );
         }
 

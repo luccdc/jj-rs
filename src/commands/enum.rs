@@ -4,7 +4,10 @@ use crate::utils::{busybox::Busybox, qx};
 
 /// Perform basic enumeration of the system
 #[derive(Parser, Debug)]
-pub struct Enum;
+pub struct Enum {
+    #[arg(long, short = 'c')]
+    display_cmdline: bool,
+}
 
 impl super::Command for Enum {
     fn execute(self) -> eyre::Result<()> {
@@ -111,7 +114,10 @@ impl super::Command for Enum {
         }
 
         println!("\n==== PORTS INFO\n");
-        super::ports::Ports.execute()?;
+        super::ports::Ports {
+            display_cmdline: self.display_cmdline,
+        }
+        .execute()?;
 
         Ok(())
     }
