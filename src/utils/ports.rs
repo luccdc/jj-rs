@@ -81,6 +81,7 @@ pub struct SocketRecord {
     pub state: SocketState,
     pub inode: u64,
     pub pid: Option<u64>,
+    pub exe: Option<String>,
     pub cmdline: Option<String>,
     pub cgroup: Option<String>,
 }
@@ -222,6 +223,7 @@ where
                     state: u8::from_str_radix(stat, 16)?.into(),
                     inode,
                     pid: None,
+                    exe: None,
                     cmdline: None,
                     cgroup: None,
                 })
@@ -254,10 +256,15 @@ pub fn enrich_ip_stats(
                 .and_then(|p| std::fs::read_to_string(format!("/proc/{p}/cgroup")).ok())
                 .map(|cg| cg.trim_end().to_string());
 
+            let exe = pid
+                .and_then(|p| readlink(&*format!("/proc/{p}/exe")).ok())
+                .map(|e| e.to_string_lossy().trim_end().to_string());
+
             SocketRecord {
                 pid,
                 cmdline,
                 cgroup,
+                exe,
                 ..stat
             }
         })
