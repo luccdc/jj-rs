@@ -1,7 +1,6 @@
 use std::{
-    fs::{File, copy, exists},
-    io::{Read, Write},
-    path::PathBuf,
+    fs::{File, copy, exists, create_dir_all, rename},
+    path::{Path, PathBuf},
 };
 
 use clap::Parser;
@@ -37,10 +36,6 @@ impl std::str::FromStr for ArchiveFormat {
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct Backup {
-    /// Temporary backup location used when creating initial archive before copying
-    #[cfg_attr(unix, arg(long, default_value = "/tmp/i.tgz"))]
-    #[cfg_attr(windows, arg(long, default_value = r"C:\i.zip"))]
-    temp_tarball: String,
 
     /// Paths to save data to
     #[cfg_attr(unix, arg(short, long, default_values_t = strvec!["/var/games/.luanti.tgz"]))]
@@ -60,28 +55,93 @@ pub struct Backup {
 
 impl super::Command for Backup {
     fn execute(self) -> eyre::Result<()> {
-        match self.archive_format {
-            ArchiveFormat::Zip => self.backup_zip(),
-            ArchiveFormat::GzipTar => self.backup_tarball(),
-        }?;
-
-        for backup in &self.tarballs {
-            println!("Copying backup to {backup}...");
-            copy(&self.temp_tarball, backup)?;
+        if self.tarballs.is_empty() {
+            eyre::bail!("No destination tarballs provided.");
         }
 
-        println!("Done with file backups!");
+        let primary_target = PathBuf::from(&self.tarballs[0]);
+        let primary_parent = primary_target.parent().unwrap_or(Path::new("."));
+        
+        println!("{} Pre-flight checks...", "---".blue());
+        create_dir_all(primary_parent).context("Could not create destination directory")?;
+        
+        let estimated_size = self.get_total_source_size();
+        #[cfg(unix)]
+        Self::check_disk_space(&primary_target, estimated_size)?;
 
+        // Staging: Write to a .part file in the final destination directory
+        let mut staging_path = primary_target.clone();
+        staging_path.set_extension(format!(
+            "{}.part", 
+            primary_target.extension().and_then(|e| e.to_str()).unwrap_or("tmp")
+        ));
+
+        match self.archive_format {
+            ArchiveFormat::Zip => self.backup_zip(&staging_path),
+            ArchiveFormat::GzipTar => self.backup_tarball(&staging_path),
+        }?;
+
+        // Atomic Rename
+        println!("Finalizing primary backup...");
+        rename(&staging_path, &primary_target).context("Failed to finalize backup file")?;
+
+        // Copy to secondary targets
+        for backup in self.tarballs.iter().skip(1) {
+            let path = Path::new(backup);
+            if let Some(parent) = path.parent() {
+                create_dir_all(parent).ok();
+            }
+            println!("Copying backup to {backup}...");
+            copy(&primary_target, backup)?;
+        }
+
+        println!("{}", "Done with file backups!".green().bold());
         Ok(())
     }
 }
 
 impl Backup {
-    fn backup_zip(&self) -> eyre::Result<()> {
+    fn get_total_source_size(&self) -> u64 {
+        let mut total = 0;
+        let mut paths = self.paths.clone();
+        #[cfg(unix)]
+        paths.extend(vec!["/etc", "/var/lib", "/var/www", "/lib/systemd", "/usr/lib/systemd", "/opt"].into_iter().map(String::from));
+
+        for path in paths {
+            for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.is_file() {
+                        total += meta.len();
+                    }
+                }
+            }
+        }
+        total
+    }
+
+    #[cfg(unix)]
+    fn check_disk_space(path: &Path, required_bytes: u64) -> eyre::Result<()> {
+        use nix::sys::statvfs::statvfs;
+        let parent = path.parent().unwrap_or(Path::new("."));
+        let stats = statvfs(parent).context("Failed to check disk space")?;
+        let available = stats.blocks_available() * stats.fragment_size();
+        
+        // Safety margin of 5% to avoid pinning the disk at 100%
+        if available < (required_bytes + (required_bytes / 20)) {
+            eyre::bail!(
+                "Insufficient space on {}: need ~{}MB, have {}MB", 
+                parent.display(), 
+                required_bytes / 1024 / 1024, 
+                available / 1024 / 1024
+            );
+        }
+        Ok(())
+    }
+
+    fn backup_zip(&self, output_path: &Path) -> eyre::Result<()> {
         println!("Creating source zip...");
 
-        let initial_tarball =
-            File::create(&self.temp_tarball).context("Could not create tarball")?;
+        let initial_tarball = File::create(output_path).context("Could not create archive file")?;
         let mut archive = zip::ZipWriter::new(initial_tarball);
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
@@ -101,8 +161,6 @@ impl Backup {
 
         let mut paths_ref = self.paths.iter().map(|p| &**p).collect::<Vec<_>>();
         paths_ref.extend_from_slice(static_paths);
-
-        let mut buffer = Vec::new();
 
         for path in paths_ref {
             if !exists(path).unwrap_or(false) {
@@ -127,13 +185,10 @@ impl Backup {
                         continue;
                     };
 
-                    let Ok(_) = file.read_to_end(&mut buffer) else {
-                        println!("{}", "Err!".red());
+                    if let Err(e) = std::io::copy(&mut file, &mut archive) {
+                        println!("{}: {}", "Err writing to zip".red(), e);
                         continue;
-                    };
-
-                    archive.write_all(&buffer)?;
-                    buffer.clear();
+                    }
 
                     println!("{}", "OK".green());
                 } else if entry.path().is_dir() {
@@ -147,11 +202,10 @@ impl Backup {
         Ok(())
     }
 
-    fn backup_tarball(&self) -> eyre::Result<()> {
+    fn backup_tarball(&self, output_path: &Path) -> eyre::Result<()> {
         println!("Creating source tarball...");
 
-        let initial_tarball =
-            File::create(&self.temp_tarball).context("Could not create tarball")?;
+        let initial_tarball = File::create(output_path).context("Could not create archive file")?;
         let encoder = GzEncoder::new(initial_tarball, Compression::default());
         let mut archive = Builder::new(encoder);
 
@@ -182,8 +236,8 @@ impl Backup {
                     continue;
                 };
                 print!("{}... ", entry.path().display());
-                let path = PathBuf::from(entry.path().to_string_lossy().trim_start_matches('/'));
-                let Ok(()) = archive.append_file(path, &mut file) else {
+                let archive_path = entry.path().strip_prefix("/").unwrap_or(entry.path());
+                let Ok(()) = archive.append_file(archive_path, &mut file) else {
                     println!("{}", "Err!".red());
                     continue;
                 };
