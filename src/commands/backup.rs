@@ -238,13 +238,17 @@ impl Backup {
             println!("{} {}", "--- Adding ".green(), path.green());
 
             for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+                if !entry.path().is_file() {
+                    continue;
+                }
                 let Ok(mut file) = File::open(entry.path()) else {
                     continue;
                 };
                 print!("{}... ", entry.path().display());
-                let archive_path = entry.path().strip_prefix("/").unwrap_or_else(|_| {
-                    entry.path().strip_prefix(r"C:\").unwrap_or(entry.path())
-                });
+                let archive_path = entry
+                    .path()
+                    .strip_prefix("/")
+                    .unwrap_or_else(|_| entry.path().strip_prefix(r"C:\").unwrap_or(entry.path()));
                 let Ok(()) = archive.append_file(archive_path, &mut file) else {
                     println!("{}", "Err!".red());
                     continue;
