@@ -34,7 +34,8 @@ impl Distro {
     }
 
     pub fn is_rhel_based(&self) -> bool {
-        matches!(self.root_family, OsFamily::RedHat)
+        // Fedora doesn't register itself as RHEL based
+        matches!(self.root_family, OsFamily::RedHat | OsFamily::Fedora)
     }
 
     pub fn is_rhel_or_deb_based(&self) -> bool {
