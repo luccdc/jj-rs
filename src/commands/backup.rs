@@ -60,7 +60,10 @@ impl super::Command for Backup {
         }
 
         let primary_target = PathBuf::from(&self.tarballs[0]);
-        let primary_parent = primary_target.parent().unwrap_or(Path::new("."));
+        let primary_parent = primary_target
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         
         println!("{} Pre-flight checks...", "---".blue());
         create_dir_all(primary_parent).context("Could not create destination directory")?;
@@ -122,7 +125,10 @@ impl Backup {
     #[cfg(unix)]
     fn check_disk_space(path: &Path, required_bytes: u64) -> eyre::Result<()> {
         use nix::sys::statvfs::statvfs;
-        let parent = path.parent().unwrap_or(Path::new("."));
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         let stats = statvfs(parent).context("Failed to check disk space")?;
         let available = stats.blocks_available() * stats.fragment_size();
         
