@@ -28,6 +28,7 @@ pub mod passwd;
 pub mod ports;
 #[allow(dead_code)]
 pub mod regex;
+pub mod system;
 #[cfg(unix)]
 pub mod scheduling;
 #[cfg(unix)]
