@@ -1,6 +1,11 @@
 {
   description = "Jiujitsu Rust";
 
+  nixConfig = {
+    extra-substituters = [ "https://judah-sotomayor.cachix.org" ];
+    extra-trusted-public-keys = [ "judah-sotomayor.cachix.org-1:I9crtW1ZCPXiklcGAbK/31DQ7T8tSHvQ3Akxx3Brzbc="];
+  };
+
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
@@ -34,8 +39,12 @@
           pkgs = import self.inputs.nixpkgs {
             inherit system;
             overlays = [ (import rust-overlay) ];
-            config.allowUnfreePredicate = pkg:
+            config = {
+              allowUnfreePredicate = pkg:
               builtins.elem (lib.getName pkg) [ "vagrant" ];
+
+            };
+            
           };
 
           # Cross compilation requires using a different nixpkgs, and setting up
