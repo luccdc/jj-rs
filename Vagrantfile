@@ -2,7 +2,7 @@
 # vi: set ft=ruby :
 
 $set_environment_variables = <<SCRIPT
-ln -s /jj/x86_64-unknown-linux-musl/debug/jj-rs /usr/local/bin/jj-rs
+ln -s /jj/x86_64-unknown-linux-musl/debug/jj-rs /usr/local/bin/jj
 SCRIPT
 
 Vagrant.configure("2") do |config|

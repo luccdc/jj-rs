@@ -4,7 +4,7 @@
 //! The basic idea surrounds a Troubleshooter and its Checks. A Troubleshooter will
 //! require configuration to make, so it is defined as a struct with the required
 //! configuration options. This will usually derive both [`serde::Deserialize`] and
-//! [`clap::Parser`] so that it can be used by the `jj-rs check` command as well as
+//! [`clap::Parser`] so that it can be used by the `jj check` command as well as
 //! the the daemon reading from a configuration file. As an example, here is a
 //! configuration for an SSH troubleshooter
 //!
@@ -126,7 +126,7 @@ use super::qx;
 /// Or as an argument to a check:
 ///
 /// ```bash
-/// jj-rs check ssh -p :FILE:/var/password
+/// jj check ssh -p :FILE:/var/password
 /// ```
 ///
 /// Then, in source code you can use the following:

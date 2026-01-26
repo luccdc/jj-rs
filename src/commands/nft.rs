@@ -7,7 +7,7 @@ use crate::utils::nft;
 /// Use it by specifying -- and then arguments to pass to nft, e.g.:
 ///
 /// ```sh
-/// jj-rs nft -- ls -al
+/// jj nft -- ls -al
 /// ```
 #[derive(Parser, Debug)]
 #[command(version, about)]

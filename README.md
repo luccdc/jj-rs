@@ -14,17 +14,28 @@ A generic swiss army knife tool that is meant to be easily deployed to a system 
 
 ## Installing
 
+
 To install on Linux, simply download the latest release and move it to `/usr/bin`:
 ``` sh
-wget -O /tmp/jj-rs https://github.com/luccdc/jj-rs/releases/latest/download/jj-rs
-install -m755 /tmp/jj-rs /usr/bin/jj
+wget -O /tmp/jj https://github.com/luccdc/jj-rs/releases/latest/download/jj
+install -m755 /tmp/jj /usr/bin/jj
 ```
 
 To install on Windows, simply download the latest release and run from `cmd` or `powershell`:
 
 ``` powershell
-Start-BitsTransfer https://github.com/luccdc/jj-rs/releases/latest/download/jj-rs.exe C:\Windows\System32\jj.exe
+Start-BitsTransfer https://github.com/luccdc/jj-rs/releases/latest/download/jj.exe C:\Windows\System32\jj.exe
 ```
+
+This repository also produces tarballs that bundle a number of useful static-linked sysadmin tools.
+To install:
+``` sh
+wget -O /tmp/jj.tgz https://github.com/luccdc/jj-rs/releases/latest/download/jj.tgz
+tar -xf /tmp/jj.tgz
+./install.sh [install-prefix]
+```
+
+`install.sh` will move the binaries into `$PREFIX`, which defaults to /jj, and then attempts to add the prefix to your path by editing your bashrc.
 
 ## Getting set up for development
 
@@ -48,10 +59,10 @@ Given the nature of this project, it is inadvisable to test directly on your own
 
 ### Using Vagrant
 
-This project has a Vagrantfile with `rocky9`, `ubuntu24.04`, `debian12`, and `alpine`. Just run `vagrant up $BOX_NAME` followed by `vagrant ssh $BOX_NAME` and then you can run `jj-rs` from inside the machine. To run it with `sudo`, sometimes you may want to use:
+This project has a Vagrantfile with `rocky9`, `ubuntu24.04`, `debian12`, and `alpine`. Just run `vagrant up $BOX_NAME` followed by `vagrant ssh $BOX_NAME` and then you can run `jj` from inside the machine. To run it with `sudo`, sometimes you may want to use:
 
 ``` sh
-sudo `which jj-rs`
+sudo `which jj`
 ```
 
 ### Using Docker
@@ -63,7 +74,7 @@ To use Docker to test a command, run one of the following:
 - `docker compose run ubuntu22.04`
 - `docker compose run alpine`
 
-Inside the docker container, you will be able to run `jj-rs` as root
+Inside the docker container, you will be able to run `jj` as root
 
 ## Programming in Rust
 
@@ -208,7 +219,7 @@ fn do_the_thing() -> eyre::Result<()> {
 ## Async vs sync Rust
 
 Asynchronous rust should not be used as a first choice. It will be used in the following cases:
-1. Programming commands or utilities that are web servers or clients, since the web ecosystem is heavily intertwined with async Rust (e.g., `jj-rs serve`: [./src/commands/serve.rs](./src/commands/serve.rs))
+1. Programming commands or utilities that are web servers or clients, since the web ecosystem is heavily intertwined with async Rust (e.g., `jj serve`: [./src/commands/serve.rs](./src/commands/serve.rs))
 2. Programming a utility that needs a timeout but does not provide such a function in synchronous Rust, but does provide a selectable asynchronous API (e.g., `PassiveTcpdumpCheck::run_check`: [./src/utils/checks/check_fns.rs](./src/utils/checks/check_fns.rs))
 
 ## Documentation

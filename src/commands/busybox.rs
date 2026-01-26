@@ -7,7 +7,7 @@ use crate::utils::busybox;
 /// Use it by specifying -- and then arguments to pass to busybox, e.g.:
 ///
 /// ```sh
-/// jj-rs busybox -- ls -al
+/// jj busybox -- ls -al
 /// ```
 #[derive(Parser, Debug)]
 #[command(version, about)]

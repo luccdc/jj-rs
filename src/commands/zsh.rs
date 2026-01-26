@@ -28,7 +28,7 @@ use crate::utils::busybox::str_to_cstr;
 /// Use it by specifying -- and then arguments to pass to zsh, e.g.:
 ///
 /// ```sh
-/// exec jj-rs zsh
+/// exec jj zsh
 /// ```
 #[derive(Parser, Debug)]
 #[command(version, about)]
