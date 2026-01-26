@@ -16,6 +16,8 @@ pub enum StatCommands {
     Cpu,
     /// Print the current memory statistics
     Memory,
+    /// Print disk utilization for the main drive (/ on unix, C:\ on Windows)
+    Disk,
 }
 
 impl super::Command for Stat {
@@ -124,6 +126,27 @@ impl super::Command for Stat {
                 GlobalMemoryStatusEx(&mut memory as _)?;
 
                 println!("{}", memory.dwMemoryLoad);
+            },
+            #[cfg(unix)]
+            StatCommands::Disk => {
+                let stats = nix::sys::statvfs::statvfs("/")?;
+                let disk_usage = stats.blocks() as f64 / stats.blocks_free() as f64;
+                println!("{disk_usage}");
+            }
+            #[cfg(windows)]
+            StatCommands::Disk => unsafe {
+                let mut total = 0u64;
+                let mut free = 0u64;
+
+                windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExA(
+                    windows_core::s!(r"C:\"),
+                    None,
+                    Some(&mut total as _),
+                    Some(&mut free as _),
+                )?;
+
+                let disk_usage = total as f64 / free as f64;
+                println!("{disk_usage}");
             },
         }
 
