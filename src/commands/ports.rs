@@ -1,8 +1,7 @@
 use clap::Parser;
-
+use std::fmt::Write as _; // Required for writeln! on String
 use crate::utils::ports::{self, SocketState};
 
-/// Enumerate open ports and services on the system
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct Ports {
@@ -12,35 +11,39 @@ pub struct Ports {
 
 impl super::Command for Ports {
     fn execute(self) -> eyre::Result<()> {
+        let output = self.get_output()?;
+        print!("{output}");
+        Ok(())
+    }
+}
+
+impl Ports {
+    pub fn get_output(self) -> eyre::Result<String> {
+        let mut out = String::new();
         let tcp_ports = ports::parse_net_tcp()?;
 
-        println!(
-            "{:>15}:{:<10} {:>12}: Command line (Cgroup)",
-            "Local addr", "Local port", "PID"
-        );
+        writeln!(out, "{:>15}:{:<10} {:>12}: Command line (Cgroup)", "Local addr", "Local port", "PID")?;
 
         for port in tcp_ports {
             if port.state != SocketState::LISTEN {
                 continue;
             }
 
-            let pid = port
-                .pid
-                .map_or("unknown".to_string(), |pid| pid.to_string());
+            let pid = port.pid.map_or("unknown".to_string(), |pid| pid.to_string());
             let cmdline = port.cmdline.clone().unwrap_or_default();
             let exe = port.exe.clone().unwrap_or_default();
             let cgroup = port.cgroup.map(|cg| format!("({cg})")).unwrap_or_default();
 
-            println!(
+            writeln!(
+                out,
                 "{:>15}:{:<10} {:>12}: {} {}",
                 port.local_address,
                 port.local_port,
                 pid,
                 if self.display_cmdline { cmdline } else { exe },
                 cgroup
-            );
+            )?;
         }
-
-        Ok(())
+        Ok(out)
     }
 }
