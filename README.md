@@ -37,6 +37,8 @@ Start-BitsTransfer https://github.com/luccdc/jj-rs/releases/latest/download/jj-r
 5. Enable [Flake support](https://nixos.wiki/wiki/Flakes), usually by adding `experimental-features = nix-command flakes` to either `~/.config/nix/nix.conf` or `/etc/nix/nix.conf` and restarting the `nix` daemon
 6. Run `nix develop` in this folder (should take about 4 or 5 minutes the first time as it downloads dependencies, and 5-10 seconds afterwards)
    1. If you are on WSL, use `nix develop .#wsl` instead
+   2. Nix will prompt you to ask if you want to allow `judah-sotomayor.cachix.org` as a substituter.
+      Respond Y to this and to the public keys prompt if you want to take advantage of caching. This greatly speeds up compile time.
 
 ## Building and testing
 
