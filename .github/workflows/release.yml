@@ -19,7 +19,7 @@ jobs:
           name: judah-sotomayor
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - name: Run `nix build`
-        run: nix build .#default .#tools-tarball
+        run: nix build .#default
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
