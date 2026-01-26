@@ -3,84 +3,119 @@
 use crate::utils::qx;
 use walkdir::WalkDir;
 
-/// Returns a list of summaries for running containers across various runtimes.
-pub fn get_container_summary() -> Vec<String> {
-    let mut summaries = Vec::new();
+/// Unified structure for any container found on the system
+pub struct Container {
+    pub runtime: String,   // e.g., "Docker", "Podman", "Containerd (default)"
+    pub id: String,
+    pub image: String,
+    pub status: String,    // e.g., "Up 2 hours", "Created"
+    pub name: String,      // Container name or extra info
+    pub namespace: Option<String>, // Specifically for containerd namespaces
+}
 
-    // Check Docker
+/// Discovers running containers across Docker, Podman, LXC, and Containerd
+pub fn get_containers() -> Vec<Container> {
+    let mut results = Vec::new();
+
+    // --- Check Docker ---
+    // Format: ID|Image|Status|Names
     if let Ok((status, output)) =
-        qx("docker ps --format '{{.Names}} [{{.Image}}] {{.Ports}}' --no-trunc")
+        qx("docker ps --format '{{.ID}}|{{.Image}}|{{.Status}}|{{.Names}}' --no-trunc")
         && status.success()
     {
-        let lines: Vec<_> = output.lines().filter(|l| !l.trim().is_empty()).collect();
-        if lines.is_empty() {
-            summaries.push(
-                "Docker: Engine active, but no containers are currently running.".to_string(),
-            );
-        } else {
-            summaries.push(format!(
-                "Docker: Found {} active container(s):",
-                lines.len()
-            ));
-            for line in lines {
-                summaries.push(format!("  [+] {line}"));
+        for line in output.lines().filter(|l| !l.trim().is_empty()) {
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 4 {
+                results.push(Container {
+                    runtime: "Docker".to_string(),
+                    id: parts[0].to_string(),
+                    image: parts[1].to_string(),
+                    status: parts[2].to_string(),
+                    name: parts[3].to_string(),
+                    namespace: None,
+                });
             }
         }
     }
 
-    // Check Podman
+    // --- Check Podman ---
     if let Ok((status, output)) =
-        qx("podman ps --format '{{.Names}} [{{.Image}}] {{.Ports}}' --no-trunc")
+        qx("podman ps --format '{{.ID}}|{{.Image}}|{{.Status}}|{{.Names}}' --no-trunc")
         && status.success()
     {
-        let lines: Vec<_> = output.lines().filter(|l| !l.trim().is_empty()).collect();
-        if lines.is_empty() {
-            summaries.push(
-                "Podman: Engine active, but no containers are currently running.".to_string(),
-            );
-        } else {
-            summaries.push(format!(
-                "Podman: Found {} active container(s):",
-                lines.len()
-            ));
-            for line in lines {
-                summaries.push(format!("  [+] {line}"));
+        for line in output.lines().filter(|l| !l.trim().is_empty()) {
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 4 {
+                results.push(Container {
+                    runtime: "Podman".to_string(),
+                    id: parts[0].to_string(),
+                    image: parts[1].to_string(),
+                    status: parts[2].to_string(),
+                    name: parts[3].to_string(),
+                    namespace: None,
+                });
             }
         }
     }
 
-    // Check LXC
+    // --- Check LXC ---
+    // Format: NAME,STATE,IPV4
     if let Ok((status, output)) = qx("lxc list --format csv -c n,s,4")
         && status.success()
     {
-        let lines: Vec<_> = output.lines().filter(|l| !l.trim().is_empty()).collect();
-        if lines.is_empty() {
-            summaries.push("LXC: Service active, but no containers are listed.".to_string());
-        } else {
-            summaries.push(format!("LXC: Found {} container(s):", lines.len()));
-            for line in lines {
-                summaries.push(format!("  [+] {line}"));
+        for line in output.lines().filter(|l| !l.trim().is_empty()) {
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() >= 2 {
+                results.push(Container {
+                    runtime: "LXC".to_string(),
+                    id: "N/A".to_string(),
+                    image: "N/A".to_string(),
+                    name: parts[0].to_string(),
+                    status: parts[1].to_string(), // State (RUNNING/STOPPED)
+                    namespace: None,
+                });
             }
         }
     }
 
-    // Check containerd (ctr)
-    if let Ok((status, output)) = qx("ctr -n k8s.io containers ls -q")
+    // --- Check Containerd (ctr) ---
+    // 1. Get Namespaces
+    let mut namespaces = Vec::new();
+    if let Ok((status, output)) = qx("ctr namespaces list -q")
         && status.success()
     {
-        let lines: Vec<_> = output.lines().filter(|l| !l.trim().is_empty()).collect();
-        if !lines.is_empty() {
-            summaries.push(format!(
-                "Containerd (k8s.io): Found {} active container(s).",
-                lines.len()
-            ));
+        for line in output.lines().filter(|l| !l.trim().is_empty()) {
+            namespaces.push(line.trim().to_string());
         }
     }
 
-    summaries
+    // 2. Iterate Namespaces
+    for ns in namespaces {
+        // "ctr -n <ns> container ls" output usually: CONTAINER IMAGE RUNTIME
+        // We skip header line (1st line)
+        if let Ok((status, output)) = qx(&format!("ctr -n {ns} containers ls")) 
+            && status.success() 
+        {
+            for line in output.lines().skip(1).filter(|l| !l.trim().is_empty()) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    results.push(Container {
+                        runtime: "Containerd".to_string(),
+                        id: parts[0].to_string(),    // Container ID
+                        image: parts[1].to_string(), // Image Ref
+                        status: "Unknown".to_string(), // 'ctr c ls' doesn't always show up/down status clearly without 'tasks'
+                        name: parts[0].to_string(),
+                        namespace: Some(ns.clone()),
+                    });
+                }
+            }
+        }
+    }
+
+    results
 }
 
-/// Discovers docker-compose.yml or compose.yaml files in common deployment areas
+/// Discovers docker-compose.yml or compose.yaml files
 pub fn find_compose_files() -> Vec<String> {
     let mut found = Vec::new();
     let search_paths = ["/opt", "/var/www", "/etc/docker", "/home"];

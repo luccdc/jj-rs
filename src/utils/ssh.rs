@@ -19,11 +19,24 @@ pub struct SshKeyEntry {
     pub path: String,
 }
 
+/// Represents a specific configuration line that might be dangerous
+pub struct SshConfigIssue {
+    pub setting: String,
+    pub value: String,
+    pub raw_line: String,
+}
+
+/// Represents a Certificate Authority or Principal setting
+pub struct SshCaIssue {
+    pub key: String,
+    pub raw_line: String,
+}
+
 /// Audit the SSH daemon configuration for risky settings
-pub fn audit_sshd_config() -> Vec<String> {
+pub fn audit_sshd_config() -> Vec<SshConfigIssue> {
     let config_path = "/etc/ssh/sshd_config";
     let Ok(content) = std::fs::read_to_string(config_path) else {
-        return vec![format!("Could not read {config_path}")];
+        return Vec::new();
     };
 
     SSHD_CHECKS
@@ -37,22 +50,29 @@ pub fn audit_sshd_config() -> Vec<String> {
                         && l.to_lowercase().contains(&setting.to_lowercase())
                         && l.to_lowercase().contains(risky_val)
                 })
-                .map(|_| format!("Potentially risky setting found: {setting} is {risky_val}"))
+                .map(|line| SshConfigIssue {
+                    setting: setting.to_string(),
+                    value: risky_val.to_string(),
+                    raw_line: line.trim().to_string(),
+                })
         })
         .collect()
 }
 
-pub fn audit_ssh_ca() -> Vec<String> {
+pub fn audit_ssh_ca() -> Vec<SshCaIssue> {
     let config_path = "/etc/ssh/sshd_config";
     let mut alerts = Vec::new();
     if let Ok(content) = std::fs::read_to_string(config_path) {
         let sensitive_keys = ["TrustedUserCAKeys", "AuthorizedPrincipalsFile"];
         for key in &sensitive_keys {
-            if content
+            if let Some(line) = content
                 .lines()
-                .any(|l| !l.trim().starts_with('#') && l.contains(key))
+                .find(|l| !l.trim().starts_with('#') && l.contains(key)) 
             {
-                alerts.push(format!("[!] SSH CA/Principals feature detected: {key}. Check this for non-standard access."));
+                alerts.push(SshCaIssue {
+                    key: key.to_string(),
+                    raw_line: line.trim().to_string(),
+                });
             }
         }
     }

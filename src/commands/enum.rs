@@ -89,24 +89,35 @@ impl Enum {
         let mut out = String::new();
         writeln!(out, "\n==== SSH AUDIT")?;
 
+        // Check service status
         match qx("systemctl is-active sshd || systemctl is-active ssh") {
             Ok((status, res)) if status.success() => writeln!(out, "Service Status: ACTIVE ({})", res.trim())?,
             _ => writeln!(out, "Service Status: INACTIVE or NOT FOUND")?,
         }
         writeln!(out, "---")?;
 
-        for warning in crate::utils::ssh::audit_sshd_config() {
-            writeln!(out, "[!] {warning}")?;
-        }
-        for warning in crate::utils::ssh::audit_ssh_ca() {
-            writeln!(out, "[!] {warning}")?;
+        // Config Issues
+        let config_issues = crate::utils::ssh::audit_sshd_config();
+        if config_issues.is_empty() {
+             writeln!(out, "[-] No risky sshd_config settings found.")?;
+        } else {
+             for issue in config_issues {
+                 writeln!(out, "[!] Risky Setting: {} = {} (Raw: {})", issue.setting, issue.value, issue.raw_line)?;
+             }
         }
 
+        // CA/Principal Issues
+        let ca_issues = crate::utils::ssh::audit_ssh_ca();
+        for issue in ca_issues {
+            writeln!(out, "[!] CA/Principal Feature Detected: {} (Raw: {})", issue.key, issue.raw_line)?;
+        }
+
+        // Keys
         let keys = crate::utils::ssh::get_user_keys()?;
         if keys.is_empty() {
-            writeln!(out, "No authorized_keys found.")?;
+            writeln!(out, "\nNo authorized_keys found.")?;
         } else {
-            writeln!(out, "{:<12} | {:<30} | PATH", "USER", "COMMENT")?;
+            writeln!(out, "\n{:<12} | {:<30} | PATH", "USER", "COMMENT")?;
             writeln!(out, "{:-<12}-+-{:-<30}-+-{:-<30}", "", "", "")?;
             for key in keys {
                 writeln!(out, "{:<12} | {:<30} | {}", key.user, key.comment, key.path)?;
@@ -119,34 +130,46 @@ impl Enum {
         let mut out = String::new();
         writeln!(out, "\n==== SCHEDULED TASKS & PERSISTENCE")?;
 
+        // --- Systemd Timers ---
         writeln!(out, "\n--- Systemd Timers")?;
         let timers = crate::utils::scheduling::get_active_timers();
         if timers.is_empty() {
             writeln!(out, "(none found)")?;
         } else {
-            for timer in timers.iter().take(10) {
-                writeln!(out, "{timer}")?;
+            writeln!(out, "{:<30} | {:<40} | STATUS", "NEXT RUN", "UNIT")?;
+            for timer in timers.iter().take(15) {
+                writeln!(out, "{:<30} | {:<40} | {}", timer.next, timer.unit, timer.activestate)?;
             }
         }
 
+        // --- Cron Entries ---
         writeln!(out, "\n--- Active Crontab Commands")?;
         let crons = crate::utils::scheduling::get_cron_entries()?;
         if crons.is_empty() {
             writeln!(out, "(no active cron commands found)")?;
         } else {
-            writeln!(out, "{:<12} | COMMAND", "USER")?;
-            writeln!(out, "{:-<12}-+-{:-<40}", "", "")?;
+            writeln!(out, "{:<12} | {:<15} | COMMAND (Source)", "USER", "SCHEDULE")?;
+            writeln!(out, "{:-<12}-+-{:-<15}-+-{:-<40}", "", "", "")?;
             for entry in crons {
-                let cmd = if entry.command.len() > 60 {
-                    format!("{}...", &entry.command[..57])
+                let cmd_display = if entry.command.len() > 50 {
+                    format!("{}...", &entry.command[..47])
                 } else {
-                    entry.command
+                    entry.command.clone()
                 };
-                writeln!(out, "{:<12} | {cmd}", entry.user)?;
+                writeln!(out, "{:<12} | {:<15} | {} ({})", entry.user, entry.schedule, cmd_display, entry.source)?;
             }
         }
 
-        // --- Re-integrating At Jobs ---
+        // --- Periodic Scripts ---
+        let periodic = crate::utils::scheduling::get_periodic_scripts();
+        if !periodic.is_empty() {
+            writeln!(out, "\n--- Periodic Scripts (cron.daily/hourly/etc)")?;
+            for script in periodic {
+                writeln!(out, "[{}] {}", script.interval, script.path)?;
+            }
+        }
+
+        // --- At Jobs ---
         writeln!(out, "\n--- At Job Spool Files")?;
         let at_jobs = crate::utils::scheduling::get_at_jobs();
         if at_jobs.is_empty() {
@@ -157,20 +180,28 @@ impl Enum {
             }
         }
 
+        // --- Shell Audit ---
         writeln!(out, "\n==== SHELL ANOMALIES & ENVIRONMENT")?;
-        for alert in crate::utils::shell_audit::audit_environment_variables() {
-            writeln!(out, "[!] {alert}")?;
+        
+        let env_issues = crate::utils::shell_audit::audit_environment_variables();
+        for issue in env_issues {
+            writeln!(out, "[!] {} ({:?}) -> {}", issue.description, issue.issue_type, issue.raw_content)?;
         }
         
-        writeln!(out, "--- Scanning shell configurations (profile, bashrc, xinitrc, etc.)...")?;
+        writeln!(out, "\n--- Scanning shell configurations...")?;
         let shell_findings = crate::utils::shell_audit::scan_shell_configs()?;
         if shell_findings.is_empty() {
-            writeln!(out, "[-] No suspicious patterns found in global or user shell configs.")?;
+            writeln!(out, "[-] No suspicious patterns found in shell configs.")?;
         } else {
             for finding in shell_findings {
-                writeln!(out, "[!] {} (User: {})", finding.path, finding.user)?;
-                for alert in finding.alerts {
-                    writeln!(out, "    -> {alert}")?;
+                writeln!(out, "User: {} | File: {}", finding.user, finding.path)?;
+                for issue in finding.issues {
+                    let prefix = match issue.issue_type {
+                        crate::utils::shell_audit::ShellIssueType::SuspiciousEnvVar => "[VAR]",
+                        crate::utils::shell_audit::ShellIssueType::SensitiveKeyword => "[KEY]",
+                        crate::utils::shell_audit::ShellIssueType::AliasShadowing => "[ALIAS]",
+                    };
+                    writeln!(out, "    {} {} (Line: {:?})", prefix, issue.description, issue.line_number.unwrap_or(0))?;
                 }
             }
         }
@@ -180,12 +211,42 @@ impl Enum {
     fn enum_containers() -> eyre::Result<String> {
         let mut out = String::new();
         writeln!(out, "\n==== CONTAINER RUNTIMES")?;
-        let container_info = crate::utils::containers::get_container_summary();
-        if container_info.is_empty() {
-            writeln!(out, "No active containers or common runtimes (Docker, Podman, LXC, Containerd) detected.")?;
+        
+        let containers = crate::utils::containers::get_containers();
+        
+        if containers.is_empty() {
+            writeln!(out, "No active containers detected.")?;
         } else {
-            for info in container_info {
-                writeln!(out, "{info}")?;
+            writeln!(out, "{:<28} | {:<15} | {:<20} | {:<25} | IMAGE", "RUNTIME", "ID", "STATUS", "NAME")?;
+            writeln!(out, "{:-<28}-+-{:-<15}-+-{:-<20}-+-{:-<25}-+-{:-<20}", "", "", "", "", "")?;
+            
+            for c in containers {
+                let runtime_display = if let Some(ns) = &c.namespace {
+                    format!("{} ({})", c.runtime, ns)
+                } else {
+                    c.runtime.clone()
+                };
+                
+                let name_display = if c.name.len() > 24 {
+                    format!("{}...", &c.name[..21])
+                } else {
+                    c.name.clone()
+                };
+
+                // FIX: Truncate ID to 12 chars to prevent table blowout
+                let id_display = if c.id.len() > 12 {
+                    &c.id[..12]
+                } else {
+                    &c.id
+                };
+
+                writeln!(out, "{:<28} | {:<15} | {:<20} | {:<25} | {}", 
+                    runtime_display, 
+                    id_display, 
+                    c.status, 
+                    name_display,
+                    c.image
+                )?;
             }
         }
         

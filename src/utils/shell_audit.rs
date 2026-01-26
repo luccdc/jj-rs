@@ -3,10 +3,28 @@
 use crate::utils::passwd::load_users;
 use std::path::Path;
 
+/// Categorizes the type of anomaly found in a shell configuration
+#[derive(Debug, Clone)]
+pub enum ShellIssueType {
+    SuspiciousEnvVar,
+    SensitiveKeyword,
+    AliasShadowing,
+}
+
+/// A specific finding within a shell file or environment
+#[derive(Debug, Clone)]
+pub struct ShellIssue {
+    pub issue_type: ShellIssueType,
+    pub description: String,
+    pub raw_content: String,
+    pub line_number: Option<usize>,
+}
+
+/// Aggregates findings for a specific file/user
 pub struct ShellFindings {
     pub path: String,
     pub user: String,
-    pub alerts: Vec<String>,
+    pub issues: Vec<ShellIssue>,
 }
 
 const SUS_KEYWORDS: &[&str] = &[
@@ -16,16 +34,13 @@ const CORE_UTILS: &[&str] = &[
     "ls", "cd", "sudo", "cat", "ps", "netstat", "ip", "ss", "whoami",
 ];
 
-pub fn audit_environment_variables() -> Vec<String> {
-    let mut alerts = Vec::new();
+pub fn audit_environment_variables() -> Vec<ShellIssue> {
+    let mut issues = Vec::new();
 
     let watched_vars = [
         ("LD_PRELOAD", "Possible library injection"),
         ("PROMPT_COMMAND", "Executes on every shell prompt"),
-        (
-            "PS1",
-            "Potential shell hijacking/obfuscation via escape codes",
-        ),
+        ("PS1", "Potential shell hijacking/obfuscation via escape codes"),
         ("PYTHONPATH", "Python module hijacking"),
     ];
 
@@ -33,11 +48,16 @@ pub fn audit_environment_variables() -> Vec<String> {
         if let Ok(val) = std::env::var(var)
             && !val.is_empty()
         {
-            alerts.push(format!("[!] {var} found: {val} ({desc})"));
+            issues.push(ShellIssue {
+                issue_type: ShellIssueType::SuspiciousEnvVar,
+                description: desc.to_string(),
+                raw_content: format!("{var}={val}"),
+                line_number: None,
+            });
         }
     }
 
-    alerts
+    issues
 }
 
 pub fn scan_shell_configs() -> eyre::Result<Vec<ShellFindings>> {
@@ -51,11 +71,12 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellFindings>> {
     ];
 
     for config in &global_configs {
-        if let Some(alerts) = audit_file(Path::new(config)) {
+        let issues = audit_file(Path::new(config));
+        if !issues.is_empty() {
             report.push(ShellFindings {
                 path: (*config).to_string(),
                 user: "system-wide".to_string(),
-                alerts,
+                issues,
             });
         }
     }
@@ -75,11 +96,12 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellFindings>> {
 
         for conf_name in &user_configs {
             let path = Path::new(&user.home).join(conf_name);
-            if let Some(alerts) = audit_file(&path) {
+            let issues = audit_file(&path);
+            if !issues.is_empty() {
                 report.push(ShellFindings {
                     path: path.to_string_lossy().to_string(),
                     user: user.user.clone(),
-                    alerts,
+                    issues,
                 });
             }
         }
@@ -87,13 +109,13 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellFindings>> {
     Ok(report)
 }
 
-fn audit_file(path: &Path) -> Option<Vec<String>> {
+fn audit_file(path: &Path) -> Vec<ShellIssue> {
     let Ok(content) = std::fs::read_to_string(path) else {
-        return None;
+        return Vec::new();
     };
-    let mut alerts = Vec::new();
+    let mut issues = Vec::new();
 
-    for line in content.lines() {
+    for (idx, line) in content.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
@@ -101,7 +123,12 @@ fn audit_file(path: &Path) -> Option<Vec<String>> {
 
         for key in SUS_KEYWORDS {
             if trimmed.contains(key) {
-                alerts.push(format!("Found sensitive keyword '{key}': {trimmed}"));
+                issues.push(ShellIssue {
+                    issue_type: ShellIssueType::SensitiveKeyword,
+                    description: format!("Found sensitive keyword '{key}'"),
+                    raw_content: trimmed.to_string(),
+                    line_number: Some(idx + 1),
+                });
             }
         }
 
@@ -109,17 +136,16 @@ fn audit_file(path: &Path) -> Option<Vec<String>> {
             for util in CORE_UTILS {
                 let pattern = format!("alias {util}=");
                 if trimmed.contains(&pattern) {
-                    alerts.push(format!(
-                        "Utility shadowing detected: '{util}' is aliased to '{trimmed}'"
-                    ));
+                    issues.push(ShellIssue {
+                        issue_type: ShellIssueType::AliasShadowing,
+                        description: format!("Utility '{util}' is shadowed by alias"),
+                        raw_content: trimmed.to_string(),
+                        line_number: Some(idx + 1),
+                    });
                 }
             }
         }
     }
 
-    if alerts.is_empty() {
-        None
-    } else {
-        Some(alerts)
-    }
+    issues
 }
