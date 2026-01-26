@@ -230,7 +230,7 @@
             mkdir -p $out/bin
 
             cp ${jiujitsu-linux}/bin/jj-rs $out/bin/jj
-            cp ${jiujitsu-windows}/bin/jj-rs $out/bin/jj.exe
+            cp ${jiujitsu-windows}/bin/jj-rs.exe $out/bin/jj.exe
             cp ${tools-tarball}/jj.tgz $out/jj.tgz
           '';
 
