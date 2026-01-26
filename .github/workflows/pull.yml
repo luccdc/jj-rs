@@ -16,7 +16,6 @@ jobs:
       - uses: cachix/cachix-action@v16
         with:
           name: judah-sotomayor
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - name: Run `nix flake check`
         run: nix flake check
       - name: Run `cargo clippy`
