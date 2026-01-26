@@ -38,6 +38,17 @@
               builtins.elem (lib.getName pkg) [ "vagrant" ];
           };
 
+          # Cross compilation requires using a different nixpkgs, and setting up
+          # another craneLib
+          winPkgs = import self.inputs.nixpkgs {
+            overlays = [ (import rust-overlay) ];
+            localSystem = system;
+            crossSystem = {
+              config = "x86_64-w64-mingw32";
+              libc = "msvcrt";
+            };
+          };
+
           libpcap-static = pkgs.stdenv.mkDerivation {
             name = "libpcap-static";
 
@@ -87,7 +98,7 @@
           libraries = [ libpcap-static pkgs.mold ];
 
           windowsLibraries = (with pkgs; [
-            pkgsCross.mingwW64.stdenv.cc
+            pkgsCross.mingwW64.buildPackages.clang
             pkgsCross.mingwW64.windows.pthreads
           ]) ++ libraries; # include Linux libraries for unit tests
 
@@ -140,10 +151,21 @@
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
             p.rust-bin.nightly.latest.default.override {
               extensions = [ "rust-src" ];
-              targets = [ "x86_64-unknown-linux-musl" "x86_64-pc-windows-gnu" ];
+              targets = [ "x86_64-unknown-linux-musl" ];
             });
 
-          src = ./.;
+          winCraneLib = (crane.mkLib winPkgs).overrideToolchain (p:
+            p.rust-bin.nightly.latest.default.override {
+              targets = [ "x86_64-pc-windows-gnu" ];
+            });
+
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              (craneLib.fileset.commonCargoSources ./.)
+              ./src/commands/elk
+            ];
+          };
 
           commonArgs = {
             inherit src;
@@ -164,40 +186,40 @@
             nativeBuildInputs = libraries;
 
             CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+
+            cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
           };
 
           windowsCommonArgs = commonArgs // {
             buildInputs = windowsLibraries;
             nativeBuildInputs = windowsLibraries;
+            packages = windowsLibraries;
 
             CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
+            CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+
+            cargoExtraArgs = "--locked --target=x86_64-pc-windows-gnu";
           };
 
-          linuxCargoArtifacts = craneLib.buildDepsOnly (linuxCommonArgs // {
-            name = "jiujitsu-deps-linux";
-            cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
-          });
+          linuxCargoArtifacts = craneLib.buildDepsOnly
+            (linuxCommonArgs // { name = "jiujitsu-deps-linux"; });
 
-          windowsCargoArtifacts = craneLib.buildDepsOnly (windowsCommonArgs // {
-            name = "jiujitsu-deps-windows";
-            cargoExtraArgs = "--locked --target=x86_64-pc-windows-gnu";
-          });
+          windowsCargoArtifacts = winCraneLib.buildDepsOnly
+            (windowsCommonArgs // { name = "jiujitsu-deps-windows"; });
 
           jiujitsu-linux = craneLib.buildPackage (linuxCommonArgs // {
             cargoArtifacts = linuxCargoArtifacts;
 
             name = "jiujitsu-linux";
-
-            cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
             cargoTestExtraArgs = "--all";
+
+            strictDeps = true;
           });
 
-          jiujitsu-windows = craneLib.buildPackage (windowsCommonArgs // {
+          jiujitsu-windows = winCraneLib.buildPackage (windowsCommonArgs // {
             cargoArtifacts = windowsCargoArtifacts;
 
             name = "jiujitsu-windows";
-
-            cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
             cargoTestExtraArgs = "--all";
           });
 
@@ -256,7 +278,7 @@
               PAMTESTER_GZIPPED = pamtester-gzipped;
             });
 
-            windows = craneLib.devShell ({
+            windows = winCraneLib.devShell ({
               name = "jj";
 
               packages = wslDevShellTools ++ winDevShellTools;
