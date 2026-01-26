@@ -137,6 +137,7 @@
 
           devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant ]);
 
+
           gzip-binary = name: binary:
             pkgs.runCommand "${name}-gzipped" { } ''
               TEMP="$(mktemp -d)"
@@ -149,12 +150,8 @@
 
           busybox-gzipped =
             gzip-binary "busybox" "${pkgsStatic.busybox}/bin/busybox";
-          jq-gzipped = gzip-binary "jq" "${pkgsStatic.jq.bin}/bin/jq";
           nft-gzipped = gzip-binary "nft"
             ("${pkgsStatic.nftables.override { withCli = false; }}/bin/nft");
-          tmux-gzipped = gzip-binary "tmux" "${pkgsStatic.tmux}/bin/tmux";
-          tcpdump-gzipped =
-            gzip-binary "tcpdump" "${pkgsStatic.tcpdump}/bin/tcpdump";
           zsh-gzipped = gzip-binary "zsh" "${pkgsStatic.zsh}/bin/zsh";
 
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
@@ -237,6 +234,30 @@
             cp ${jiujitsu-linux}/bin/jj-rs $out/bin/jj
             cp ${jiujitsu-windows}/bin/jj-rs $out/bin/jj.exe
           '';
+
+
+          install-script-src = builtins.readFile ./install.sh;
+          install-script = pkgs.writeScriptBin "install.sh" install-script-src;
+
+
+
+          staticTools = with pkgsStatic; [
+            jq
+            tcpdump
+            tmux
+            nftables
+          ];
+
+          tools-tarball = pkgs.runCommand "tools-tarball" {  } ''
+            mkdir -p $out
+            tar -czvf $out/jj.tgz --mode=755\
+              -C ${install-script}/bin install.sh \
+              ${lib.concatMapStringsSep "\\\n"
+                (p:
+                  ''-C ${p} bin '') staticTools}
+          '';
+
+
         in {
           _module.args.pkgs = pkgs;
 
@@ -263,14 +284,14 @@
           packages = {
             default = jiujitsu;
 
-            inherit jiujitsu jiujitsu-linux jiujitsu-windows;
+            inherit jiujitsu jiujitsu-linux jiujitsu-windows tools-tarball;
           };
 
           devShells = {
             default = craneLib.devShell ({
               name = "jj";
 
-              packages = devShellTools ++ libraries;
+              packages = devShellTools ++ libraries ++ staticTools;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
