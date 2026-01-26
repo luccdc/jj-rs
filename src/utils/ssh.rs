@@ -9,6 +9,8 @@ const SSHD_CHECKS: &[(&str, &str)] = &[
     ("PasswordAuthentication", "yes"),
     ("PermitEmptyPasswords", "yes"),
     ("X11Forwarding", "yes"),
+    ("IgnoreRhosts", "no"),
+    ("HostbasedAuthentication", "yes"),
 ];
 
 pub struct SshKeyEntry {
@@ -38,6 +40,23 @@ pub fn audit_sshd_config() -> Vec<String> {
                 .map(|_| format!("Potentially risky setting found: {setting} is {risky_val}"))
         })
         .collect()
+}
+
+pub fn audit_ssh_ca() -> Vec<String> {
+    let config_path = "/etc/ssh/sshd_config";
+    let mut alerts = Vec::new();
+    if let Ok(content) = std::fs::read_to_string(config_path) {
+        let sensitive_keys = ["TrustedUserCAKeys", "AuthorizedPrincipalsFile"];
+        for key in &sensitive_keys {
+            if content
+                .lines()
+                .any(|l| !l.trim().starts_with('#') && l.contains(key))
+            {
+                alerts.push(format!("[!] SSH CA/Principals feature detected: {key}. Check this for non-standard access."));
+            }
+        }
+    }
+    alerts
 }
 
 /// Scan all users for `authorized_keys` files and extract key identities

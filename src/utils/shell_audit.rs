@@ -19,20 +19,22 @@ const CORE_UTILS: &[&str] = &[
 pub fn audit_environment_variables() -> Vec<String> {
     let mut alerts = Vec::new();
 
-    if let Ok(val) = std::env::var("LD_PRELOAD")
-        && !val.is_empty()
-    {
-        alerts.push(format!(
-            "[!] LD_PRELOAD found: {val} (Possible library injection)"
-        ));
-    }
+    let watched_vars = [
+        ("LD_PRELOAD", "Possible library injection"),
+        ("PROMPT_COMMAND", "Executes on every shell prompt"),
+        (
+            "PS1",
+            "Potential shell hijacking/obfuscation via escape codes",
+        ),
+        ("PYTHONPATH", "Python module hijacking"),
+    ];
 
-    if let Ok(val) = std::env::var("PROMPT_COMMAND")
-        && !val.is_empty()
-    {
-        alerts.push(format!(
-            "[!] PROMPT_COMMAND found: {val} (Executes on every shell prompt)"
-        ));
+    for (var, desc) in &watched_vars {
+        if let Ok(val) = std::env::var(var)
+            && !val.is_empty()
+        {
+            alerts.push(format!("[!] {var} found: {val} ({desc})"));
+        }
     }
 
     alerts
@@ -65,7 +67,12 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellFindings>> {
             ".bash_profile",
             ".zshrc",
             ".zprofile",
+            ".bash_logout",
+            ".zlogout",
+            ".xinitrc",
+            ".xsession",
         ];
+
         for conf_name in &user_configs {
             let path = Path::new(&user.home).join(conf_name);
             if let Some(alerts) = audit_file(&path) {
