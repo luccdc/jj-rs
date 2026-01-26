@@ -8,6 +8,10 @@ use crate::utils::{busybox::Busybox, qx, pager};
 pub struct Enum {
     #[command(subcommand)]
     pub subcommand: Option<EnumSubcommands>,
+
+    /// Disable the output pager
+    #[arg(long)]
+    pub no_pager: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -58,7 +62,12 @@ impl super::Command for Enum {
                 full_report.push_str(&Self::enum_containers()?);
                 full_report.push_str(&Self::enum_ports(false)?);
                 
-                pager::page_output(&full_report)
+                if self.no_pager {
+                    print!("{full_report}");
+                    Ok(())
+                } else {
+                    pager::page_output(&full_report)
+                }
             }
         }
     }
@@ -233,7 +242,6 @@ impl Enum {
                     c.name.clone()
                 };
 
-                // FIX: Truncate ID to 12 chars to prevent table blowout
                 let id_display = if c.id.len() > 12 {
                     &c.id[..12]
                 } else {
