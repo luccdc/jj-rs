@@ -1,5 +1,7 @@
 /target
 /.direnv
 /result
+/result-*
 /.vagrant
 /*.log
+.env
