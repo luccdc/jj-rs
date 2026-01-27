@@ -249,11 +249,15 @@
 
           tools-tarball = pkgs.runCommand "tools-tarball" {  } ''
             mkdir -p $out
-            tar -czvf $out/jj.tgz --mode=755\
+            tar -czvf $out/jj.tgz --mode=755      \
               -C ${install-script}/bin install.sh \
+              -C ${jiujitsu-linux} bin            \
               ${lib.concatMapStringsSep "\\\n"
                 (p:
-                  ''-C ${p} bin '') staticTools}
+                  ''-C ${p} bin '') staticTools}  \
+              --transform='s,^bin,jj-bin,'        \
+              --show-transformed-names            \
+              --owner=0 --group=0
           '';
 
 
