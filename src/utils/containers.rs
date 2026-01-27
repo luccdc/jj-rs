@@ -5,11 +5,11 @@ use walkdir::WalkDir;
 
 /// Unified structure for any container found on the system
 pub struct Container {
-    pub runtime: String,   // e.g., "Docker", "Podman", "Containerd (default)"
+    pub runtime: String, // e.g., "Docker", "Podman", "Containerd (default)"
     pub id: String,
     pub image: String,
-    pub status: String,    // e.g., "Up 2 hours", "Created"
-    pub name: String,      // Container name or extra info
+    pub status: String,            // e.g., "Up 2 hours", "Created"
+    pub name: String,              // Container name or extra info
     pub namespace: Option<String>, // Specifically for containerd namespaces
 }
 
@@ -93,16 +93,16 @@ pub fn get_containers() -> Vec<Container> {
     for ns in namespaces {
         // "ctr -n <ns> container ls" output usually: CONTAINER IMAGE RUNTIME
         // We skip header line (1st line)
-        if let Ok((status, output)) = qx(&format!("ctr -n {ns} containers ls")) 
-            && status.success() 
+        if let Ok((status, output)) = qx(&format!("ctr -n {ns} containers ls"))
+            && status.success()
         {
             for line in output.lines().skip(1).filter(|l| !l.trim().is_empty()) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2 {
                     results.push(Container {
                         runtime: "Containerd".to_string(),
-                        id: parts[0].to_string(),    // Container ID
-                        image: parts[1].to_string(), // Image Ref
+                        id: parts[0].to_string(),      // Container ID
+                        image: parts[1].to_string(),   // Image Ref
                         status: "Unknown".to_string(), // 'ctr c ls' doesn't always show up/down status clearly without 'tasks'
                         name: parts[0].to_string(),
                         namespace: Some(ns.clone()),

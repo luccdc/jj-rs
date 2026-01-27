@@ -40,10 +40,14 @@ fn get_ssh_configs() -> Vec<String> {
     if Path::new("/etc/ssh/sshd_config").exists() {
         files.push("/etc/ssh/sshd_config".to_string());
     }
-    
+
     let config_d = "/etc/ssh/sshd_config.d";
     if Path::new(config_d).exists() {
-        for entry in WalkDir::new(config_d).max_depth(1).into_iter().filter_map(Result::ok) {
+        for entry in WalkDir::new(config_d)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
             if entry.path().extension().is_some_and(|ext| ext == "conf") {
                 files.push(entry.path().to_string_lossy().to_string());
             }
@@ -54,7 +58,7 @@ fn get_ssh_configs() -> Vec<String> {
 
 pub fn audit_sshd_config() -> Vec<SshConfigIssue> {
     let mut issues = Vec::new();
-    
+
     for path in get_ssh_configs() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             for (setting, risky_val) in SSHD_CHECKS {
@@ -87,7 +91,7 @@ pub fn audit_ssh_ca() -> Vec<SshCaIssue> {
             for key in &sensitive_keys {
                 if let Some(line) = content
                     .lines()
-                    .find(|l| !l.trim().starts_with('#') && l.contains(key)) 
+                    .find(|l| !l.trim().starts_with('#') && l.contains(key))
                 {
                     alerts.push(SshCaIssue {
                         // Field 'key' removed as it is contained in raw_line
@@ -119,8 +123,11 @@ pub fn get_user_keys() -> eyre::Result<Vec<SshKeyEntry>> {
                 // Minimal: type key
                 if parts.len() >= 2 {
                     // Simple heuristic to find the key type (ssh-rsa, ssh-ed25519, ecdsa-...)
-                    let type_idx = parts.iter().position(|p| p.starts_with("ssh-") || p.starts_with("ecdsa-")).unwrap_or(0);
-                    
+                    let type_idx = parts
+                        .iter()
+                        .position(|p| p.starts_with("ssh-") || p.starts_with("ecdsa-"))
+                        .unwrap_or(0);
+
                     if type_idx + 1 < parts.len() {
                         let key_type = parts[type_idx].to_string();
                         let key_val = parts[type_idx + 1];
@@ -129,7 +136,7 @@ pub fn get_user_keys() -> eyre::Result<Vec<SshKeyEntry>> {
                         } else {
                             key_val.to_string()
                         };
-                        
+
                         let comment = if parts.len() > type_idx + 2 {
                             parts[type_idx + 2..].join(" ")
                         } else {

@@ -19,15 +19,16 @@ pub struct SystemdTimer {
 
 pub struct PeriodicScript {
     pub path: String,
-    pub interval: String, // "daily", "hourly", etc.
+    pub interval: String,
+    pub findings: Vec<crate::utils::shell_audit::ShellIssue>,
 }
 
 /// Parses `systemctl list-timers` into structured data
 pub fn get_active_timers() -> Vec<SystemdTimer> {
     let mut results = Vec::new();
     // --no-legend removes headers.
-    if let Ok((status, output)) = qx("systemctl list-timers --all --no-pager --no-legend") 
-        && status.success() 
+    if let Ok((status, output)) = qx("systemctl list-timers --all --no-pager --no-legend")
+        && status.success()
     {
         for line in output.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
@@ -35,7 +36,7 @@ pub fn get_active_timers() -> Vec<SystemdTimer> {
             // UNIT is usually the 2nd to last element
             if parts.len() >= 6 {
                 let unit = parts[parts.len() - 2].to_string();
-                
+
                 // Construct a "next run" string from the first few columns
                 // Typically "Fri 2023-10-27 15:00:00" (3 parts) or "Mon 2023..."
                 let next_run = if parts.len() > 3 {
@@ -44,10 +45,7 @@ pub fn get_active_timers() -> Vec<SystemdTimer> {
                     parts[0].to_string()
                 };
 
-                results.push(SystemdTimer {
-                    unit,
-                    next_run,
-                });
+                results.push(SystemdTimer { unit, next_run });
             }
         }
     }
@@ -63,11 +61,15 @@ pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
     if Path::new("/etc/crontab").exists() {
         system_files.push("/etc/crontab".to_string());
     }
-    
+
     // Gather all files in /etc/cron.d
     let cron_d = "/etc/cron.d";
     if Path::new(cron_d).exists() {
-        for entry in WalkDir::new(cron_d).max_depth(1).into_iter().filter_map(Result::ok) {
+        for entry in WalkDir::new(cron_d)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
             if entry.file_type().is_file() {
                 system_files.push(entry.path().to_string_lossy().to_string());
             }
@@ -135,14 +137,20 @@ pub fn get_periodic_scripts() -> Vec<PeriodicScript> {
         let path_str = format!("/etc/cron.{interval}");
         let p = Path::new(&path_str);
         if p.exists() {
-            for entry in WalkDir::new(p).min_depth(1).max_depth(1).into_iter().filter_map(Result::ok) {
+            for entry in WalkDir::new(p)
+                .min_depth(1)
+                .max_depth(1)
+                .into_iter()
+                .filter_map(Result::ok)
+            {
                 if entry.file_type().is_file() {
                     let name = entry.file_name().to_string_lossy();
-                    // Ignore typical placeholders like .placeholder or .gitignore
                     if !name.starts_with('.') {
+                        let findings = crate::utils::shell_audit::audit_file(entry.path());
                         scripts.push(PeriodicScript {
                             path: entry.path().to_string_lossy().to_string(),
                             interval: interval.to_string(),
+                            findings,
                         });
                     }
                 }
@@ -166,7 +174,7 @@ pub fn get_at_jobs() -> Vec<String> {
                 if entry.path().is_file() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name != ".SEQ" {
-                         jobs.push(entry.path().to_string_lossy().to_string());
+                        jobs.push(entry.path().to_string_lossy().to_string());
                     }
                 }
             }

@@ -162,6 +162,13 @@ impl Enum {
         let periodic = crate::utils::scheduling::get_periodic_scripts();
         for script in periodic {
             writeln!(out, "{} ({})", script.path, script.interval)?;
+            for issue in script.findings {
+                writeln!(out, "  ! {} ({}:{})", 
+                    issue.raw_content, 
+                    issue.filename, 
+                    issue.line_number.unwrap_or(0)
+                )?;
+            }
         }
 
         // --- At Jobs ---
