@@ -34,7 +34,7 @@ fi
 
 echo "Installing tools to $PREFIX"
 
-install -m755 ./bin/* $PREFIX
+install -m755 ./jj-bin/* $PREFIX
 
 echo "Tools installed. Configuring path"
 
