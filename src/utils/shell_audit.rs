@@ -48,7 +48,7 @@ pub fn audit_environment_variables() -> Vec<ShellIssue> {
 pub fn scan_shell_configs() -> eyre::Result<Vec<ShellIssue>> {
     let users = load_users::<_, &str>(None)?;
     let mut all_issues = Vec::new();
-    
+
     // 1. Global Files
     let global_files = vec![
         "/etc/bash.bashrc",
@@ -56,14 +56,18 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellIssue>> {
         "/etc/bashrc",
         "/etc/environment",
     ];
-    
+
     for file in global_files {
         all_issues.extend(audit_file(Path::new(file)));
     }
 
     // 2. Global Directories (profile.d)
     if Path::new("/etc/profile.d").exists() {
-        for entry in WalkDir::new("/etc/profile.d").max_depth(1).into_iter().filter_map(Result::ok) {
+        for entry in WalkDir::new("/etc/profile.d")
+            .max_depth(1)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
             if entry.file_type().is_file() {
                 all_issues.extend(audit_file(entry.path()));
             }
@@ -89,11 +93,11 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellIssue>> {
             all_issues.extend(audit_file(&path));
         }
     }
-    
+
     Ok(all_issues)
 }
 
-fn audit_file(path: &Path) -> Vec<ShellIssue> {
+pub fn audit_file(path: &Path) -> Vec<ShellIssue> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -132,10 +136,10 @@ fn audit_file(path: &Path) -> Vec<ShellIssue> {
                 }
             }
         }
-        
+
         // Check Exports of interest
         if trimmed.starts_with("export PATH=") || trimmed.contains("LD_PRELOAD") {
-             issues.push(ShellIssue {
+            issues.push(ShellIssue {
                 raw_content: trimmed.to_string(),
                 filename: filename.clone(),
                 line_number: Some(idx + 1),

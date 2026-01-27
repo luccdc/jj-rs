@@ -37,8 +37,6 @@ pub mod shell_audit;
 pub mod ssh;
 #[cfg(unix)]
 pub mod systemd;
-#[cfg(unix)]
-pub mod tcpdump;
 
 /// Alias for Perl's qx
 ///
