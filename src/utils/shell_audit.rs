@@ -2,29 +2,14 @@
 
 use crate::utils::passwd::load_users;
 use std::path::Path;
-
-/// Categorizes the type of anomaly found in a shell configuration
-#[derive(Debug, Clone)]
-pub enum ShellIssueType {
-    SuspiciousEnvVar,
-    SensitiveKeyword,
-    AliasShadowing,
-}
+use walkdir::WalkDir;
 
 /// A specific finding within a shell file or environment
 #[derive(Debug, Clone)]
 pub struct ShellIssue {
-    pub issue_type: ShellIssueType,
-    pub description: String,
     pub raw_content: String,
+    pub filename: String,
     pub line_number: Option<usize>,
-}
-
-/// Aggregates findings for a specific file/user
-pub struct ShellFindings {
-    pub path: String,
-    pub user: String,
-    pub issues: Vec<ShellIssue>,
 }
 
 const SUS_KEYWORDS: &[&str] = &[
@@ -38,20 +23,20 @@ pub fn audit_environment_variables() -> Vec<ShellIssue> {
     let mut issues = Vec::new();
 
     let watched_vars = [
-        ("LD_PRELOAD", "Possible library injection"),
-        ("PROMPT_COMMAND", "Executes on every shell prompt"),
-        ("PS1", "Potential shell hijacking/obfuscation via escape codes"),
-        ("PYTHONPATH", "Python module hijacking"),
+        "LD_PRELOAD",
+        "PROMPT_COMMAND",
+        "PS1",
+        "PYTHONPATH",
+        "HISTFILE",
     ];
 
-    for (var, desc) in &watched_vars {
+    for var in &watched_vars {
         if let Ok(val) = std::env::var(var)
             && !val.is_empty()
         {
             issues.push(ShellIssue {
-                issue_type: ShellIssueType::SuspiciousEnvVar,
-                description: desc.to_string(),
                 raw_content: format!("{var}={val}"),
+                filename: "Current Env".to_string(),
                 line_number: None,
             });
         }
@@ -60,53 +45,52 @@ pub fn audit_environment_variables() -> Vec<ShellIssue> {
     issues
 }
 
-pub fn scan_shell_configs() -> eyre::Result<Vec<ShellFindings>> {
+pub fn scan_shell_configs() -> eyre::Result<Vec<ShellIssue>> {
     let users = load_users::<_, &str>(None)?;
-    let mut report = Vec::new();
-    let global_configs = [
+    let mut all_issues = Vec::new();
+    
+    // 1. Global Files
+    let global_files = vec![
         "/etc/bash.bashrc",
         "/etc/profile",
         "/etc/bashrc",
         "/etc/environment",
     ];
-
-    for config in &global_configs {
-        let issues = audit_file(Path::new(config));
-        if !issues.is_empty() {
-            report.push(ShellFindings {
-                path: (*config).to_string(),
-                user: "system-wide".to_string(),
-                issues,
-            });
-        }
+    
+    for file in global_files {
+        all_issues.extend(audit_file(Path::new(file)));
     }
 
-    for user in users {
-        let user_configs = [
-            ".bashrc",
-            ".profile",
-            ".bash_profile",
-            ".zshrc",
-            ".zprofile",
-            ".bash_logout",
-            ".zlogout",
-            ".xinitrc",
-            ".xsession",
-        ];
-
-        for conf_name in &user_configs {
-            let path = Path::new(&user.home).join(conf_name);
-            let issues = audit_file(&path);
-            if !issues.is_empty() {
-                report.push(ShellFindings {
-                    path: path.to_string_lossy().to_string(),
-                    user: user.user.clone(),
-                    issues,
-                });
+    // 2. Global Directories (profile.d)
+    if Path::new("/etc/profile.d").exists() {
+        for entry in WalkDir::new("/etc/profile.d").max_depth(1).into_iter().filter_map(Result::ok) {
+            if entry.file_type().is_file() {
+                all_issues.extend(audit_file(entry.path()));
             }
         }
     }
-    Ok(report)
+
+    // 3. User Files
+    let user_configs = [
+        ".bashrc",
+        ".profile",
+        ".bash_profile",
+        ".zshrc",
+        ".zprofile",
+        ".bash_logout",
+        ".zlogout",
+        ".xinitrc",
+        ".xsession",
+    ];
+
+    for user in users {
+        for conf_name in &user_configs {
+            let path = Path::new(&user.home).join(conf_name);
+            all_issues.extend(audit_file(&path));
+        }
+    }
+    
+    Ok(all_issues)
 }
 
 fn audit_file(path: &Path) -> Vec<ShellIssue> {
@@ -114,6 +98,7 @@ fn audit_file(path: &Path) -> Vec<ShellIssue> {
         return Vec::new();
     };
     let mut issues = Vec::new();
+    let filename = path.to_string_lossy().to_string();
 
     for (idx, line) in content.lines().enumerate() {
         let trimmed = line.trim();
@@ -121,29 +106,40 @@ fn audit_file(path: &Path) -> Vec<ShellIssue> {
             continue;
         }
 
+        // Check Keywords
         for key in SUS_KEYWORDS {
             if trimmed.contains(key) {
                 issues.push(ShellIssue {
-                    issue_type: ShellIssueType::SensitiveKeyword,
-                    description: format!("Found sensitive keyword '{key}'"),
                     raw_content: trimmed.to_string(),
+                    filename: filename.clone(),
                     line_number: Some(idx + 1),
                 });
+                break; // Avoid double-flagging same line
             }
         }
 
+        // Check Aliases
         if trimmed.starts_with("alias ") {
             for util in CORE_UTILS {
                 let pattern = format!("alias {util}=");
                 if trimmed.contains(&pattern) {
                     issues.push(ShellIssue {
-                        issue_type: ShellIssueType::AliasShadowing,
-                        description: format!("Utility '{util}' is shadowed by alias"),
                         raw_content: trimmed.to_string(),
+                        filename: filename.clone(),
                         line_number: Some(idx + 1),
                     });
+                    break;
                 }
             }
+        }
+        
+        // Check Exports of interest
+        if trimmed.starts_with("export PATH=") || trimmed.contains("LD_PRELOAD") {
+             issues.push(ShellIssue {
+                raw_content: trimmed.to_string(),
+                filename: filename.clone(),
+                line_number: Some(idx + 1),
+            });
         }
     }
 

@@ -98,38 +98,31 @@ impl Enum {
         let mut out = String::new();
         writeln!(out, "\n==== SSH AUDIT")?;
 
-        // Check service status
-        match qx("systemctl is-active sshd || systemctl is-active ssh") {
-            Ok((status, res)) if status.success() => writeln!(out, "Service Status: ACTIVE ({})", res.trim())?,
-            _ => writeln!(out, "Service Status: INACTIVE or NOT FOUND")?,
-        }
-        writeln!(out, "---")?;
-
-        // Config Issues
+        // 1. Config Issues
         let config_issues = crate::utils::ssh::audit_sshd_config();
-        if config_issues.is_empty() {
-             writeln!(out, "[-] No risky sshd_config settings found.")?;
-        } else {
-             for issue in config_issues {
-                 writeln!(out, "[!] Risky Setting: {} = {} (Raw: {})", issue.setting, issue.value, issue.raw_line)?;
-             }
+        for issue in config_issues {
+            writeln!(out, "! {} {} ({})", issue.setting, issue.value, issue.filename)?;
         }
 
-        // CA/Principal Issues
+        // 2. CA/Principal Issues
         let ca_issues = crate::utils::ssh::audit_ssh_ca();
         for issue in ca_issues {
-            writeln!(out, "[!] CA/Principal Feature Detected: {} (Raw: {})", issue.key, issue.raw_line)?;
+            writeln!(out, "! {} ({})", issue.raw_line, issue.filename)?;
         }
 
-        // Keys
+        // 3. Keys
         let keys = crate::utils::ssh::get_user_keys()?;
         if keys.is_empty() {
-            writeln!(out, "\nNo authorized_keys found.")?;
+            writeln!(out, "\n(No authorized_keys found)")?;
         } else {
-            writeln!(out, "\n{:<12} | {:<30} | PATH", "USER", "COMMENT")?;
-            writeln!(out, "{:-<12}-+-{:-<30}-+-{:-<30}", "", "", "")?;
             for key in keys {
-                writeln!(out, "{:<12} | {:<30} | {}", key.user, key.comment, key.path)?;
+                writeln!(out, "+ Key: {} {}... (User: {} | {}) -> {}", 
+                    key.key_type, 
+                    key.key_prefix, 
+                    key.user, 
+                    key.comment,
+                    key.path
+                )?;
             }
         }
         Ok(out)
@@ -137,83 +130,68 @@ impl Enum {
 
     fn enum_autoruns() -> eyre::Result<String> {
         let mut out = String::new();
-        writeln!(out, "\n==== SCHEDULED TASKS & PERSISTENCE")?;
+        writeln!(out, "\n==== AUTORUNS")?;
 
-        // --- Systemd Timers ---
-        writeln!(out, "\n--- Systemd Timers")?;
+        // --- Timers ---
+        writeln!(out, "--- Timers")?;
         let timers = crate::utils::scheduling::get_active_timers();
         if timers.is_empty() {
-            writeln!(out, "(none found)")?;
+            writeln!(out, "(none)")?;
         } else {
-            writeln!(out, "{:<30} | {:<40} | STATUS", "NEXT RUN", "UNIT")?;
-            for timer in timers.iter().take(15) {
-                writeln!(out, "{:<30} | {:<40} | {}", timer.next, timer.unit, timer.activestate)?;
+            for timer in timers.iter().take(20) {
+                writeln!(out, "{} (Next: {})", timer.unit, timer.next_run)?;
             }
         }
 
-        // --- Cron Entries ---
-        writeln!(out, "\n--- Active Crontab Commands")?;
+        // --- Cron ---
+        writeln!(out, "\n--- Cron")?;
         let crons = crate::utils::scheduling::get_cron_entries()?;
         if crons.is_empty() {
-            writeln!(out, "(no active cron commands found)")?;
+            writeln!(out, "(none)")?;
         } else {
-            writeln!(out, "{:<12} | {:<15} | COMMAND (Source)", "USER", "SCHEDULE")?;
-            writeln!(out, "{:-<12}-+-{:-<15}-+-{:-<40}", "", "", "")?;
             for entry in crons {
-                let cmd_display = if entry.command.len() > 50 {
-                    format!("{}...", &entry.command[..47])
+                let cmd_display = if entry.command.len() > 60 {
+                    format!("{}...", &entry.command[..57])
                 } else {
                     entry.command.clone()
                 };
-                writeln!(out, "{:<12} | {:<15} | {} ({})", entry.user, entry.schedule, cmd_display, entry.source)?;
+                writeln!(out, "{:<10} {} {} ({})", entry.user, entry.schedule, cmd_display, entry.source)?;
             }
         }
-
-        // --- Periodic Scripts ---
+        
         let periodic = crate::utils::scheduling::get_periodic_scripts();
-        if !periodic.is_empty() {
-            writeln!(out, "\n--- Periodic Scripts (cron.daily/hourly/etc)")?;
-            for script in periodic {
-                writeln!(out, "[{}] {}", script.interval, script.path)?;
-            }
+        for script in periodic {
+            writeln!(out, "{} ({})", script.path, script.interval)?;
         }
 
         // --- At Jobs ---
-        writeln!(out, "\n--- At Job Spool Files")?;
         let at_jobs = crate::utils::scheduling::get_at_jobs();
-        if at_jobs.is_empty() {
-            writeln!(out, "(no at jobs found)")?;
-        } else {
+        if !at_jobs.is_empty() {
+            writeln!(out, "\n--- At Jobs")?;
             for job in at_jobs {
+                // STRUCTURAL FIX: Inlined format argument
                 writeln!(out, "{job}")?;
             }
         }
 
         // --- Shell Audit ---
-        writeln!(out, "\n==== SHELL ANOMALIES & ENVIRONMENT")?;
+        writeln!(out, "\n==== SHELL AUDIT")?;
         
         let env_issues = crate::utils::shell_audit::audit_environment_variables();
         for issue in env_issues {
-            writeln!(out, "[!] {} ({:?}) -> {}", issue.description, issue.issue_type, issue.raw_content)?;
+            writeln!(out, "! {} ({})", issue.raw_content, issue.filename)?;
         }
         
-        writeln!(out, "\n--- Scanning shell configurations...")?;
         let shell_findings = crate::utils::shell_audit::scan_shell_configs()?;
-        if shell_findings.is_empty() {
-            writeln!(out, "[-] No suspicious patterns found in shell configs.")?;
-        } else {
-            for finding in shell_findings {
-                writeln!(out, "User: {} | File: {}", finding.user, finding.path)?;
-                for issue in finding.issues {
-                    let prefix = match issue.issue_type {
-                        crate::utils::shell_audit::ShellIssueType::SuspiciousEnvVar => "[VAR]",
-                        crate::utils::shell_audit::ShellIssueType::SensitiveKeyword => "[KEY]",
-                        crate::utils::shell_audit::ShellIssueType::AliasShadowing => "[ALIAS]",
-                    };
-                    writeln!(out, "    {} {} (Line: {:?})", prefix, issue.description, issue.line_number.unwrap_or(0))?;
-                }
-            }
+        for issue in shell_findings {
+            // STRUCTURAL FIX: Added 'issue.line_number' to output
+            writeln!(out, "! {} ({}:{})", 
+                issue.raw_content, 
+                issue.filename, 
+                issue.line_number.unwrap_or(0)
+            )?;
         }
+        
         Ok(out)
     }
 
@@ -242,6 +220,7 @@ impl Enum {
                     c.name.clone()
                 };
 
+                // Truncate ID to 12 chars
                 let id_display = if c.id.len() > 12 {
                     &c.id[..12]
                 } else {
