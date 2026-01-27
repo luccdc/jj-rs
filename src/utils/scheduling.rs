@@ -14,8 +14,7 @@ pub struct CronEntry {
 
 pub struct SystemdTimer {
     pub unit: String,
-    pub next: String,
-    pub activestate: String,
+    pub next_run: String,
 }
 
 pub struct PeriodicScript {
@@ -26,18 +25,28 @@ pub struct PeriodicScript {
 /// Parses `systemctl list-timers` into structured data
 pub fn get_active_timers() -> Vec<SystemdTimer> {
     let mut results = Vec::new();
-    // --no-legend removes headers; plain output is easiest to split by whitespace
+    // --no-legend removes headers.
     if let Ok((status, output)) = qx("systemctl list-timers --all --no-pager --no-legend") 
         && status.success() 
     {
         for line in output.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            // Systemd list-timers cols usually: NEXT LEFT LAST PASSED UNIT ACTIVESTATE
+            // Columns are usually: NEXT LEFT LAST PASSED UNIT ACTIVESTATE
+            // UNIT is usually the 2nd to last element
             if parts.len() >= 6 {
+                let unit = parts[parts.len() - 2].to_string();
+                
+                // Construct a "next run" string from the first few columns
+                // Typically "Fri 2023-10-27 15:00:00" (3 parts) or "Mon 2023..."
+                let next_run = if parts.len() > 3 {
+                    parts[0..3].join(" ")
+                } else {
+                    parts[0].to_string()
+                };
+
                 results.push(SystemdTimer {
-                    next: format!("{} {}", parts[0], parts[1]),
-                    unit: parts[parts.len() - 2].to_string(),
-                    activestate: parts[parts.len() - 1].to_string(),
+                    unit,
+                    next_run,
                 });
             }
         }
@@ -50,11 +59,13 @@ pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
     let mut entries = Vec::new();
 
     // 1. System-wide crontabs (Have USER field)
-    let system_paths = vec!["/etc/crontab"];
-    let cron_d = "/etc/cron.d";
+    let mut system_files = Vec::new();
+    if Path::new("/etc/crontab").exists() {
+        system_files.push("/etc/crontab".to_string());
+    }
     
     // Gather all files in /etc/cron.d
-    let mut system_files = system_paths.into_iter().map(String::from).collect::<Vec<_>>();
+    let cron_d = "/etc/cron.d";
     if Path::new(cron_d).exists() {
         for entry in WalkDir::new(cron_d).max_depth(1).into_iter().filter_map(Result::ok) {
             if entry.file_type().is_file() {
@@ -91,7 +102,6 @@ pub fn get_cron_entries() -> eyre::Result<Vec<CronEntry>> {
     for dir in spool_dirs {
         for user in &users {
             let p = Path::new(dir).join(&user.user);
-            // Collapsed check: read_to_string fails safely if file doesn't exist
             if let Ok(content) = std::fs::read_to_string(&p) {
                 for line in content.lines() {
                     let trimmed = line.trim();
