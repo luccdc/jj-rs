@@ -16,6 +16,7 @@ pub mod checks;
 pub mod containers;
 #[cfg(unix)]
 pub mod download_container;
+pub mod logs;
 #[cfg(unix)]
 pub mod nft;
 pub mod os_version;
@@ -37,7 +38,6 @@ pub mod shell_audit;
 pub mod ssh;
 #[cfg(unix)]
 pub mod systemd;
-
 /// Alias for Perl's qx
 ///
 /// Runs the command provided and returns the output as a string as well as the exit code.
