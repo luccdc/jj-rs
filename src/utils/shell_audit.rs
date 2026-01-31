@@ -28,6 +28,8 @@ pub fn audit_environment_variables() -> Vec<ShellIssue> {
         "PS1",
         "PYTHONPATH",
         "HISTFILE",
+        "ENV",
+        "BASH_ENV",
     ];
 
     for var in &watched_vars {
@@ -58,18 +60,31 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellIssue>> {
     ];
 
     for file in global_files {
-        all_issues.extend(audit_file(Path::new(file)));
+        match audit_file(Path::new(file)) {
+            Ok(issues) => all_issues.extend(issues),
+            Err(e) => {
+                if e.downcast_ref::<std::io::Error>()
+                    .is_none_or(|io| io.kind() != std::io::ErrorKind::NotFound)
+                {
+                    eprintln!("Could not audit {file}: {e}");
+                }
+            }
+        }
     }
 
     // 2. Global Directories (profile.d)
     if Path::new("/etc/profile.d").exists() {
-        for entry in WalkDir::new("/etc/profile.d")
-            .max_depth(1)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            if entry.file_type().is_file() {
-                all_issues.extend(audit_file(entry.path()));
+        for entry in WalkDir::new("/etc/profile.d").max_depth(1) {
+            match entry {
+                Ok(e) => {
+                    if e.file_type().is_file() {
+                        match audit_file(e.path()) {
+                            Ok(issues) => all_issues.extend(issues),
+                            Err(err) => eprintln!("Could not audit {}: {err}", e.path().display()),
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Error traversing /etc/profile.d: {e}"),
             }
         }
     }
@@ -90,17 +105,25 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellIssue>> {
     for user in users {
         for conf_name in &user_configs {
             let path = Path::new(&user.home).join(conf_name);
-            all_issues.extend(audit_file(&path));
+            match audit_file(&path) {
+                Ok(issues) => all_issues.extend(issues),
+                // Silently ignore NotFound for user files as most won't exist
+                Err(e) => {
+                    if e.downcast_ref::<std::io::Error>()
+                        .is_none_or(|io| io.kind() != std::io::ErrorKind::NotFound)
+                    {
+                        eprintln!("Could not audit {}: {e}", path.display());
+                    }
+                }
+            }
         }
     }
 
     Ok(all_issues)
 }
 
-pub fn audit_file(path: &Path) -> Vec<ShellIssue> {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
+pub fn audit_file(path: &Path) -> eyre::Result<Vec<ShellIssue>> {
+    let content = std::fs::read_to_string(path)?;
     let mut issues = Vec::new();
     let filename = path.to_string_lossy().to_string();
 
@@ -147,5 +170,5 @@ pub fn audit_file(path: &Path) -> Vec<ShellIssue> {
         }
     }
 
-    issues
+    Ok(issues)
 }
