@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::fmt::Write as _;
-use crate::utils::{busybox::Busybox, qx, pager};
+use crate::utils::{busybox::Busybox, logs::{ellipsize, truncate}, pager, qx};
 
 /// Perform system enumeration or target specific subsystems
 #[derive(Parser, Debug)]
@@ -150,12 +150,11 @@ impl Enum {
             writeln!(out, "(none)")?;
         } else {
             for entry in crons {
-                let cmd_display = if entry.command.len() > 60 {
-                    format!("{}...", &entry.command[..57])
-                } else {
-                    entry.command.clone()
-                };
-                writeln!(out, "{:<10} {} {} ({})", entry.user, entry.schedule, cmd_display, entry.source)?;
+                writeln!(out, "{:<10} {} {} ({})",
+                         entry.user,
+                         entry.schedule,
+                         ellipsize(60, entry.command),
+                         entry.source)?;
             }
         }
         
@@ -220,25 +219,12 @@ impl Enum {
                 } else {
                     c.runtime.clone()
                 };
-                
-                let name_display = if c.name.len() > 24 {
-                    format!("{}...", &c.name[..21])
-                } else {
-                    c.name.clone()
-                };
-
-                // Truncate ID to 12 chars
-                let id_display = if c.id.len() > 12 {
-                    &c.id[..12]
-                } else {
-                    &c.id
-                };
 
                 writeln!(out, "{:<28} | {:<15} | {:<20} | {:<25} | {}", 
                     runtime_display, 
-                    id_display, 
+                    truncate(24, c.name), 
                     c.status, 
-                    name_display,
+                    truncate(12, c.id),
                     c.image
                 )?;
             }
