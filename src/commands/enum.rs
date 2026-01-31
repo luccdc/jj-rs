@@ -1,34 +1,273 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use std::fmt::Write as _;
+use crate::utils::{busybox::Busybox, logs::{ellipsize, truncate}, pager, qx};
 
-use crate::utils::{busybox::Busybox, qx};
-
-/// Perform basic enumeration of the system
+/// Perform system enumeration or target specific subsystems
 #[derive(Parser, Debug)]
-pub struct Enum;
+#[command(about = "System enumeration tools")]
+pub struct Enum {
+    #[command(subcommand)]
+    pub subcommand: Option<EnumSubcommands>,
+
+    /// Disable the output pager
+    #[arg(long)]
+    pub no_pager: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EnumSubcommands {
+    /// Hardware specifications (CPU, Memory, Storage)
+    Hardware,
+    /// Persistence and execution hooks (Cron, Timers, Shell configs)
+    Autoruns,
+    /// Container runtimes and compose files (Docker, Podman, LXC, Containerd)
+    Containers,
+    /// Current network ports and listening services
+    Ports {
+        #[arg(long, short = 'c')]
+        display_cmdline: bool,
+    },
+    /// SSH daemon audit and authorized keys
+    Ssh,
+}
 
 impl super::Command for Enum {
     fn execute(self) -> eyre::Result<()> {
+        match self.subcommand {
+            Some(EnumSubcommands::Hardware) => {
+                print!("{}", Self::enum_hardware()?);
+                Ok(())
+            }
+            Some(EnumSubcommands::Ssh) => {
+                print!("{}", Self::enum_ssh()?);
+                Ok(())
+            }
+            Some(EnumSubcommands::Autoruns) => {
+                print!("{}", Self::enum_autoruns()?);
+                Ok(())
+            }
+            Some(EnumSubcommands::Containers) => {
+                print!("{}", Self::enum_containers()?);
+                Ok(())
+            }
+            Some(EnumSubcommands::Ports { display_cmdline }) => {
+                print!("{}", Self::enum_ports(display_cmdline)?);
+                Ok(())
+            }
+            None => {
+                let mut full_report = String::new();
+                full_report.push_str(&Self::enum_hardware()?);
+                full_report.push_str(&Self::enum_ssh()?);
+                full_report.push_str(&Self::enum_autoruns()?);
+                full_report.push_str(&Self::enum_containers()?);
+                full_report.push_str(&Self::enum_ports(false)?);
+                
+                if self.no_pager {
+                    print!("{full_report}");
+                    Ok(())
+                } else {
+                    pager::page_output(&full_report)
+                }
+            }
+        }
+    }
+}
+
+impl Enum {
+    fn enum_hardware() -> eyre::Result<String> {
+        let mut out = String::new();
         let bb = Busybox::new()?;
+        writeln!(out, "\n==== HARDWARE INFO")?;
+        
+        let cpu = qx(r"lscpu | grep -E '^(Core|Thread|CPU)\(s\)'")
+            .map_or_else(|_| "(unable to query cpu info)".to_string(), |(_, lscpu)| lscpu);
+        writeln!(out, "\nCPU:\n{cpu}")?;
 
-        println!("\n==== CPU INFO\n");
+        writeln!(out, "\nMEMORY:")?;
+        let res = bb.command("free").arg("-h").output()?;
+        out.push_str(&String::from_utf8_lossy(&res.stdout));
 
-        println!(
-            "{}",
-            qx(r"lscpu | grep -E '^(Core|Thread|CPU)\(s\)'")
-                .map(|(_, lscpu)| lscpu)
-                .unwrap_or("(unable to query cpu info)".to_string())
-        );
+        writeln!(out, "\nSTORAGE:")?;
+        let res = bb.command("df").arg("-h").output()?;
+        out.push_str(&String::from_utf8_lossy(&res.stdout));
+        
+        Ok(out)
+    }
 
-        println!("\n==== MEMORY/STORAGE INFO\n");
+    fn enum_ssh() -> eyre::Result<String> {
+        let mut out = String::new();
+        writeln!(out, "\n==== SSH AUDIT")?;
 
-        bb.command("free").arg("-h").spawn()?.wait()?;
-        println!("---");
-        bb.command("df").arg("-h").spawn()?.wait()?;
+        // 1. Config Issues
+        let config_issues = crate::utils::ssh::audit_sshd_config();
+        for issue in config_issues {
+            writeln!(out, "! {} {} ({})", issue.setting, issue.value, issue.filename)?;
+        }
 
-        println!("\n==== PORTS INFO\n");
+        // 2. CA/Principal Issues
+        let ca_issues = crate::utils::ssh::audit_ssh_ca();
+        for issue in ca_issues {
+            writeln!(out, "! {} ({})", issue.raw_line, issue.filename)?;
+        }
 
-        super::ports::Ports.execute()?;
+        // 3. Keys
+        let keys = crate::utils::ssh::get_user_keys()?;
+        if keys.is_empty() {
+            writeln!(out, "\n(No authorized_keys found)")?;
+        } else {
+            for key in keys {
+                // Show suffix (last 15 chars) per feedback
+                let suffix = if key.key.len() > 15 {
+                    &key.key[key.key.len() - 15..]
+                } else {
+                    &key.key
+                };
 
-        Ok(())
+                writeln!(out, "+ Key: {} ...{} (User: {} | {}) -> {}", 
+                    key.key_type, 
+                    suffix, 
+                    key.user, 
+                    key.comment,
+                    key.path
+                )?;
+            }
+        }
+        Ok(out)
+    }
+
+    fn enum_autoruns() -> eyre::Result<String> {
+        let mut out = String::new();
+        writeln!(out, "\n==== AUTORUNS")?;
+
+        // --- Timers ---
+        writeln!(out, "--- Timers")?;
+        
+        // We handle the Result here so that if systemctl fails, we log it 
+        // to the output report but CONTINUE to run the Cron checks below.
+        match crate::utils::scheduling::get_active_timers() {
+            Ok(timers) => {
+                if timers.is_empty() {
+                    writeln!(out, "(none)")?;
+                } else {
+                    for timer in timers.iter().take(20) {
+                        writeln!(out, "{} (Next: {})", timer.unit, timer.next_run)?;
+                    }
+                }
+            }
+            Err(e) => {
+                // Log to the report string so it's visible in the pager
+                writeln!(out, "Error querying systemd timers: {e}")?;
+                // Also log to stderr for immediate operator awareness (Teammate's request)
+                eprintln!("Error querying systemd timers: {e}");
+            }
+        }
+
+        // --- Cron ---
+        writeln!(out, "\n--- Cron")?;
+        // get_cron_entries handles its own iteration errors internally (via eprintln),
+        // but returns Result if initialization (load_users) fails. 
+        // If load_users fails, we can't really proceed with cron checks.
+        let crons = crate::utils::scheduling::get_cron_entries()?;
+        if crons.is_empty() {
+            writeln!(out, "(none)")?;
+        } else {
+            for entry in crons {
+                writeln!(out, "{:<10} {} {} ({})",
+                         entry.user,
+                         entry.schedule,
+                         ellipsize(60, &entry.command),
+                         entry.source)?;
+            }
+        }
+        
+        // get_periodic_scripts returns Vec and handles errors internally
+        let periodic = crate::utils::scheduling::get_periodic_scripts();
+        for script in periodic {
+            writeln!(out, "{} ({})", script.path, script.interval)?;
+            for issue in script.findings {
+                writeln!(out, "  ! {} ({}:{})", 
+                    issue.raw_content, 
+                    issue.filename, 
+                    issue.line_number.unwrap_or(0)
+                )?;
+            }
+        }
+
+        // --- At Jobs ---
+        // get_at_jobs returns Vec and handles errors internally
+        let at_jobs = crate::utils::scheduling::get_at_jobs();
+        if !at_jobs.is_empty() {
+            writeln!(out, "\n--- At Jobs")?;
+            for job in at_jobs {
+                writeln!(out, "{job}")?;
+            }
+        }
+
+        // --- Shell Audit ---
+        writeln!(out, "\n==== SHELL AUDIT")?;
+        
+        let env_issues = crate::utils::shell_audit::audit_environment_variables();
+        for issue in env_issues {
+            writeln!(out, "! {} ({})", issue.raw_content, issue.filename)?;
+        }
+        
+        // scan_shell_configs returns Result (load_users) but handles file access errors internally
+        let shell_findings = crate::utils::shell_audit::scan_shell_configs()?;
+        for issue in shell_findings {
+            writeln!(out, "! {} ({}:{})", 
+                issue.raw_content, 
+                issue.filename, 
+                issue.line_number.unwrap_or(0)
+            )?;
+        }
+        
+        Ok(out)
+    }
+
+    fn enum_containers() -> eyre::Result<String> {
+        let mut out = String::new();
+        writeln!(out, "\n==== CONTAINER RUNTIMES")?;
+        
+        let containers = crate::utils::containers::get_containers();
+        
+        if containers.is_empty() {
+            writeln!(out, "No active containers detected.")?;
+        } else {
+            writeln!(out, "{:<28} | {:<15} | {:<20} | {:<25} | IMAGE", "RUNTIME", "ID", "STATUS", "NAME")?;
+            writeln!(out, "{:-<28}-+-{:-<15}-+-{:-<20}-+-{:-<25}-+-{:-<20}", "", "", "", "", "")?;
+            
+            for c in containers {
+                let runtime_display = if let Some(ns) = &c.namespace {
+                    format!("{} ({})", c.runtime, ns)
+                } else {
+                    c.runtime.clone()
+                };
+
+                writeln!(out, "{:<28} | {:<15} | {:<20} | {:<25} | {}", 
+                    runtime_display, 
+                    truncate(24, &c.name), 
+                    c.status, 
+                    truncate(12, &c.id),
+                    c.image
+                )?;
+            }
+        }
+        
+        let compose = crate::utils::containers::find_compose_files();
+        if !compose.is_empty() {
+            writeln!(out, "\n--- Discovered Docker Compose Files")?;
+            for path in compose {
+                writeln!(out, "[+] {path}")?;
+            }
+        }
+        Ok(out)
+    }
+
+    fn enum_ports(display_cmdline: bool) -> eyre::Result<String> {
+        let mut out = String::new();
+        writeln!(out, "\n==== PORTS INFO")?;
+        let p = super::ports::Ports { display_cmdline };
+        out.push_str(&p.get_output()?);
+        Ok(out)
     }
 }

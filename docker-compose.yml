@@ -31,6 +31,12 @@ services:
     privileged: true # necessary for testing things like firewall
     command: bash --login -i
 
+  metasploitable:
+    image: tleemcjr/metasploitable2
+    volumes:
+      - .:/jj
+    privileged: true
+
   scratch:
     image: scratch
     volumes:
