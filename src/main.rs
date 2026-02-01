@@ -54,6 +54,7 @@ define_checks! {
     checks::CheckTypes {
         /// Troubleshoot an SSH connection
         Ssh, "ssh" => ssh::SshTroubleshooter,
+        Dns, "dns" => dns::Dns,
     }
 }
 
