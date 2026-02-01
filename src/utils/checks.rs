@@ -428,6 +428,7 @@ impl CheckResult {
 /// See [`crate::utils::checks`] for a description of how to make use of this trait
 pub trait Troubleshooter {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>>;
+    fn is_local(&self) -> bool { false }
 }
 
 impl<T> Troubleshooter for Box<T>
@@ -436,6 +437,10 @@ where
 {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
         self.deref().checks()
+    }
+
+    fn is_local(&self) -> bool {
+        self.deref().is_local()
     }
 }
 
@@ -600,6 +605,9 @@ impl CliTroubleshooter {
             }
             CheckResultType::Success => {
                 println!("{}", "Service appears to be up!".green());
+                if t.is_local() {
+                    println!("{}", "WARNING: you are using localhost for testing, you will not be able to identify if firewall is the problem".yellow());
+                }
             }
         }
 

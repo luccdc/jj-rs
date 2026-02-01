@@ -29,6 +29,8 @@ impl CheckStep<'_> for BinaryPortsCheck {
             ));
         }
 
+        let permission_errors = std::cell::RefCell::new(0);
+
         let procs = std::fs::read_dir("/proc").context("Could not open /proc")?;
 
         let procs = procs
@@ -39,27 +41,29 @@ impl CheckStep<'_> for BinaryPortsCheck {
             })
             .filter_map(|dir| dir.parse::<u32>().ok())
             .filter_map(|dir| {
-                nix::fcntl::readlink(&*format!("/proc/{dir}/exe"))
-                    .ok()
-                    .filter(|exe| {
+                match nix::fcntl::readlink(&*format!("/proc/{dir}/exe")) {
+                    Ok(exe) => {
                         let exe_str = exe.to_string_lossy();
-
-                        self.process_names
-                            .iter()
-                            .any(|proc_name| exe_str.ends_with(&**proc_name))
-                    })
-                    .map(|exe| (dir, exe.to_string_lossy().to_string()))
+                        if self.process_names.iter().any(|proc_name| exe_str.ends_with(&**proc_name)) {
+                            Some((dir, exe_str.to_string()))
+                        } else {
+                            None
+                        }
+                    },
+                    Err(_) => {
+                        *permission_errors.borrow_mut() += 1;
+                        None
+                    }
+                }
             })
             .filter_map(|(pid, exe)| {
-                let inodes = ports::socket_inodes_for_pid(pid)
-                    .ok()?
-                    .into_iter()
-                    .map(|inode| (inode, u64::from(pid)))
-                    .collect();
-
-                // Read from /proc/{pid}/net/{tcp,udp}6 instead to make sure that
-                // we are checking accross namespaces. It is the responsibility of
-                // the operator to verify firewall rules are correct
+                let inodes = match ports::socket_inodes_for_pid(pid) {
+                    Ok(i) => i.into_iter().map(|inode| (inode, u64::from(pid))).collect(),
+                    Err(_) => {
+                        *permission_errors.borrow_mut() += 1;
+                        return None;
+                    }
+                };
 
                 let ports = ports::parse_raw_ip_stats::<_, Ipv4Addr>(
                     format!("/proc/{pid}/net/tcp"),
@@ -104,8 +108,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
 
         let proc_listening = procs.iter().any(|(_, _, ports)| {
             ports.iter().any(|port| {
-                !port.local_address.is_loopback()
-                    && port.local_port == self.port
+                port.local_port == self.port
                     && (port.state
                         == (match self.protocol {
                             CheckIpProtocol::Tcp => ports::SocketState::LISTEN,
@@ -138,6 +141,8 @@ impl CheckStep<'_> for BinaryPortsCheck {
             })
             .collect::<serde_json::Value>();
 
+        let permission_errors = permission_errors.into_inner();
+
         if proc_listening {
             Ok(CheckResult::succeed(
                 format!(
@@ -149,11 +154,16 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 }),
             ))
         } else {
+            let mut msg = format!(
+                "Could not find a process with specified names listening on port {}",
+                self.port
+            );
+            if permission_errors > 0 {
+                msg.push_str(&format!(" ({} processes skipped due to permissions. Try running with sudo)", permission_errors));
+            }
+
             Ok(CheckResult::fail(
-                format!(
-                    "Could not find a process with specified names listening on port {}",
-                    self.port
-                ),
+                msg,
                 serde_json::json!({
                     "specified_names": self.process_names,
                     "processes": context_procs
