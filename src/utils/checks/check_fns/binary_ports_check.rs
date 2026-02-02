@@ -152,6 +152,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 "Could not find a process with specified names listening on port {}",
                 self.port
             );
+            #[cfg(unix)]
             if unsafe { libc::getuid() } != 0 {
                 msg.push_str(" (Some processes skipped due to permissions. Try running with sudo)");
             }

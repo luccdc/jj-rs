@@ -28,17 +28,18 @@ impl CheckStep<'_> for SystemdServiceCheck {
         }
 
         for name in &self.service_names {
-            if let Ok(service_info) = get_service_info(name)
-                && is_service_active(&service_info)
-            {
-                return Ok(CheckResult::succeed(
-                    format!("systemd service '{name}' is active"),
-                    serde_json::json!({
-                       "service": name,
-                       "main_pid": service_info.get("MainPID"),
-                       "running_since": service_info.get("ExecMainStartTimestamp")
-                    }),
-                ));
+            #[allow(clippy::collapsible_if)]
+            if let Ok(service_info) = get_service_info(name) {
+                if is_service_active(&service_info) {
+                    return Ok(CheckResult::succeed(
+                        format!("systemd service '{name}' is active"),
+                        serde_json::json!({
+                           "service": name,
+                           "main_pid": service_info.get("MainPID"),
+                           "running_since": service_info.get("ExecMainStartTimestamp")
+                        }),
+                    ));
+                }
             }
         }
 
@@ -97,15 +98,16 @@ impl CheckStep<'_> for OpenrcServiceCheck {
 
         for name in &self.service_names {
             // We ignore errors here because we want to check all services
-            if let Ok((_, res)) = qx(&format!("rc-service {name} status"))
-                && res.contains("status: started")
-            {
-                return Ok(CheckResult::succeed(
-                    format!("OpenRC service '{name}' is active"),
-                    serde_json::json!({
-                        "service": name,
-                    }),
-                ));
+            #[allow(clippy::collapsible_if)]
+            if let Ok((_, res)) = qx(&format!("rc-service {name} status")) {
+                if res.contains("status: started") {
+                    return Ok(CheckResult::succeed(
+                        format!("OpenRC service '{name}' is active"),
+                        serde_json::json!({
+                            "service": name,
+                        }),
+                    ));
+                }
             }
         }
 
