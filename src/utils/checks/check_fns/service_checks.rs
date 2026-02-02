@@ -1,16 +1,16 @@
-use eyre::Context;
-
 use crate::utils::{
     checks::{CheckResult, CheckStep, TroubleshooterRunner},
     qx,
 };
+
+
 
 #[cfg(unix)]
 use crate::utils::systemd::{get_service_info, is_service_active};
 
 #[cfg(unix)]
 struct SystemdServiceCheck {
-    service_name: String,
+    service_names: Vec<String>,
 }
 
 #[cfg(unix)]
@@ -27,25 +27,28 @@ impl CheckStep<'_> for SystemdServiceCheck {
             ));
         }
 
-        let service_info = get_service_info(&self.service_name)
-            .context("Could not pull systemd service information")?;
-
-        if is_service_active(&service_info) {
-            Ok(CheckResult::succeed(
-                "systemd service is active",
-                serde_json::json!({
-                   "main_pid": service_info.get("MainPID"),
-                   "running_since": service_info.get("ExecMainStartTimestamp")
-                }),
-            ))
-        } else {
-            Ok(CheckResult::fail(
-                "systemd service is not active",
-                serde_json::json!({
-                   "stopped_since": service_info.get("InactiveEnterTimestamp")
-                }),
-            ))
+        for name in &self.service_names {
+            if let Ok(service_info) = get_service_info(name) {
+                if is_service_active(&service_info) {
+                    return Ok(CheckResult::succeed(
+                        format!("systemd service '{}' is active", name),
+                        serde_json::json!({
+                           "service": name,
+                           "main_pid": service_info.get("MainPID"),
+                           "running_since": service_info.get("ExecMainStartTimestamp")
+                        }),
+                    ));
+                }
+            }
         }
+
+        Ok(CheckResult::fail(
+            format!(
+                "Could not find any of the following services: {}",
+                self.service_names.join(", ")
+            ),
+            serde_json::json!(null),
+        ))
     }
 }
 
@@ -60,13 +63,22 @@ impl CheckStep<'_> for SystemdServiceCheck {
 #[cfg(unix)]
 pub fn systemd_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(SystemdServiceCheck {
-        service_name: name.into(),
+        service_names: vec![name.into()],
+    })
+}
+
+#[cfg(unix)]
+pub fn systemd_services_check<'a, S: Into<String>, I: IntoIterator<Item = S>>(
+    names: I,
+) -> Box<dyn CheckStep<'a> + 'a> {
+    Box::new(SystemdServiceCheck {
+        service_names: names.into_iter().map(|s| s.into()).collect(),
     })
 }
 
 #[cfg(unix)]
 struct OpenrcServiceCheck {
-    service_name: String,
+    service_names: Vec<String>,
 }
 
 #[cfg(unix)]
@@ -83,21 +95,27 @@ impl CheckStep<'_> for OpenrcServiceCheck {
             ));
         }
 
-        let res = qx(&format!("rc-service {} status", &self.service_name))
-            .context("Could not pull openrc service information")?
-            .1;
-
-        if res.contains("status: started") {
-            Ok(CheckResult::succeed(
-                "OpenRC service is active",
-                serde_json::json!(null),
-            ))
-        } else {
-            Ok(CheckResult::fail(
-                "OpenRC service is not active",
-                serde_json::json!(null),
-            ))
+        for name in &self.service_names {
+            // We ignore errors here because we want to check all services
+            if let Ok((_, res)) = qx(&format!("rc-service {} status", name)) {
+                if res.contains("status: started") {
+                    return Ok(CheckResult::succeed(
+                        format!("OpenRC service '{}' is active", name),
+                        serde_json::json!({
+                            "service": name,
+                        }),
+                    ));
+                }
+            }
         }
+
+        Ok(CheckResult::fail(
+            format!(
+                "Could not find any of the following services: {}",
+                self.service_names.join(", ")
+            ),
+            serde_json::json!(null),
+        ))
     }
 }
 
@@ -110,6 +128,15 @@ impl CheckStep<'_> for OpenrcServiceCheck {
 #[cfg(unix)]
 pub fn openrc_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(OpenrcServiceCheck {
-        service_name: name.into(),
+        service_names: vec![name.into()],
+    })
+}
+
+#[cfg(unix)]
+pub fn openrc_services_check<'a, S: Into<String>, I: IntoIterator<Item = S>>(
+    names: I,
+) -> Box<dyn CheckStep<'a> + 'a> {
+    Box::new(OpenrcServiceCheck {
+        service_names: names.into_iter().map(|s| s.into()).collect(),
     })
 }

@@ -29,8 +29,6 @@ impl CheckStep<'_> for BinaryPortsCheck {
             ));
         }
 
-        let permission_errors = std::cell::RefCell::new(0);
-
         let procs = std::fs::read_dir("/proc").context("Could not open /proc")?;
 
         let procs = procs
@@ -51,7 +49,6 @@ impl CheckStep<'_> for BinaryPortsCheck {
                         }
                     },
                     Err(_) => {
-                        *permission_errors.borrow_mut() += 1;
                         None
                     }
                 }
@@ -60,7 +57,6 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 let inodes = match ports::socket_inodes_for_pid(pid) {
                     Ok(i) => i.into_iter().map(|inode| (inode, u64::from(pid))).collect(),
                     Err(_) => {
-                        *permission_errors.borrow_mut() += 1;
                         return None;
                     }
                 };
@@ -141,8 +137,6 @@ impl CheckStep<'_> for BinaryPortsCheck {
             })
             .collect::<serde_json::Value>();
 
-        let permission_errors = permission_errors.into_inner();
-
         if proc_listening {
             Ok(CheckResult::succeed(
                 format!(
@@ -158,8 +152,8 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 "Could not find a process with specified names listening on port {}",
                 self.port
             );
-            if permission_errors > 0 {
-                msg.push_str(&format!(" ({} processes skipped due to permissions. Try running with sudo)", permission_errors));
+            if unsafe { libc::getuid() } != 0 {
+                msg.push_str(" (Some processes skipped due to permissions. Try running with sudo)");
             }
 
             Ok(CheckResult::fail(

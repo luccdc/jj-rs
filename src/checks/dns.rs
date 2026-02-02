@@ -49,90 +49,7 @@ impl Default for Dns {
     }
 }
 
-#[cfg(unix)]
-struct AnyServiceCheckStep<'a> {
-    name: &'static str,
-    checks: Vec<Box<dyn CheckStep<'a> + 'a>>,
-}
 
-#[cfg(unix)]
-impl<'a> CheckStep<'a> for AnyServiceCheckStep<'a> {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-
-    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
-        let mut failed_logs = Vec::new();
-        let mut not_run_logs = Vec::new();
-
-        for check in &self.checks {
-            let res = check.run_check(tr)?;
-            match res.result_type {
-                CheckResultType::Success => return Ok(res),
-                CheckResultType::Failure => failed_logs.push(format!("{}: {}", check.name(), res.log_item)),
-                CheckResultType::NotRun => not_run_logs.push(format!("{}: {}", check.name(), res.log_item)),
-            }
-        }
-
-        if failed_logs.is_empty() {
-             Ok(CheckResult::not_run(
-                "No supported DNS service installed/checkable",
-                serde_json::json!({
-                    "reasons": not_run_logs
-                })
-            ))
-        } else {
-             Ok(CheckResult::fail(
-                "No supported DNS service found active",
-                serde_json::json!({
-                    "failures": failed_logs,
-                    "not_run": not_run_logs
-                })
-            ))
-        }
-    }
-}
-
-#[cfg(unix)]
-fn any_check<'a>(
-    name: &'static str,
-    checks: Vec<Box<dyn CheckStep<'a> + 'a>>,
-) -> Box<dyn CheckStep<'a> + 'a> {
-    Box::new(AnyServiceCheckStep { name, checks })
-}
-
-#[cfg(unix)]
-struct NamedServiceCheckStep<'a> {
-    name: &'static str,
-    service_name: String,
-    inner: Box<dyn CheckStep<'a> + 'a>,
-}
-
-#[cfg(unix)]
-impl<'a> CheckStep<'a> for NamedServiceCheckStep<'a> {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-
-    fn run_check(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
-        let mut res = self.inner.run_check(tr)?;
-        res.log_item = format!("{} ({})", res.log_item, self.service_name);
-        Ok(res)
-    }
-}
-
-#[cfg(unix)]
-fn named_check<'a>(
-    name: &'static str,
-    service: &str,
-    inner: Box<dyn CheckStep<'a> + 'a>,
-) -> Box<dyn CheckStep<'a> + 'a> {
-    Box::new(NamedServiceCheckStep {
-        name,
-        service_name: service.to_string(),
-        inner,
-    })
-}
 
 #[cfg(unix)]
 impl Troubleshooter for Dns {
@@ -140,58 +57,20 @@ impl Troubleshooter for Dns {
 
         Ok(vec![
             filter_check(
-                any_check(
-                    "Check for any DNS service",
-                    vec![
-                        named_check(
-                            "Check named service",
-                            "named",
-                            systemd_service_check("named"),
-                        ),
-                        named_check(
-                            "Check bind9 service",
-                            "bind9",
-                            systemd_service_check("bind9"),
-                        ),
-                        named_check(
-                            "Check systemd-resolved service",
-                            "systemd-resolved",
-                            systemd_service_check("systemd-resolved"),
-                        ),
-                        named_check(
-                            "Check unbound service",
-                            "unbound",
-                            systemd_service_check("unbound"),
-                        ),
-                        named_check(
-                            "Check dnsmasq service",
-                            "dnsmasq",
-                            systemd_service_check("dnsmasq"),
-                        ),
-                        named_check(
-                            "Check named service (openrc)",
-                            "named",
-                            openrc_service_check("named"),
-                        ),
-                        named_check(
-                            "Check bind9 service (openrc)",
-                            "bind9",
-                            openrc_service_check("bind9"),
-                        ),
-                        named_check(
-                            "Check unbound service (openrc)",
-                            "unbound",
-                            openrc_service_check("unbound"),
-                        ),
-                        named_check(
-                            "Check dnsmasq service (openrc)",
-                            "dnsmasq",
-                            openrc_service_check("dnsmasq"),
-                        ),
-                    ]
-                ),
+                systemd_services_check(vec![
+                    "named",
+                    "bind9",
+                    "systemd-resolved",
+                    "unbound",
+                    "dnsmasq",
+                ]),
                 self.host.is_loopback() || self.local,
-                "Cannot check systemd/openrc service on remote host",
+                "Cannot check systemd service on remote host",
+            ),
+            filter_check(
+                openrc_services_check(vec!["named", "bind9", "unbound", "dnsmasq"]),
+                self.host.is_loopback() || self.local,
+                "Cannot check openrc service on remote host",
             ),
             binary_ports_check(
                 ["named", "bind9", "systemd-resolved", "unbound", "dnsmasq"],
