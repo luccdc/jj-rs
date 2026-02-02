@@ -39,27 +39,26 @@ impl CheckStep<'_> for BinaryPortsCheck {
             })
             .filter_map(|dir| dir.parse::<u32>().ok())
             .filter_map(|dir| {
-                match nix::fcntl::readlink(&*format!("/proc/{dir}/exe")) {
-                    Ok(exe) => {
+                nix::fcntl::readlink(&*format!("/proc/{dir}/exe"))
+                    .ok()
+                    .filter(|exe| {
                         let exe_str = exe.to_string_lossy();
-                        if self.process_names.iter().any(|proc_name| exe_str.ends_with(&**proc_name)) {
-                            Some((dir, exe_str.to_string()))
-                        } else {
-                            None
-                        }
-                    },
-                    Err(_) => {
-                        None
-                    }
-                }
+                        self.process_names
+                            .iter()
+                            .any(|proc_name| exe_str.ends_with(&**proc_name))
+                    })
+                    .map(|exe| (dir, exe.to_string_lossy().to_string()))
             })
             .filter_map(|(pid, exe)| {
-                let inodes = match ports::socket_inodes_for_pid(pid) {
-                    Ok(i) => i.into_iter().map(|inode| (inode, u64::from(pid))).collect(),
-                    Err(_) => {
-                        return None;
-                    }
-                };
+                let inodes = ports::socket_inodes_for_pid(pid)
+                    .ok()?
+                    .into_iter()
+                    .map(|inode| (inode, u64::from(pid)))
+                    .collect();
+
+                // Read from /proc/{pid}/net/{tcp,udp}6 instead to make sure that
+                // we are checking accross namespaces. It is the responsibility of
+                // the operator to verify firewall rules are correct
 
                 let ports = ports::parse_raw_ip_stats::<_, Ipv4Addr>(
                     format!("/proc/{pid}/net/tcp"),
@@ -104,7 +103,8 @@ impl CheckStep<'_> for BinaryPortsCheck {
 
         let proc_listening = procs.iter().any(|(_, _, ports)| {
             ports.iter().any(|port| {
-                port.local_port == self.port
+                !port.local_address.is_loopback()
+                    && port.local_port == self.port
                     && (port.state
                         == (match self.protocol {
                             CheckIpProtocol::Tcp => ports::SocketState::LISTEN,

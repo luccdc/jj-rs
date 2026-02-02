@@ -60,7 +60,6 @@ impl Troubleshooter for Dns {
                 systemd_services_check(vec![
                     "named",
                     "bind9",
-                    "systemd-resolved",
                     "unbound",
                     "dnsmasq",
                 ]),
@@ -73,13 +72,13 @@ impl Troubleshooter for Dns {
                 "Cannot check openrc service on remote host",
             ),
             binary_ports_check(
-                ["named", "bind9", "systemd-resolved", "unbound", "dnsmasq"],
+                ["named", "bind9", "unbound", "dnsmasq"],
                 self.port,
                 CheckIpProtocol::Udp,
                 self.host.is_loopback() || self.local,
             ),
             binary_ports_check(
-                ["named", "bind9", "systemd-resolved", "unbound", "dnsmasq"],
+                ["named", "bind9", "unbound", "dnsmasq"],
                 self.port,
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,
