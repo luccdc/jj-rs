@@ -3,8 +3,6 @@ use crate::utils::{
     qx,
 };
 
-
-
 #[cfg(unix)]
 use crate::utils::systemd::{get_service_info, is_service_active};
 
