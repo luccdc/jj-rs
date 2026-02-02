@@ -6,7 +6,6 @@ use std::{
     collections::{ HashMap, HashSet },
 };
 
-use tracing::warn;
 use eyre::{ Result};
 use sha2::{Sha256, Digest};
 
@@ -75,8 +74,17 @@ impl SaveHashes {
         };
 
         for path in paths {
-            for entry in WalkDir::new(path).max_depth(if self.common.recursive { 10 } else { 1 }) {
-                let e = entry?;
+            let wd = WalkDir::new(path);
+            for entry in if self.common.recursive {wd} else { wd.max_depth(1) } {
+
+                let e = match entry {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        continue;
+                    }
+                };
+
                 if e.path().is_file() {
 
                     writeln!(ob, "F {} {} {}",
@@ -123,12 +131,10 @@ impl VerifyHashes {
             let line: String = line_result?;
 
             let mut split = line.split_whitespace();
-            if let (Some( pathtype ), Some(path)) =  (split.next(), split.next()) {
-                match pathtype {
-                    "D" => { tracked_dirs.insert(PathBuf::from(path));},
-                    "F" => { tracked_files.insert(PathBuf::from(path), split.next().expect("No hash!!").to_string()); },
-                    _ => warn!("Unrecognized filetype!"),
-                }
+            match (split.next(), split.next(), split.next()) {
+                (Some("F"), Some(path), Some(hash)) => { tracked_files.insert(PathBuf::from(path.to_string()), hash.to_string()); },
+                (Some("D"), Some(path), _) => { tracked_dirs.insert(PathBuf::from(path.to_string()));},
+                _ => eprintln!("Bad line: {line}"),
             }
         }
 
@@ -138,14 +144,29 @@ impl VerifyHashes {
         };
 
         for path in paths {
-            for entry in WalkDir::new(path).max_depth(if self.common.recursive { 10 } else { 1 }) {
-                let e = entry?;
+
+            let wd = WalkDir::new(path);
+            for entry in if self.common.recursive {wd} else { wd.max_depth(1) } {
+                let e = match entry {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        continue;
+                    }
+                };
                 let disp = e.path().display();
                 if e.path().is_file() {
                     // Check if present in tracked_paths, otherwise it's new.
                     if let Some(old_hash) = tracked_files.remove(e.path()) {
                         // Ok, it's present. Is it valid? 
-                        let new_hash = sha256_file(e.path())?;
+                        let new_hash = match sha256_file(e.path()) {
+                            Ok(h) => h,
+                            Err(e) => {
+                                eprintln!("Error: {e}");
+                                continue;
+                            }
+                        };
+
                         if new_hash == old_hash {
                             //Great! It's valid!
                             if !self.short {
