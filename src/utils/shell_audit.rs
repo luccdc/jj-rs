@@ -100,7 +100,12 @@ pub fn scan_shell_configs() -> eyre::Result<Vec<ShellIssue>> {
         ".zlogout",
         ".xinitrc",
         ".xsession",
-    ];
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .chain(std::env::var("BASH_ENV"))
+    .chain(std::env::var("ENV"))
+    .collect::<Vec<_>>();
 
     for user in users {
         for conf_name in &user_configs {
