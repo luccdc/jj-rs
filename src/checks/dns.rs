@@ -78,12 +78,12 @@ impl Troubleshooter for Dns {
                 self.host.is_loopback() || self.local,
             ),
             binary_ports_check(
-                ["named", "bind9", "unbound", "dnsmasq"],
+                ["named", "bind9", "systemd-resolved", "unbound", "dnsmasq"],
                 self.port,
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,
             ),
-            check_fn("DNS Query", |tr| self.try_dns_query(tr)),
+            check_fn("DNS Query", |tr| Ok(self.try_dns_query(tr))),
             passive_tcpdump_check(
                 self.port,
                 self.external,
@@ -101,7 +101,7 @@ impl Troubleshooter for Dns {
 #[cfg(windows)]
 impl Troubleshooter for Dns {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
-        Ok(vec![check_fn("DNS Query", |tr| self.try_dns_query(tr))])
+        Ok(vec![check_fn("DNS Query", |tr| Ok(self.try_dns_query(tr)))])
     }
 
     fn is_local(&self) -> bool {
@@ -110,7 +110,7 @@ impl Troubleshooter for Dns {
 }
 
 impl Dns {
-    fn try_dns_query(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
+    fn try_dns_query(&self, _tr: &mut dyn TroubleshooterRunner) -> CheckResult {
         let host = self.host;
         let port = self.port;
         let domain = &self.domain;
@@ -120,8 +120,7 @@ impl Dns {
 
         // Try using nslookup as it is very common
         let cmd = format!(
-            "nslookup -port={} -q={} {} {}",
-            port, qtype, domain, host
+            "nslookup -port={port} -q={qtype} {domain} {host}"
         );
         let res = crate::utils::qx(&cmd);
 
@@ -132,42 +131,42 @@ impl Dns {
         match res {
             Ok((status, output)) if status.success() => {
                 if output.to_lowercase().contains("can't find") || output.contains("NXDOMAIN") {
-                    Ok(CheckResult::fail(
-                        format!("DNS query for {} failed (record not found)", domain),
+                    CheckResult::fail(
+                        format!("DNS query for {domain} failed (record not found)"),
                         serde_json::json!({
                             "command": cmd,
                             "output": output,
                             "system_logs": logs,
                         }),
-                    ))
+                    )
                 } else {
-                    Ok(CheckResult::succeed(
-                        format!("DNS query for {} succeeded", domain),
+                    CheckResult::succeed(
+                        format!("DNS query for {domain} succeeded"),
                         serde_json::json!({
                             "command": cmd,
                             "output": output,
                             "system_logs": logs,
                         }),
-                    ))
+                    )
                 }
             }
-            Ok((status, output)) => Ok(CheckResult::fail(
-                format!("DNS query for {} failed", domain),
+            Ok((status, output)) => CheckResult::fail(
+                format!("DNS query for {domain} failed"),
                 serde_json::json!({
                     "command": cmd,
                     "exit_code": status.code(),
                     "output": output,
                     "system_logs": logs,
                 }),
-            )),
-            Err(e) => Ok(CheckResult::fail(
+            ),
+            Err(e) => CheckResult::fail(
                 "Could not run DNS query command",
                 serde_json::json!({
                     "command": cmd,
                     "error": format!("{e:?}"),
                     "system_logs": logs,
                 }),
-            )),
+            ),
         }
     }
 }

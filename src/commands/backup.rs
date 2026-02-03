@@ -112,10 +112,10 @@ impl Backup {
 
         for path in paths {
             for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
-                if let Ok(meta) = entry.metadata() {
-                    if meta.is_file() {
-                        total += meta.len();
-                    }
+                if let Ok(meta) = entry.metadata()
+                    && meta.is_file()
+                {
+                    total += meta.len();
                 }
             }
         }

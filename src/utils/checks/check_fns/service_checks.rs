@@ -28,17 +28,17 @@ impl CheckStep<'_> for SystemdServiceCheck {
         }
 
         for name in &self.service_names {
-            if let Ok(service_info) = get_service_info(name) {
-                if is_service_active(&service_info) {
-                    return Ok(CheckResult::succeed(
-                        format!("systemd service '{}' is active", name),
-                        serde_json::json!({
-                           "service": name,
-                           "main_pid": service_info.get("MainPID"),
-                           "running_since": service_info.get("ExecMainStartTimestamp")
-                        }),
-                    ));
-                }
+            if let Ok(service_info) = get_service_info(name)
+                && is_service_active(&service_info)
+            {
+                return Ok(CheckResult::succeed(
+                    format!("systemd service '{name}' is active"),
+                    serde_json::json!({
+                       "service": name,
+                       "main_pid": service_info.get("MainPID"),
+                       "running_since": service_info.get("ExecMainStartTimestamp")
+                    }),
+                ));
             }
         }
 
@@ -72,7 +72,7 @@ pub fn systemd_services_check<'a, S: Into<String>, I: IntoIterator<Item = S>>(
     names: I,
 ) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(SystemdServiceCheck {
-        service_names: names.into_iter().map(|s| s.into()).collect(),
+        service_names: names.into_iter().map(std::convert::Into::into).collect(),
     })
 }
 
@@ -97,15 +97,15 @@ impl CheckStep<'_> for OpenrcServiceCheck {
 
         for name in &self.service_names {
             // We ignore errors here because we want to check all services
-            if let Ok((_, res)) = qx(&format!("rc-service {} status", name)) {
-                if res.contains("status: started") {
-                    return Ok(CheckResult::succeed(
-                        format!("OpenRC service '{}' is active", name),
-                        serde_json::json!({
-                            "service": name,
-                        }),
-                    ));
-                }
+            if let Ok((_, res)) = qx(&format!("rc-service {name} status"))
+                && res.contains("status: started")
+            {
+                return Ok(CheckResult::succeed(
+                    format!("OpenRC service '{name}' is active"),
+                    serde_json::json!({
+                        "service": name,
+                    }),
+                ));
             }
         }
 
@@ -137,6 +137,6 @@ pub fn openrc_services_check<'a, S: Into<String>, I: IntoIterator<Item = S>>(
     names: I,
 ) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(OpenrcServiceCheck {
-        service_names: names.into_iter().map(|s| s.into()).collect(),
+        service_names: names.into_iter().map(std::convert::Into::into).collect(),
     })
 }

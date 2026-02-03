@@ -18,7 +18,7 @@ impl super::Command for Get {
         let path = self.path.or_else(|| {
             self.url
                 .path_segments()
-                .and_then(|segments| segments.last().map(PathBuf::from_str))
+                .and_then(|mut segments| segments.next_back().map(PathBuf::from_str))
                 .and_then(Result::ok)
         });
 
@@ -32,7 +32,7 @@ impl super::Command for Get {
             let Some(file_name) = self
                 .url
                 .path_segments()
-                .and_then(|segments| segments.last().map(PathBuf::from_str))
+                .and_then(|mut segments| segments.next_back().map(PathBuf::from_str))
             else {
                 eyre::bail!(
                     "Directory was specified for both download path and file to download; specify a file download path"
@@ -60,7 +60,7 @@ impl super::Command for Get {
         let client = reqwest::blocking::Client::new();
         let request = client.get(self.url.clone());
 
-        let request = if path.extension().map(|e| e == "zip").unwrap_or(false) {
+        let request = if path.extension().is_some_and(|e| e == "zip") {
             request.header("accept", "application/zip")
         } else {
             request
