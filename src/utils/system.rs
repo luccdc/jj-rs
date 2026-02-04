@@ -1,295 +1,227 @@
-#![allow(dead_code)]
-//metrics like cpumode::instant are never used and memstats data are never read
-//so they can be used for future commands
-use eyre::eyre;
+#[allow(dead_code)]
+use eyre::{Result, eyre};
 
-/// How CPU usage should be sampled.
-#[derive(Debug, Clone, Copy)]
-pub enum CpuMode {
-    /// One delta sample over `interval_ms`.
-    Instant,
-    /// Average of N delta samples, each separated by `interval_ms`.
-    Average { samples: u32 },
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Debug)]
 pub struct MemStats {
     pub total_bytes: u64,
-    pub avail_bytes: u64, // "available" / pressure definition
+    pub avail_bytes: u64, // pressure / MemAvailable definition
     pub used_bytes: u64,
     pub used_percent: f64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Debug)]
 pub struct DiskStats {
     pub total_bytes: u64,
-    pub avail_bytes: u64, // available to caller/non-root where possible
+    pub avail_bytes: u64, // available to non-root where possible
     pub used_bytes: u64,
     pub free_percent: f64,
     pub used_percent: f64,
 }
 
-/// Human-readable formatter you can reuse anywhere.
-pub fn fmt_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
-    let mut size = bytes as f64;
-    let mut unit = 0usize;
-
-    while size >= 1024.0 && unit < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit += 1;
-    }
-
-    format!("{size:.1}{}", UNITS[unit])
+#[derive(Clone, Debug)]
+pub struct Snapshot {
+    pub cpu_percent: f64,
+    pub mem: MemStats,
+    pub disk: DiskStats,
 }
 
-/// CPU usage as a percent [0..100].
-pub fn cpu_usage_percent(mode: CpuMode, interval_ms: u64) -> eyre::Result<f64> {
-    #[cfg(unix)]
-    {
-        fn read_cpu_times() -> eyre::Result<(u64, u64)> {
-            let stat = std::fs::read_to_string("/proc/stat")?;
-            let line = stat
-                .lines()
-                .find(|l| l.starts_with("cpu "))
-                .ok_or_else(|| eyre!("missing cpu line in /proc/stat"))?;
+/* ============================== CPU ============================== */
 
-            // cpu user nice system idle iowait irq softirq steal guest guest_nice
-            let mut it = line.split_whitespace();
-            let _ = it.next(); // "cpu"
+#[cfg(unix)]
+pub fn cpu_percent() -> Result<f64> {
+    fn read_cpu() -> Result<(u64, u64)> {
+        let stat = std::fs::read_to_string("/proc/stat")?;
+        let line = stat
+            .lines()
+            .find(|l| l.starts_with("cpu "))
+            .ok_or_else(|| eyre!("missing cpu line"))?;
 
-            let user: u64 = it.next().ok_or_else(|| eyre!("cpu user"))?.parse()?;
-            let nice: u64 = it.next().ok_or_else(|| eyre!("cpu nice"))?.parse()?;
-            let system: u64 = it.next().ok_or_else(|| eyre!("cpu system"))?.parse()?;
-            let idle: u64 = it.next().ok_or_else(|| eyre!("cpu idle"))?.parse()?;
-            let iowait: u64 = it.next().unwrap_or("0").parse()?;
-            let irq: u64 = it.next().unwrap_or("0").parse()?;
-            let softirq: u64 = it.next().unwrap_or("0").parse()?;
-            let steal: u64 = it.next().unwrap_or("0").parse()?;
+        let mut it = line.split_whitespace();
+        it.next(); // "cpu"
 
-            let idle_all = idle + iowait;
-            let non_idle = user + nice + system + irq + softirq + steal;
-            let total = idle_all + non_idle;
+        let user: u64 = it.next().ok_or_else(|| eyre!("user"))?.parse()?;
+        let nice: u64 = it.next().ok_or_else(|| eyre!("nice"))?.parse()?;
+        let system: u64 = it.next().ok_or_else(|| eyre!("system"))?.parse()?;
+        let idle: u64 = it.next().ok_or_else(|| eyre!("idle"))?.parse()?;
+        let iowait: u64 = it.next().unwrap_or("0").parse()?;
+        let irq: u64 = it.next().unwrap_or("0").parse()?;
+        let softirq: u64 = it.next().unwrap_or("0").parse()?;
+        let steal: u64 = it.next().unwrap_or("0").parse()?;
 
-            Ok((idle_all, total))
-        }
+        let idle_all = idle + iowait;
+        let non_idle = user + nice + system + irq + softirq + steal;
+        let total = idle_all + non_idle;
 
-        let samples = match mode {
-            CpuMode::Instant => 1,
-            CpuMode::Average { samples } => samples.max(1),
-        };
-
-        let mut idle_sum = 0u64;
-        let mut total_sum = 0u64;
-
-        for _ in 0..samples {
-            let (idle1, total1) = read_cpu_times()?;
-            std::thread::sleep(std::time::Duration::from_millis(interval_ms));
-            let (idle2, total2) = read_cpu_times()?;
-
-            idle_sum += idle2.saturating_sub(idle1);
-            total_sum += total2.saturating_sub(total1);
-        }
-
-        let percent = if total_sum == 0 {
-            0.0
-        } else {
-            (1.0 - (idle_sum as f64 / total_sum as f64)) * 100.0
-        };
-
-        return Ok(percent);
+        Ok((idle_all, total))
     }
 
-    #[cfg(windows)]
-    unsafe {
-        use windows::Win32::{Foundation::FILETIME, System::Threading::GetSystemTimes};
+    let mut idle_sum = 0u64;
+    let mut total_sum = 0u64;
 
-        fn merge_time(f: FILETIME) -> u64 {
+    // multi-sample for stability
+    for _ in 0..5 {
+        let (i1, t1) = read_cpu()?;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let (i2, t2) = read_cpu()?;
+
+        idle_sum += i2.saturating_sub(i1);
+        total_sum += t2.saturating_sub(t1);
+    }
+
+    if total_sum == 0 {
+        Ok(0.0)
+    } else {
+        Ok((1.0 - idle_sum as f64 / total_sum as f64) * 100.0)
+    }
+}
+
+#[cfg(windows)]
+pub fn cpu_percent() -> Result<f64> {
+    use windows::Win32::{Foundation::FILETIME, System::Threading::GetSystemTimes};
+
+    unsafe {
+        fn merge(f: FILETIME) -> u64 {
             ((f.dwHighDateTime as u64) << 32) | (f.dwLowDateTime as u64)
         }
 
-        let samples = match mode {
-            CpuMode::Instant => 1,
-            CpuMode::Average { samples } => samples.max(1),
-        };
+        let mut idle1 = FILETIME::default();
+        let mut kern1 = FILETIME::default();
+        let mut user1 = FILETIME::default();
 
-        let mut didle_sum = 0u64;
-        let mut dtotal_sum = 0u64;
+        GetSystemTimes(Some(&mut idle1), Some(&mut kern1), Some(&mut user1))?;
 
-        for _ in 0..samples {
-            let mut idle1: FILETIME = std::mem::zeroed();
-            let mut kern1: FILETIME = std::mem::zeroed();
-            let mut user1: FILETIME = std::mem::zeroed();
-            let mut idle2: FILETIME = std::mem::zeroed();
-            let mut kern2: FILETIME = std::mem::zeroed();
-            let mut user2: FILETIME = std::mem::zeroed();
+        std::thread::sleep(std::time::Duration::from_millis(1000));
 
-            GetSystemTimes(Some(&mut idle1), Some(&mut kern1), Some(&mut user1))?;
-            std::thread::sleep(std::time::Duration::from_millis(interval_ms));
-            GetSystemTimes(Some(&mut idle2), Some(&mut kern2), Some(&mut user2))?;
+        let mut idle2 = FILETIME::default();
+        let mut kern2 = FILETIME::default();
+        let mut user2 = FILETIME::default();
 
-            let idle1 = merge_time(idle1);
-            let kern1 = merge_time(kern1);
-            let user1 = merge_time(user1);
-            let idle2 = merge_time(idle2);
-            let kern2 = merge_time(kern2);
-            let user2 = merge_time(user2);
+        GetSystemTimes(Some(&mut idle2), Some(&mut kern2), Some(&mut user2))?;
 
-            let didle = idle2.saturating_sub(idle1);
-            let dkern = kern2.saturating_sub(kern1);
-            let duser = user2.saturating_sub(user1);
+        let idle = merge(idle2) - merge(idle1);
+        let kern = merge(kern2) - merge(kern1);
+        let user = merge(user2) - merge(user1);
 
-            let dtotal = dkern + duser;
+        let total = kern + user;
+        let busy = total.saturating_sub(idle);
 
-            didle_sum += didle;
-            dtotal_sum += dtotal;
-        }
-
-        let percent = if dtotal_sum == 0 {
-            0.0
-        } else {
-            let dbusy = dtotal_sum.saturating_sub(didle_sum);
-            100.0 * (dbusy as f64) / (dtotal_sum as f64)
-        };
-
-        return Ok(percent);
+        Ok(100.0 * busy as f64 / total as f64)
     }
 }
 
-/// Memory stats showing the memory avaliable.
-pub fn mem_stats() -> eyre::Result<MemStats> {
-    #[cfg(target_os = "linux")]
-    {
-        let meminfo = std::fs::read_to_string("/proc/meminfo")?;
+/* ============================== MEMORY ============================== */
 
-        let mut total_kb: Option<u64> = None;
-        let mut avail_kb: Option<u64> = None;
+#[cfg(target_os = "linux")]
+pub fn mem_stats() -> Result<MemStats> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo")?;
 
-        for line in meminfo.lines() {
-            if line.starts_with("MemTotal:") {
-                total_kb = line.split_whitespace().nth(1).and_then(|n| n.parse().ok());
-            } else if line.starts_with("MemAvailable:") {
-                avail_kb = line.split_whitespace().nth(1).and_then(|n| n.parse().ok());
-            }
+    let mut total_kb = None;
+    let mut avail_kb = None;
 
-            if total_kb.is_some() && avail_kb.is_some() {
-                break;
-            }
+    for line in meminfo.lines() {
+        if line.starts_with("MemTotal:") {
+            total_kb = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse::<u64>().ok());
+        } else if line.starts_with("MemAvailable:") {
+            avail_kb = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse::<u64>().ok());
         }
 
-        let total_bytes = total_kb.ok_or_else(|| eyre!("MemTotal not found"))? * 1024;
-        let avail_bytes = avail_kb.ok_or_else(|| eyre!("MemAvailable not found"))? * 1024;
-        let used_bytes = total_bytes.saturating_sub(avail_bytes);
-
-        let used_percent = if total_bytes == 0 {
-            0.0
-        } else {
-            (used_bytes as f64 / total_bytes as f64) * 100.0
-        };
-
-        return Ok(MemStats {
-            total_bytes,
-            avail_bytes,
-            used_bytes,
-            used_percent,
-        });
+        if total_kb.is_some() && avail_kb.is_some() {
+            break;
+        }
     }
 
-    #[cfg(windows)]
+    let total_kb = total_kb.ok_or_else(|| eyre!("MemTotal missing"))?;
+    let avail_kb = avail_kb.ok_or_else(|| eyre!("MemAvailable missing"))?;
+
+    let total = total_kb * 1024;
+    let avail = avail_kb * 1024;
+    let used = total - avail;
+
+    Ok(MemStats {
+        total_bytes: total,
+        avail_bytes: avail,
+        used_bytes: used,
+        used_percent: (used as f64 / total as f64) * 100.0,
+    })
+}
+
+#[cfg(windows)]
+pub fn mem_stats() -> Result<MemStats> {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+
     unsafe {
-        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut m = MEMORYSTATUSEX::default();
+        m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        GlobalMemoryStatusEx(&mut m)?;
 
-        let mut memory: MEMORYSTATUSEX = std::mem::zeroed();
-        memory.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
-        GlobalMemoryStatusEx(&mut memory as _)?;
+        let total = m.ullTotalPhys;
+        let avail = m.ullAvailPhys;
+        let used = total - avail;
 
-        let total_bytes = memory.ullTotalPhys;
-        let avail_bytes = memory.ullAvailPhys;
-        let used_bytes = total_bytes.saturating_sub(avail_bytes);
-
-        let used_percent = if total_bytes == 0 {
-            0.0
-        } else {
-            (used_bytes as f64 / total_bytes as f64) * 100.0
-        };
-
-        return Ok(MemStats {
-            total_bytes,
-            avail_bytes,
-            used_bytes,
-            used_percent,
-        });
+        Ok(MemStats {
+            total_bytes: total,
+            avail_bytes: avail,
+            used_bytes: used,
+            used_percent: m.dwMemoryLoad as f64,
+        })
     }
 }
 
-/// Disk stats for the main drive: "/" on Unix, "C:\" on Windows.
-pub fn disk_root_stats() -> eyre::Result<DiskStats> {
-    #[cfg(unix)]
-    {
-        let vfs = nix::sys::statvfs::statvfs("/")?;
-        let block_size = vfs.block_size() as u64;
+/* ============================== DISK ============================== */
 
-        let total_bytes = (vfs.blocks() as u64).saturating_mul(block_size);
-        let avail_bytes = (vfs.blocks_available() as u64).saturating_mul(block_size);
-        let used_bytes = total_bytes.saturating_sub(avail_bytes);
+#[cfg(unix)]
+pub fn disk_stats() -> Result<DiskStats> {
+    let vfs = nix::sys::statvfs::statvfs("/")?;
 
-        let free_percent = if total_bytes == 0 {
-            0.0
-        } else {
-            (avail_bytes as f64 / total_bytes as f64) * 100.0
-        };
+    let block = vfs.block_size() as u64;
+    let total = vfs.blocks() * block;
+    let avail = vfs.blocks_available() * block;
+    let used = total - avail;
 
-        let used_percent = if total_bytes == 0 {
-            0.0
-        } else {
-            (used_bytes as f64 / total_bytes as f64) * 100.0
-        };
+    Ok(DiskStats {
+        total_bytes: total,
+        avail_bytes: avail,
+        used_bytes: used,
+        free_percent: (avail as f64 / total as f64) * 100.0,
+        used_percent: (used as f64 / total as f64) * 100.0,
+    })
+}
 
-        return Ok(DiskStats {
-            total_bytes,
-            avail_bytes,
-            used_bytes,
-            free_percent,
-            used_percent,
-        });
-    }
+#[cfg(windows)]
+pub fn disk_stats() -> Result<DiskStats> {
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExA;
+    use windows_core::s;
 
-    #[cfg(windows)]
     unsafe {
-        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExA;
+        let mut total = 0u64;
+        let mut free = 0u64;
 
-        let mut total: u64 = 0;
-        let mut free: u64 = 0;
+        GetDiskFreeSpaceExA(s!("C:\\"), None, Some(&mut total), Some(&mut free))?;
 
-        GetDiskFreeSpaceExA(
-            windows_core::s!(r"C:\"),
-            Some(&mut free as _),  // free bytes available to caller
-            Some(&mut total as _), // total bytes
-            None,
-        )?;
+        let used = total - free;
 
-        let total_bytes = total;
-        let avail_bytes = free;
-        let used_bytes = total_bytes.saturating_sub(avail_bytes);
-
-        let free_percent = if total_bytes == 0 {
-            0.0
-        } else {
-            (avail_bytes as f64 / total_bytes as f64) * 100.0
-        };
-
-        let used_percent = if total_bytes == 0 {
-            0.0
-        } else {
-            (used_bytes as f64 / total_bytes as f64) * 100.0
-        };
-
-        return Ok(DiskStats {
-            total_bytes,
-            avail_bytes,
-            used_bytes,
-            free_percent,
-            used_percent,
-        });
+        Ok(DiskStats {
+            total_bytes: total,
+            avail_bytes: free,
+            used_bytes: used,
+            free_percent: (free as f64 / total as f64) * 100.0,
+            used_percent: (used as f64 / total as f64) * 100.0,
+        })
     }
+}
+
+/* ============================== SNAPSHOT ============================== */
+
+pub fn snapshot() -> Result<Snapshot> {
+    Ok(Snapshot {
+        cpu_percent: cpu_percent()?,
+        mem: mem_stats()?,
+        disk: disk_stats()?,
+    })
 }
