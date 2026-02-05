@@ -1,6 +1,7 @@
 use std::{collections::HashSet, io::Write, net::IpAddr, path::PathBuf};
 
 use clap::Parser;
+use colored::Colorize;
 
 use crate::utils::{
     pager,
@@ -87,13 +88,19 @@ struct PortGroups {
 struct RenderPortGroups {
     pids: String,
     local_addr: String,
+    colored_local_addr: String,
     local_port: String,
+    colored_local_port: String,
     remote_addr: String,
     remote_port: String,
     cmd: String,
     state: String,
     socket_type: String,
 }
+
+const STANDARD_SERVICE_PORTS: &[u16] = &[
+    20, 21, 22, 25, 53, 80, 88, 123, 135, 137, 138, 139, 389, 443, 445, 464, 636, 3389,
+];
 
 impl Ports {
     pub fn run(self, out: &mut impl Write) -> eyre::Result<()> {
@@ -206,23 +213,48 @@ impl Ports {
                     .map(|p| format!("{p}"))
                     .collect::<Vec<_>>()
                     .join(",");
-                let local_addr = port
+                let local_addrs = port
                     .local_addr
                     .iter()
                     .map(|p| {
-                        if p.is_ipv6() && (p.is_loopback() || p.is_unspecified()) {
+                        let pstr = if p.is_ipv6() && (p.is_loopback() || p.is_unspecified()) {
                             format!("[{p}]")
                         } else {
                             format!("{p}")
+                        };
+                        if p.is_loopback() {
+                            (pstr.clone(), pstr.bright_black().to_string())
+                        } else if p.is_unspecified() {
+                            (pstr.clone(), pstr.yellow().to_string())
+                        } else {
+                            (pstr.clone(), pstr.purple().to_string())
                         }
                     })
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let local_port = if port.local_port_start != port.local_port_end {
-                    format!("{}-{}", port.local_port_start, port.local_port_end)
-                } else {
-                    format!("{}", port.local_port_start)
-                };
+                    .collect::<Vec<(String, String)>>();
+                let (local_addr, colored_local_addr) = (
+                    local_addrs
+                        .iter()
+                        .map(|a| a.0.clone())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    local_addrs
+                        .iter()
+                        .map(|a| a.1.clone())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                );
+                let (local_port, colored_local_port) =
+                    if port.local_port_start != port.local_port_end {
+                        let port = format!("{}-{}", port.local_port_start, port.local_port_end);
+                        (port.clone(), port)
+                    } else {
+                        let pstr = format!("{}", port.local_port_start);
+                        if STANDARD_SERVICE_PORTS.contains(&port.local_port_start) {
+                            (pstr.clone(), pstr.green().to_string())
+                        } else {
+                            (pstr.clone(), pstr)
+                        }
+                    };
                 let remote_addr = port.remote_addr.map(|a| format!("{a}")).unwrap_or_default();
                 let remote_port = port.remote_port.map(|p| format!("{p}")).unwrap_or_default();
                 let socket_type = port
@@ -235,7 +267,9 @@ impl Ports {
                 RenderPortGroups {
                     pids,
                     local_addr,
+                    colored_local_addr,
                     local_port,
+                    colored_local_port,
                     remote_addr,
                     remote_port,
                     cmd: port.cmd,
@@ -351,10 +385,18 @@ impl Ports {
                 write!(out, "  ")?;
             }
 
+            out.write(
+                &vec![0x20; max_local_addr_len][..(max_local_addr_len - port.local_addr.len())],
+            )?;
+
             write!(
                 out,
-                "{:>max_local_addr_len$}:{:<max_local_port_len$}",
-                port.local_addr, port.local_port
+                "{}:{}",
+                port.colored_local_addr, port.colored_local_port
+            )?;
+
+            out.write(
+                &vec![0x20; max_local_port_len][..(max_local_port_len - port.local_port.len())],
             )?;
 
             if display_all || display_established {
@@ -393,27 +435,70 @@ fn reduce_port_list(
         #[cfg(target_os = "linux")]
         let cmd = match (display_cmdline, display_cgroup, hide_path) {
             (true, true, false) => {
+                let (exe, args) = match record.cmdline().unwrap_or("").split_once(" ") {
+                    Some((exe, args)) => (exe, args),
+                    None => ("", ""),
+                };
+                let (path, exe) = match exe.rsplit_once("/") {
+                    Some((path, exe)) => (path, exe),
+                    None => ("", exe),
+                };
+
                 format!(
-                    "{} {}",
-                    record.cmdline().unwrap_or(""),
+                    "{}{}{} {} {}",
+                    path.bright_black(),
+                    if path.is_empty() { "" } else { "/" },
+                    exe,
+                    args,
                     record
                         .cgroup()
                         .map(|cg| format!("({cg})"))
                         .unwrap_or("".to_string())
                 )
             }
-            (true, false, false) => record.cmdline().unwrap_or("").to_string(),
+            (true, false, false) => {
+                let exe = record.cmdline().unwrap_or("");
+                let (path, exe) = match exe.rsplit_once("/") {
+                    Some((path, exe)) => (path, exe),
+                    None => ("", exe),
+                };
+                format!(
+                    "{}{}{}",
+                    path.bright_black(),
+                    if path.is_empty() { "" } else { "/" },
+                    exe
+                )
+            }
             (false, true, false) => {
+                let exe = record.cmdline().unwrap_or("");
+                let (path, exe) = match exe.rsplit_once("/") {
+                    Some((path, exe)) => (path, exe),
+                    None => ("", exe),
+                };
                 format!(
-                    "{} {}",
-                    record.exe().unwrap_or(""),
+                    "{}{}{} {}",
+                    path.bright_black(),
+                    if path.is_empty() { "" } else { "/" },
+                    exe,
                     record
                         .cgroup()
                         .map(|cg| format!("({cg})"))
                         .unwrap_or("".to_string())
                 )
             }
-            (false, false, false) => record.exe().unwrap_or("").to_string(),
+            (false, false, false) => {
+                let exe = record.exe().unwrap_or("");
+                let (path, exe) = match exe.rsplit_once("/") {
+                    Some((path, exe)) => (path, exe),
+                    None => ("", exe),
+                };
+                format!(
+                    "{}{}{}",
+                    path.bright_black(),
+                    if path.is_empty() { "" } else { "/" },
+                    exe
+                )
+            }
             (_, true, true) => {
                 format!(
                     "{} {}",
