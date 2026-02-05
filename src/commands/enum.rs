@@ -60,7 +60,12 @@ impl super::Command for Enum {
                 enum_containers(&mut ob)?;
                 enum_ports(
                     &mut ob,
-                    super::ports::Ports::default_with_pager(self.no_pager),
+                    super::ports::Ports {
+                        no_pager: self.no_pager,
+                        display_tcp: true,
+                        display_udp: true,
+                        ..super::ports::Ports::default()
+                    },
                 )?;
 
                 Ok(())

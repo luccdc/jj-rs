@@ -14,52 +14,52 @@ pub struct Ports {
     /// Do not use less to page the output
     #[cfg(target_os = "linux")]
     #[arg(long, short = 'n')]
-    no_pager: bool,
+    pub no_pager: bool,
 
     /// Don't group results, grouping PID, type, and ports
     #[arg(long, short = 'G')]
-    no_grouping: bool,
+    pub no_grouping: bool,
 
     /// Display the command line as opposed to just the executable
     #[arg(long, short = 'c')]
-    display_cmdline: bool,
+    pub display_cmdline: bool,
 
     /// Display established connections. Defaults to only displaying listening connections
     #[arg(long, short = 'e')]
-    display_established: bool,
+    pub display_established: bool,
 
     /// Display listening connections. Defaults to only displaying listening connections
     #[arg(long, short = 'l')]
-    display_listening: bool,
+    pub display_listening: bool,
 
     /// Hide the path to the executable, just showing the binary name
     #[arg(long, short = 'p')]
-    hide_path: bool,
+    pub hide_path: bool,
 
     /// Display the cgroup the process is a part of
     #[cfg(target_os = "linux")]
     #[arg(long, short = 'g')]
-    display_cgroup: bool,
+    pub display_cgroup: bool,
 
     /// Display TCP sockets. Defaults to only displaying TCP sockets
     #[arg(long, short = 't')]
-    display_tcp: bool,
+    pub display_tcp: bool,
 
     /// Display UDP sockets. Defaults to only displaying TCP sockets
     #[arg(long, short = 'u')]
-    display_udp: bool,
+    pub display_udp: bool,
 
     /// Display all TCP/UDP, IPv4/IPv6 sockets, regardless of state
     #[arg(long, short = 'a')]
-    display_all: bool,
+    pub display_all: bool,
 
     /// Display only IPv4 sockets
     #[arg(long, short = '4')]
-    display_ipv4: bool,
+    pub display_ipv4: bool,
 
     /// Display only IPv6 sockets
     #[arg(long, short = '6')]
-    display_ipv6: bool,
+    pub display_ipv6: bool,
 }
 
 impl super::Command for Ports {
@@ -96,14 +96,6 @@ struct RenderPortGroups {
 }
 
 impl Ports {
-    #[cfg(target_os = "linux")]
-    pub fn default_with_pager(no_pager: bool) -> Self {
-        Self {
-            no_pager,
-            ..Self::default()
-        }
-    }
-
     pub fn run(self, out: &mut impl Write) -> eyre::Result<()> {
         let mut ports = ports::list_ports()?;
 
