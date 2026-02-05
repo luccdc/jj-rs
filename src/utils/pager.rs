@@ -1,34 +1,103 @@
-use crate::utils::busybox::Busybox;
 use std::io::{IsTerminal, Write};
-use std::process::Stdio;
 
-pub fn page_output(content: &str) -> eyre::Result<()> {
-    // 1. Only use the pager if stdout is a terminal
-    if !std::io::stdout().is_terminal() {
-        print!("{content}");
-        return Ok(());
+#[cfg(unix)]
+use std::process::{Child, ChildStdin, Stdio};
+
+use crate::utils::busybox::Busybox;
+
+#[cfg(unix)]
+struct Pager {
+    child: Child,
+    stdin: Option<ChildStdin>,
+}
+
+#[cfg(unix)]
+impl Drop for Pager {
+    fn drop(&mut self) {
+        if let Some(s) = self.stdin.take() {
+            drop(s);
+        }
+
+        if let Err(e) = self.child.wait() {
+            eprintln!("Could not wait for pager to die! {e}");
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Write for Pager {
+    fn flush(&mut self) -> std::io::Result<()> {
+        match &mut self.stdin {
+            Some(v) => v.flush(),
+            None => Ok(()),
+        }
     }
 
-    // 2. Initialize the embedded Busybox
-    let bb = Busybox::new()?;
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match &mut self.stdin {
+            Some(v) => v.write(buf),
+            None => Ok(0),
+        }
+    }
 
-    // 3. Prepare the 'less' command
-    // Flags:
-    // -F: Quit if the content fits on one screen (like systemctl/git)
-    // -R: Output "raw" control characters (allows ANSI colors)
-    // -X: Don't clear the screen on exit
-    let mut child = bb
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        match &mut self.stdin {
+            Some(v) => v.write_all(buf),
+            None => Ok(()),
+        }
+    }
+
+    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
+        match &mut self.stdin {
+            Some(v) => v.write_fmt(args),
+            None => Ok(()),
+        }
+    }
+
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        match &mut self.stdin {
+            Some(v) => v.write_vectored(bufs),
+            None => Ok(0),
+        }
+    }
+}
+
+#[cfg(unix)]
+pub fn get_pager_output(no_pager: bool) -> impl Write {
+    let stdout = std::io::stdout();
+
+    if !stdout.is_terminal() || no_pager {
+        return Box::new(stdout) as Box<dyn Write>;
+    }
+
+    let Ok(bb) = Busybox::new() else {
+        eprintln!("Could not spawn less (Busybox build error)!");
+        return Box::new(stdout);
+    };
+
+    let Ok(mut child) = bb
         .command("less")
         .args(["-F", "-R", "-X"])
         .stdin(Stdio::piped())
-        .spawn()?;
+        .spawn()
+    else {
+        eprintln!("Could not spawn less!");
+        return Box::new(stdout);
+    };
 
-    // 4. Pipe the content into the pager's stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(content.as_bytes())?;
-    }
+    let Some(stdin) = child.stdin.take() else {
+        eprintln!("Could not spawn less and take standard in!");
+        return Box::new(stdout);
+    };
 
-    // 5. Wait for the user to finish viewing
-    child.wait()?;
-    Ok(())
+    Box::new(Pager {
+        child,
+        stdin: Some(stdin),
+    })
+}
+
+#[cfg(windows)]
+pub fn get_pager_output(_no_pager: bool) -> impl Write {
+    let stdout = std::io::stdout();
+    Box::new(stdout) as _
 }
