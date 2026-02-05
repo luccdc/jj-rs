@@ -61,6 +61,10 @@ pub struct Ports {
     /// Display only IPv6 sockets
     #[arg(long, short = '6')]
     pub display_ipv6: bool,
+
+    /// Display unspecified addresses, even if they are IPv6 and only IPv4 is selected (and vice versa)
+    #[arg(long, short = 'U')]
+    pub display_unspecified: bool,
 }
 
 impl super::Command for Ports {
@@ -116,6 +120,7 @@ impl Ports {
             display_all,
             display_ipv4,
             display_ipv6,
+            display_unspecified,
             ..
         } = self;
         let display_listening = display_listening || !display_established;
@@ -136,7 +141,8 @@ impl Ports {
         let ports = ports
             .into_iter()
             .filter(|r| {
-                (r.local_addr().is_ipv4() && display_ipv4)
+                (r.local_addr().is_unspecified() && display_unspecified)
+                    || (r.local_addr().is_ipv4() && display_ipv4)
                     || (r.local_addr().is_ipv6() && display_ipv6)
             })
             .fold(vec![], reducer);
@@ -193,12 +199,12 @@ impl Ports {
                     return true;
                 }
 
-                if display_udp {
-                    return p.socket_type.contains(&SocketType::Udp);
+                if display_udp && p.socket_type.contains(&SocketType::Udp) {
+                    return true;
                 }
 
-                if display_tcp {
-                    return p.socket_type.contains(&SocketType::Tcp);
+                if display_tcp && p.socket_type.contains(&SocketType::Tcp) {
+                    return true;
                 }
 
                 false
@@ -385,7 +391,7 @@ impl Ports {
                 write!(out, "  ")?;
             }
 
-            out.write(
+            _ = out.write(
                 &vec![0x20; max_local_addr_len][..(max_local_addr_len - port.local_addr.len())],
             )?;
 
@@ -395,7 +401,7 @@ impl Ports {
                 port.colored_local_addr, port.colored_local_port
             )?;
 
-            out.write(
+            _ = out.write(
                 &vec![0x20; max_local_port_len][..(max_local_port_len - port.local_port.len())],
             )?;
 
