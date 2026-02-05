@@ -6,6 +6,7 @@
 #![allow(clippy::wildcard_imports)]
 
 use clap::Parser;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod macros;
 mod utils;
@@ -72,5 +73,19 @@ fn main() -> eyre::Result<()> {
     }
     let cli = Cli::parse();
     color_eyre::install()?;
+
+    if let Err(e1) = cli.command.setup_tracing()
+        && let Err(e2) = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .with(
+                tracing_subscriber::filter::Targets::new()
+                    .with_target("jj_rs", tracing::Level::INFO),
+            )
+            .try_init()
+    {
+        eprintln!("Could not set up logging! Some messages may be missed");
+        eprintln!("{e1}");
+        eprintln!("{e2}");
+    }
     cli.command.execute()
 }

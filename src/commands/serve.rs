@@ -42,51 +42,55 @@ impl super::Command for Serve {
 
         Ok(())
     }
+
+    fn setup_tracing(&self) -> eyre::Result<()> {
+        if let Some(log_file) = &self.log_file {
+            match std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(log_file)
+            {
+                Err(e) => {
+                    tracing_subscriber::registry()
+                        .with(tracing_subscriber::fmt::layer())
+                        .with(
+                            tracing_subscriber::filter::Targets::new()
+                                .with_target("jj_rs", tracing::Level::INFO),
+                        )
+                        .init();
+
+                    tracing::warn!(
+                        "Unable to open log file for logging requests; all requests will only be logged to stdout! Error: {e}"
+                    );
+                }
+                Ok(l) => {
+                    tracing_subscriber::registry()
+                        .with(tracing_subscriber::fmt::layer())
+                        .with(tracing_subscriber::fmt::layer().json().with_writer(l))
+                        .with(
+                            tracing_subscriber::filter::Targets::new()
+                                .with_target("jj_rs", tracing::Level::INFO),
+                        )
+                        .init();
+
+                    tracing::info!("Logging file requests to {}", log_file.display());
+                }
+            }
+        } else {
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::fmt::layer())
+                .with(
+                    tracing_subscriber::filter::Targets::new()
+                        .with_target("jj_rs", tracing::Level::INFO),
+                )
+                .init();
+        }
+
+        Ok(())
+    }
 }
 
 async fn serve(args: Serve) -> eyre::Result<()> {
-    if let Some(log_file) = args.log_file {
-        match std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&log_file)
-        {
-            Err(e) => {
-                tracing_subscriber::registry()
-                    .with(tracing_subscriber::fmt::layer())
-                    .with(
-                        tracing_subscriber::filter::Targets::new()
-                            .with_target("jj_rs", tracing::Level::INFO),
-                    )
-                    .init();
-
-                tracing::warn!(
-                    "Unable to open log file for logging requests; all requests will only be logged to stdout! Error: {e}"
-                );
-            }
-            Ok(l) => {
-                tracing_subscriber::registry()
-                    .with(tracing_subscriber::fmt::layer())
-                    .with(tracing_subscriber::fmt::layer().json().with_writer(l))
-                    .with(
-                        tracing_subscriber::filter::Targets::new()
-                            .with_target("jj_rs", tracing::Level::INFO),
-                    )
-                    .init();
-
-                tracing::info!("Logging file requests to {}", log_file.display());
-            }
-        }
-    } else {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer())
-            .with(
-                tracing_subscriber::filter::Targets::new()
-                    .with_target("jj_rs", tracing::Level::INFO),
-            )
-            .init();
-    }
-
     let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
 
     let listener = TcpListener::bind(addr).await?;

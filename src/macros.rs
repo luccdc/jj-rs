@@ -31,6 +31,7 @@ macro_rules! define_commands {
 
                     match self {
                         $(
+                            $(#[$($attr)*])*
                             $($(
                                 #[cfg($cfg)]
                             )*)?
@@ -41,10 +42,38 @@ macro_rules! define_commands {
                         ),+,
                     }
                 }
+
+                pub fn setup_tracing(&self) -> eyre::Result<()> {
+                    match self {
+                        $(
+                            $(#[$($attr)*])*
+                            $($(
+                                #[cfg($cfg)]
+                            )*)?
+                            Self::$cmd(inner) => {
+                                inner.setup_tracing()
+                            }
+                        ),+,
+                    }
+                }
             }
 
             pub trait Command: clap::Parser {
                 fn execute(self) -> eyre::Result<()>;
+
+                fn setup_tracing(&self) -> eyre::Result<()> {
+                    use ::tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+                    ::tracing_subscriber::registry()
+                        .with(::tracing_subscriber::fmt::layer())
+                        .with(
+                            ::tracing_subscriber::filter::Targets::new()
+                                .with_target("jj_rs", ::tracing::Level::INFO),
+                        )
+                        .init();
+
+                    Ok(())
+                }
             }
         }
     };
