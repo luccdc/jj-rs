@@ -25,20 +25,21 @@ pub enum EnumSubcommands {
     /// Hardware specifications (CPU, Memory, Storage)
     #[command(visible_alias("h"))]
     Hardware,
+
     /// Persistence and execution hooks (Cron, Timers, Shell configs)
     #[command(visible_alias("a"))]
     Autoruns,
+
     /// Container runtimes and compose files (Docker, Podman, LXC, Containerd)
     #[command(visible_alias("c"))]
     Containers,
+
     /// Current network ports and listening services
     #[command(visible_alias("p"))]
-    Ports {
-        #[arg(long, short = 'c')]
-        display_cmdline: bool,
-    },
-    #[command(visible_alias("s"))]
+    Ports(super::ports::Ports),
+
     /// SSH daemon audit and authorized keys
+    #[command(visible_alias("s"))]
     Ssh,
 }
 
@@ -51,15 +52,16 @@ impl super::Command for Enum {
             Some(EnumSubcommands::Ssh) => enum_ssh(&mut ob),
             Some(EnumSubcommands::Autoruns) => enum_autoruns(&mut ob),
             Some(EnumSubcommands::Containers) => enum_containers(&mut ob),
-            Some(EnumSubcommands::Ports { display_cmdline }) => {
-                enum_ports(&mut ob, self.no_pager, display_cmdline)
-            }
+            Some(EnumSubcommands::Ports(ports)) => enum_ports(&mut ob, ports),
             None => {
                 enum_hardware(&mut ob)?;
                 enum_ssh(&mut ob)?;
                 enum_autoruns(&mut ob)?;
                 enum_containers(&mut ob)?;
-                enum_ports(&mut ob, self.no_pager, true)?;
+                enum_ports(
+                    &mut ob,
+                    super::ports::Ports::default_with_pager(self.no_pager),
+                )?;
 
                 Ok(())
             }
@@ -273,11 +275,7 @@ fn enum_containers(out: &mut impl Write) -> eyre::Result<()> {
     Ok(())
 }
 
-fn enum_ports(out: &mut impl Write, no_pager: bool, display_cmdline: bool) -> eyre::Result<()> {
+fn enum_ports(out: &mut impl Write, p: super::ports::Ports) -> eyre::Result<()> {
     writeln!(out, "\n==== PORTS INFO")?;
-    let p = super::ports::Ports {
-        display_cmdline,
-        no_pager,
-    };
     p.run(out)
 }

@@ -4,7 +4,7 @@ use std::net::IpAddr;
 /// files in /proc might be mixed together
 /// Or for Windows, multiple sockets from GetExtendedTcpTable or
 /// GetExtendedUdpTable
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SocketType {
     Tcp,
     Udp,
@@ -95,6 +95,12 @@ pub struct SocketRecord {
     inner: OsSocketRecordImpl,
 }
 
+impl std::fmt::Debug for SocketRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
 #[allow(dead_code)]
 impl SocketRecord {
     pub fn socket_type(&self) -> SocketType {
@@ -172,4 +178,40 @@ pub fn list_ports() -> eyre::Result<Vec<SocketRecord>> {
 #[cfg(windows)]
 pub fn list_ports() -> eyre::Result<Vec<SocketRecord>> {
     windows::list_ports().map(|p| p.into_iter().map(|inner| SocketRecord { inner }).collect())
+}
+
+impl std::fmt::Display for SocketType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Tcp => "tcp",
+                Self::Udp => "udp",
+            }
+        )
+    }
+}
+
+impl std::fmt::Display for SocketState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Unknown => "Unknown",
+                Self::Established => "Established",
+                Self::SynSent => "SynSent",
+                Self::SynRecv => "SynRecv",
+                Self::FinWait1 => "FinWait1",
+                Self::FinWait2 => "FinWait2",
+                Self::TimeWait => "TimeWait",
+                Self::Closed => "Closed",
+                Self::CloseWait => "CloseWait",
+                Self::LastAck => "LastAck",
+                Self::Listen => "Listen",
+                Self::Closing => "Closing",
+            }
+        )
+    }
 }

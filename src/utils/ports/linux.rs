@@ -390,9 +390,9 @@ pub fn parse_net_udp() -> eyre::Result<Vec<LinuxSocketRecord>> {
 pub fn parse_ports() -> eyre::Result<Vec<LinuxSocketRecord>> {
     Ok([
         parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp)?,
-        parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp", SocketType::Udp)?,
-        parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp6", SocketType::Tcp)?,
-        parse_ip_stats::<_, Ipv6Addr>("/proc/net/tcp6", SocketType::Udp)?,
+        parse_ip_stats::<_, Ipv4Addr>("/proc/net/udp", SocketType::Udp)?,
+        parse_ip_stats::<_, Ipv6Addr>("/proc/net/tcp6", SocketType::Tcp)?,
+        parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp6", SocketType::Udp)?,
     ]
     .concat())
 }
