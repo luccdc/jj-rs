@@ -20,13 +20,11 @@ pub mod logs;
 #[cfg(unix)]
 pub mod nft;
 pub mod os_version;
-#[cfg(unix)]
 pub mod pager;
 #[cfg(unix)]
 pub mod pamtester;
 #[cfg(unix)]
 pub mod passwd;
-#[cfg(unix)]
 pub mod ports;
 #[allow(dead_code)]
 pub mod regex;

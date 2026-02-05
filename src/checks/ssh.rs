@@ -52,22 +52,24 @@ impl Default for SshTroubleshooter {
     }
 }
 
-#[cfg(unix)]
 impl Troubleshooter for SshTroubleshooter {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         let distro = get_distro().context("could not load distribution for ssh check")?;
 
         Ok(vec![
+            #[cfg(unix)]
             filter_check(
                 systemd_service_check(if distro.is_deb_based() { "ssh" } else { "sshd" }),
                 self.host.is_loopback() || self.local,
                 "Cannot check systemd service on remote host",
             ),
+            #[cfg(unix)]
             filter_check(
                 openrc_service_check("sshd"),
                 self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),
+            #[cfg(unix)]
             binary_ports_check(
                 ["sshd"],
                 self.port,
@@ -75,6 +77,7 @@ impl Troubleshooter for SshTroubleshooter {
                 self.host.is_loopback() || self.local,
             ),
             tcp_connect_check(self.host, self.port),
+            #[cfg(unix)]
             immediate_tcpdump_check(
                 self.port,
                 CheckIpProtocol::Tcp,
@@ -82,28 +85,20 @@ impl Troubleshooter for SshTroubleshooter {
                 self.host.is_loopback() || self.local,
             ),
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
+            #[cfg(unix)]
             pam_check(
                 Some("sshd"),
                 &self.user,
                 self.password.clone(),
                 self.host.is_loopback() || self.local,
             ),
+            #[cfg(unix)]
             passive_tcpdump_check(
                 self.port,
                 self.external,
                 !self.host.is_loopback() && !self.local,
                 get_system_logs,
             ),
-        ])
-    }
-}
-
-#[cfg(windows)]
-impl Troubleshooter for SshTroubleshooter {
-    fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
-        Ok(vec![
-            tcp_connect_check(self.host, self.port),
-            check_fn("Try remote login", |tr| self.try_remote_login(tr)),
         ])
     }
 }

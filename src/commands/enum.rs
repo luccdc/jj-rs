@@ -23,16 +23,21 @@ pub struct Enum {
 #[derive(Subcommand, Debug)]
 pub enum EnumSubcommands {
     /// Hardware specifications (CPU, Memory, Storage)
+    #[command(visible_alias("h"))]
     Hardware,
     /// Persistence and execution hooks (Cron, Timers, Shell configs)
+    #[command(visible_alias("a"))]
     Autoruns,
     /// Container runtimes and compose files (Docker, Podman, LXC, Containerd)
+    #[command(visible_alias("c"))]
     Containers,
     /// Current network ports and listening services
+    #[command(visible_alias("p"))]
     Ports {
         #[arg(long, short = 'c')]
         display_cmdline: bool,
     },
+    #[command(visible_alias("s"))]
     /// SSH daemon audit and authorized keys
     Ssh,
 }

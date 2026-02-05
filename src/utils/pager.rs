@@ -3,6 +3,7 @@ use std::io::{IsTerminal, Write};
 #[cfg(unix)]
 use std::process::{Child, ChildStdin, Stdio};
 
+#[cfg(unix)]
 use crate::utils::busybox::Busybox;
 
 #[cfg(unix)]
@@ -98,6 +99,5 @@ pub fn get_pager_output(no_pager: bool) -> impl Write {
 
 #[cfg(windows)]
 pub fn get_pager_output(_no_pager: bool) -> impl Write {
-    let stdout = std::io::stdout();
-    Box::new(stdout) as _
+    std::io::stdout()
 }

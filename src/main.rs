@@ -30,7 +30,7 @@ define_commands! {
 
         // sysinfo commands
         [unix] Enum, e => r#enum::Enum,
-        [unix] Ports, p => ports::Ports,
+        Ports, p => ports::Ports,
         Stat, st => stat::Stat,
 
         // admin commands

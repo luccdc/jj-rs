@@ -13,13 +13,7 @@ use eyre::Context;
 use nix::fcntl::readlink;
 use num_traits::{Num, PrimInt};
 
-/// Used to differentiate socket records, as records from multiple
-/// files in /proc might be mixed together
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SocketType {
-    Tcp,
-    Udp,
-}
+use super::SocketType;
 
 /// Mirrors the states [used internally](https://github.com/iproute2/iproute2/blob/ca756f36a0c6d24ab60657f8d14312c17443e5f0/misc/ss.c#L222-L238) for `ss`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -67,12 +61,34 @@ impl From<u8> for SocketState {
     }
 }
 
+impl From<SocketState> for super::SocketState {
+    fn from(value: SocketState) -> Self {
+        match value {
+            SocketState::UNKNOWN => Self::Unknown,
+            SocketState::ESTABLISHED => Self::Established,
+            SocketState::SYN_SENT => Self::SynSent,
+            SocketState::SYN_RECV => Self::SynRecv,
+            SocketState::FIN_WAIT1 => Self::FinWait1,
+            SocketState::FIN_WAIT2 => Self::FinWait2,
+            SocketState::TIME_WAIT => Self::TimeWait,
+            SocketState::CLOSE => Self::Closed,
+            SocketState::CLOSE_WAIT => Self::CloseWait,
+            SocketState::LAST_ACK => Self::LastAck,
+            SocketState::LISTEN => Self::Listen,
+            SocketState::CLOSING => Self::Closing,
+            SocketState::NEW_SYN_RECV => Self::Unknown,
+            SocketState::BOUND_INACTIVE => Self::Unknown,
+            SocketState::MAX_STATES => Self::Unknown,
+        }
+    }
+}
+
 /// Represents fields selected from `/proc/net/tcp` and `/proc/net/udp`
 ///
 /// <https://www.kernel.org/doc/Documentation/networking/proc_net_tcp.txt>
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct SocketRecord {
+pub struct LinuxSocketRecord {
     pub socket_type: SocketType,
     pub local_address: IpAddr,
     pub local_port: u16,
@@ -84,6 +100,54 @@ pub struct SocketRecord {
     pub exe: Option<String>,
     pub cmdline: Option<String>,
     pub cgroup: Option<String>,
+}
+
+impl super::OsSocketRecord for LinuxSocketRecord {
+    fn socket_type(&self) -> SocketType {
+        self.socket_type
+    }
+
+    fn local_addr(&self) -> IpAddr {
+        self.local_address
+    }
+
+    fn local_port(&self) -> u16 {
+        self.local_port
+    }
+
+    fn remote_addr(&self) -> Option<IpAddr> {
+        Some(self.remote_address).filter(|v| !v.is_unspecified())
+    }
+
+    fn remote_port(&self) -> Option<u16> {
+        Some(self.remote_port).filter(|v| *v != 0)
+    }
+
+    fn state(&self) -> super::SocketState {
+        self.state.into()
+    }
+
+    fn cmdline(&self) -> Option<&str> {
+        self.cmdline.as_deref()
+    }
+
+    fn pid(&self) -> Option<u64> {
+        self.pid
+    }
+
+    fn exe(&self) -> Option<&str> {
+        self.exe.as_deref()
+    }
+}
+
+pub trait OsSocketRecordExt {
+    fn cgroup(&self) -> Option<&str>;
+}
+
+impl OsSocketRecordExt for super::SocketRecord {
+    fn cgroup(&self) -> Option<&str> {
+        self.inner.cgroup.as_deref()
+    }
 }
 
 /// Returns a mapping of inodes to the process ID that has the inode
@@ -161,9 +225,12 @@ impl IpSize for Ipv6Addr {
 }
 
 /// Parse the path specified and return just the basic inode data. All the process
-/// specific information in the `SocketRecord` structs returned are left as None;
+/// specific information in the `LinuxSocketRecord` structs returned are left as None;
 /// `pid`, `cmdline`, and `cgroup`
-pub fn parse_raw_ip_stats<P, A>(path: P, socket_type: SocketType) -> eyre::Result<Vec<SocketRecord>>
+pub fn parse_raw_ip_stats<P, A>(
+    path: P,
+    socket_type: SocketType,
+) -> eyre::Result<Vec<LinuxSocketRecord>>
 where
     P: AsRef<Path>,
     A: IpSize + Into<IpAddr>,
@@ -208,13 +275,13 @@ where
                 _timeout,
                 inode,
             ]|
-             -> eyre::Result<SocketRecord> {
+             -> eyre::Result<LinuxSocketRecord> {
                 let inode = inode.parse()?;
 
                 let local_address = A::Size::from_be(A::Size::from_str_radix(loc_addr, 16)?);
                 let remote_address = A::Size::from_be(A::Size::from_str_radix(rem_addr, 16)?);
 
-                Ok(SocketRecord {
+                Ok(LinuxSocketRecord {
                     socket_type,
                     local_address: A::from(local_address).into(),
                     local_port: u16::from_str_radix(loc_port, 16)?,
@@ -240,9 +307,9 @@ where
 ///
 /// `inode_pids` maps from inodes to pids
 pub fn enrich_ip_stats(
-    stats: Vec<SocketRecord>,
+    stats: Vec<LinuxSocketRecord>,
     inode_pids: &HashMap<u64, u64>,
-) -> Vec<SocketRecord> {
+) -> Vec<LinuxSocketRecord> {
     stats
         .into_iter()
         .map(|stat| {
@@ -260,7 +327,7 @@ pub fn enrich_ip_stats(
                 .and_then(|p| readlink(&*format!("/proc/{p}/exe")).ok())
                 .map(|e| e.to_string_lossy().trim_end().to_string());
 
-            SocketRecord {
+            LinuxSocketRecord {
                 pid,
                 exe,
                 cmdline,
@@ -284,7 +351,10 @@ pub fn enrich_ip_stats(
 /// # use {jj_rs::utils::ports::{SocketType, parse_ip_stats}, std::net::Ipv6Addr};
 /// parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp6", SocketType::Udp);
 /// ```
-pub fn parse_ip_stats<P, A>(path: P, socket_type: SocketType) -> eyre::Result<Vec<SocketRecord>>
+pub fn parse_ip_stats<P, A>(
+    path: P,
+    socket_type: SocketType,
+) -> eyre::Result<Vec<LinuxSocketRecord>>
 where
     P: AsRef<Path>,
     A: IpSize + Into<IpAddr>,
@@ -298,7 +368,7 @@ where
 
 /// Shortcut to parse statistics from /proc/net/tcp
 #[allow(dead_code)]
-pub fn parse_net_tcp() -> eyre::Result<Vec<SocketRecord>> {
+pub fn parse_net_tcp() -> eyre::Result<Vec<LinuxSocketRecord>> {
     Ok([
         parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp)?,
         parse_ip_stats::<_, Ipv6Addr>("/proc/net/tcp6", SocketType::Tcp)?,
@@ -308,7 +378,7 @@ pub fn parse_net_tcp() -> eyre::Result<Vec<SocketRecord>> {
 
 /// Shortcut to parse statistics from /proc/net/udp
 #[allow(dead_code)]
-pub fn parse_net_udp() -> eyre::Result<Vec<SocketRecord>> {
+pub fn parse_net_udp() -> eyre::Result<Vec<LinuxSocketRecord>> {
     Ok([
         parse_ip_stats::<_, Ipv4Addr>("/proc/net/udp", SocketType::Udp)?,
         parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp6", SocketType::Udp)?,
@@ -317,7 +387,7 @@ pub fn parse_net_udp() -> eyre::Result<Vec<SocketRecord>> {
 }
 
 /// Shortcut to parse statistics from both /proc/net/tcp and /proc/net/udp
-pub fn parse_ports() -> eyre::Result<Vec<SocketRecord>> {
+pub fn parse_ports() -> eyre::Result<Vec<LinuxSocketRecord>> {
     Ok([
         parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp)?,
         parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp", SocketType::Udp)?,

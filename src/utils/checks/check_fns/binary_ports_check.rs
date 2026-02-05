@@ -21,6 +21,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
         "Sockstat check"
     }
 
+    #[cfg(target_os = "linux")]
     fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         if !self.run_local {
             return Ok(CheckResult::not_run(
@@ -50,7 +51,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
                     .map(|exe| (dir, exe.to_string_lossy().to_string()))
             })
             .filter_map(|(pid, exe)| {
-                let inodes = ports::socket_inodes_for_pid(pid)
+                let inodes = ports::linux::socket_inodes_for_pid(pid)
                     .ok()?
                     .into_iter()
                     .map(|inode| (inode, u64::from(pid)))
@@ -60,14 +61,14 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 // we are checking accross namespaces. It is the responsibility of
                 // the operator to verify firewall rules are correct
 
-                let ports = ports::parse_raw_ip_stats::<_, Ipv4Addr>(
+                let ports = ports::linux::parse_raw_ip_stats::<_, Ipv4Addr>(
                     format!("/proc/{pid}/net/tcp"),
                     ports::SocketType::Tcp,
                 )
                 .into_iter()
                 .flatten()
                 .chain(
-                    ports::parse_raw_ip_stats::<_, Ipv6Addr>(
+                    ports::linux::parse_raw_ip_stats::<_, Ipv6Addr>(
                         format!("/proc/{pid}/net/tcp6"),
                         ports::SocketType::Tcp,
                     )
@@ -75,7 +76,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
                     .flatten(),
                 )
                 .chain(
-                    ports::parse_raw_ip_stats::<_, Ipv4Addr>(
+                    ports::linux::parse_raw_ip_stats::<_, Ipv4Addr>(
                         format!("/proc/{pid}/net/udp"),
                         ports::SocketType::Udp,
                     )
@@ -83,7 +84,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
                     .flatten(),
                 )
                 .chain(
-                    ports::parse_raw_ip_stats::<_, Ipv6Addr>(
+                    ports::linux::parse_raw_ip_stats::<_, Ipv6Addr>(
                         format!("/proc/{pid}/net/udp6"),
                         ports::SocketType::Udp,
                     )
@@ -92,7 +93,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 )
                 .collect::<Vec<_>>();
 
-                let ports_enriched = ports::enrich_ip_stats(ports, &inodes)
+                let ports_enriched = ports::linux::enrich_ip_stats(ports, &inodes)
                     .into_iter()
                     .filter(|port| port.pid == Some(pid.into()))
                     .collect::<Vec<_>>();
@@ -107,8 +108,8 @@ impl CheckStep<'_> for BinaryPortsCheck {
                     && port.local_port == self.port
                     && (port.state
                         == (match self.protocol {
-                            CheckIpProtocol::Tcp => ports::SocketState::LISTEN,
-                            CheckIpProtocol::Udp => ports::SocketState::CLOSE,
+                            CheckIpProtocol::Tcp => ports::linux::SocketState::LISTEN,
+                            CheckIpProtocol::Udp => ports::linux::SocketState::CLOSE,
                         }))
                     && (port.socket_type
                         == (match self.protocol {

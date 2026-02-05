@@ -3,7 +3,9 @@
 
   nixConfig = {
     extra-substituters = [ "https://judah-sotomayor.cachix.org" ];
-    extra-trusted-public-keys = [ "judah-sotomayor.cachix.org-1:I9crtW1ZCPXiklcGAbK/31DQ7T8tSHvQ3Akxx3Brzbc="];
+    extra-trusted-public-keys = [
+      "judah-sotomayor.cachix.org-1:I9crtW1ZCPXiklcGAbK/31DQ7T8tSHvQ3Akxx3Brzbc="
+    ];
   };
 
   inputs = {
@@ -41,10 +43,10 @@
             overlays = [ (import rust-overlay) ];
             config = {
               allowUnfreePredicate = pkg:
-              builtins.elem (lib.getName pkg) [ "vagrant" ];
+                builtins.elem (lib.getName pkg) [ "vagrant" ];
 
             };
-            
+
           };
 
           # Cross compilation requires using a different nixpkgs, and setting up
@@ -136,7 +138,6 @@
             [ wineWow64Packages.minimal ] ++ windowsLibraries;
 
           devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant ]);
-
 
           gzip-binary = name: binary:
             pkgs.runCommand "${name}-gzipped" { } ''
@@ -234,20 +235,12 @@
             cp ${tools-tarball}/jj.tgz $out/jj.tgz
           '';
 
-
           install-script-src = builtins.readFile ./install.sh;
           install-script = pkgs.writeScriptBin "install.sh" install-script-src;
 
+          staticTools = with pkgsStatic; [ jq tcpdump tmux nftables ];
 
-
-          staticTools = with pkgsStatic; [
-            jq
-            tcpdump
-            tmux
-            nftables
-          ];
-
-          tools-tarball = pkgs.runCommand "tools-tarball" {  } ''
+          tools-tarball = pkgs.runCommand "tools-tarball" { } ''
             mkdir -p $out
             tar -czvf $out/jj.tgz --mode=755      \
               -C ${install-script}/bin install.sh \
@@ -259,7 +252,6 @@
               --show-transformed-names            \
               --owner=0 --group=0
           '';
-
 
         in {
           _module.args.pkgs = pkgs;
@@ -309,6 +301,8 @@
               name = "jj";
 
               packages = wslDevShellTools ++ winDevShellTools;
+              nativeBuildInputs = windowsLibraries;
+              buildInputs = windowsLibraries;
 
               CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";

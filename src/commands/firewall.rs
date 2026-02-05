@@ -11,7 +11,10 @@ use clap::{Parser, Subcommand};
 use crate::utils::{
     busybox::Busybox,
     nft::Nft,
-    ports::{SocketState, SocketType, parse_ports},
+    ports::{
+        SocketType,
+        linux::{SocketState, parse_ports},
+    },
 };
 
 #[derive(Subcommand, Debug)]
