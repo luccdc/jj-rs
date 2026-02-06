@@ -59,19 +59,22 @@ impl Troubleshooter for SshTroubleshooter {
         Ok(vec![
             #[cfg(unix)]
             filter_check(
-                systemd_service_check(if distro.is_deb_based() { "ssh" } else { "sshd" }),
+                systemd_services_check(["ssh", "sshd"]),
                 self.host.is_loopback() || self.local,
                 "Cannot check systemd service on remote host",
             ),
             #[cfg(unix)]
             filter_check(
-                openrc_service_check("sshd"),
+                openrc_services_check(["sshd"]),
                 self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),
             #[cfg(unix)]
             binary_ports_check(
+                #[cfg(unix)]
                 ["sshd"],
+                #[cfg(windows)]
+                ["sshd.exe"],
                 self.port,
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,

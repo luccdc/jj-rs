@@ -49,58 +49,45 @@ impl Default for Dns {
     }
 }
 
-#[cfg(unix)]
 impl Troubleshooter for Dns {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         Ok(vec![
+            #[cfg(unix)]
             filter_check(
                 systemd_services_check(vec!["named", "bind9", "unbound", "dnsmasq"]),
                 self.host.is_loopback() || self.local,
                 "Cannot check systemd service on remote host",
             ),
+            #[cfg(unix)]
             filter_check(
                 openrc_services_check(vec!["named", "bind9", "unbound", "dnsmasq"]),
                 self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),
             binary_ports_check(
+                #[cfg(unix)]
                 ["named", "bind9", "unbound", "dnsmasq"],
+                #[cfg(windows)]
+                ["dns.exe"],
                 self.port,
                 CheckIpProtocol::Udp,
                 self.host.is_loopback() || self.local,
             ),
+            #[cfg(unix)]
             binary_ports_check(
-                ["named", "bind9", "systemd-resolved", "unbound", "dnsmasq"],
+                ["named", "bind9", "unbound", "dnsmasq"],
                 self.port,
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,
             ),
             check_fn("DNS Query", |tr| Ok(self.try_dns_query(tr))),
+            #[cfg(unix)]
             passive_tcpdump_check(
                 self.port,
                 self.external,
                 !self.host.is_loopback() && !self.local,
                 get_system_logs,
             ),
-        ])
-    }
-
-    fn is_local(&self) -> bool {
-        self.host.is_loopback() || self.local
-    }
-}
-
-#[cfg(windows)]
-impl Troubleshooter for Dns {
-    fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
-        Ok(vec![
-            binary_ports_check(
-                ["dns.exe"],
-                self.port,
-                CheckIpProtocol::Udp,
-                self.host.is_loopback() || self.local,
-            ),
-            check_fn("DNS Query", |tr| Ok(self.try_dns_query(tr))),
         ])
     }
 
