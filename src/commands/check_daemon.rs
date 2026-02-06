@@ -46,10 +46,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use eyre::Context;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    net::unix::pipe,
-    sync::{broadcast, mpsc},
-};
+use tokio::sync::{broadcast, mpsc};
 
 use crate::checks::{CheckResult, CheckResultType};
 
@@ -189,53 +186,61 @@ impl super::Command for CheckDaemon {
             }
         };
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
-        let (send_shutdown, shutdown) = broadcast::channel(1);
-        let (prompt_writer, prompt_reader) = mpsc::channel(128);
-        let (log_writer, log_receiver) = rt.block_on(async { pipe::pipe() })?;
-        let (log_event_sender, log_event_receiver) = mpsc::channel(128);
-        let log_writer = std::io::PipeWriter::from(log_writer.into_blocking_fd()?);
-
         std::thread::scope(|scope| -> eyre::Result<()> {
-            scope.spawn(|| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?
-                    .block_on(async {
-                        Box::pin(logs::log_handler_thread(
-                            log_config,
-                            log_receiver,
-                            log_event_sender,
-                            shutdown,
-                        ))
-                        .await
-                    })
-            });
-
-            for (host, checks) in &config.checks {
-                for (check_name, check) in checks {
-                    check_thread::register_check(
-                        &daemon,
-                        (
-                            CheckId(Arc::clone(host), Arc::clone(check_name)),
-                            check.clone(),
-                        ),
-                        scope,
-                        prompt_writer.clone(),
-                        log_writer.try_clone()?,
-                        send_shutdown.subscribe(),
-                        !self.interactive_mode,
-                    )?;
-                }
-            }
-
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?
                 .block_on(async {
+                    let (send_shutdown, shutdown) = broadcast::channel(1);
+                    let (prompt_writer, prompt_reader) = mpsc::channel(128);
+                    let (log_event_sender, log_event_receiver) = mpsc::channel(128);
+
+                    #[cfg(unix)]
+                    let (log_writer, log_receiver) = {
+                        let (log_writer, log_receiver) = tokio::net::unix::pipe::pipe()?;
+                        (
+                            std::io::PipeWriter::from(log_writer.into_blocking_fd()?),
+                            log_receiver,
+                        )
+                    };
+                    #[cfg(windows)]
+                    let (log_writer, log_receiver) = tokio::sync::mpsc::channel(8192);
+
+                    scope.spawn(|| {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()?
+                            .block_on(async {
+                                Box::pin(logs::log_handler_thread(
+                                    log_config,
+                                    log_receiver,
+                                    log_event_sender,
+                                    shutdown,
+                                ))
+                                .await
+                            })
+                    });
+
+                    for (host, checks) in &config.checks {
+                        for (check_name, check) in checks {
+                            check_thread::register_check(
+                                &daemon,
+                                (
+                                    CheckId(Arc::clone(host), Arc::clone(check_name)),
+                                    check.clone(),
+                                ),
+                                scope,
+                                prompt_writer.clone(),
+                                #[cfg(unix)]
+                                log_writer.try_clone()?,
+                                #[cfg(windows)]
+                                log_writer.clone(),
+                                send_shutdown.subscribe(),
+                                !self.interactive_mode,
+                            )?;
+                        }
+                    }
+
                     if self.interactive_mode {
                         // tui::main(&checks, &daemon, &logs, prompt_reader, answer_writer, scope)
                         todo!()

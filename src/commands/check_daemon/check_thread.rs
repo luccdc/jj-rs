@@ -11,6 +11,7 @@ use std::{
     thread::Scope,
 };
 
+#[cfg(unix)]
 use nix::sys::{signal, wait};
 use tokio::sync::{broadcast, mpsc};
 
@@ -59,7 +60,8 @@ pub fn register_check<'scope, 'env: 'scope>(
     (check_id, check): (super::CheckId, super::CheckTypes),
     scope: &'scope Scope<'scope, 'env>,
     prompt_writer: mpsc::Sender<(super::CheckId, String)>,
-    log_writer: PipeWriter,
+    #[cfg(unix)] log_writer: PipeWriter,
+    #[cfg(windows)] log_writer: tokio::sync::mpsc::Sender<super::logs::LogEvent>,
     shutdown: broadcast::Receiver<()>,
     autostart: bool,
 ) -> eyre::Result<()> {
@@ -69,6 +71,7 @@ pub fn register_check<'scope, 'env: 'scope>(
         let check_id = check_id.clone();
         let check = check.clone();
         move || {
+            #[cfg(unix)]
             if let Err(e) = check_thread(
                 daemon,
                 (check_id, check),
@@ -77,6 +80,19 @@ pub fn register_check<'scope, 'env: 'scope>(
                 shutdown,
                 message_receiver,
                 autostart,
+            ) {
+                eprintln!("Failed to run check thread! {e}");
+            }
+            #[cfg(windows)]
+            if let Err(e) = check_thread(
+                daemon,
+                (check_id, check),
+                prompt_writer,
+                &log_writer,
+                shutdown,
+                message_receiver,
+                autostart,
+                scope,
             ) {
                 eprintln!("Failed to run check thread! {e}");
             }
@@ -114,6 +130,7 @@ pub fn register_check<'scope, 'env: 'scope>(
     Ok(())
 }
 
+#[cfg(unix)]
 fn check_thread<'scope, 'env: 'scope>(
     daemon: &'env RwLock<super::RuntimeDaemonConfig>,
     (check_id, check): (super::CheckId, super::CheckTypes),
@@ -164,13 +181,15 @@ fn check_thread<'scope, 'env: 'scope>(
                             &mut prompt_writer,
                             &mut message_receiver,
                             &mut check_prompt_values,
-                            child,
                         ))
                         .await
                     })
                 {
                     eprintln!("Could not manage check child process: {e}");
                 }
+
+                signal::kill(child, signal::SIGINT)?;
+                wait::waitpid(child, Some(wait::WaitPidFlag::empty()))?;
             }
             nix::unistd::ForkResult::Child => {
                 if let Err(e) = run_child(
@@ -185,6 +204,81 @@ fn check_thread<'scope, 'env: 'scope>(
                 std::process::exit(0);
             }
         }
+    }
+}
+
+#[cfg(windows)]
+fn check_thread<'scope, 'env: 'scope>(
+    daemon: &'env RwLock<super::RuntimeDaemonConfig>,
+    (check_id, check): (super::CheckId, super::CheckTypes),
+    mut prompt_writer: mpsc::Sender<(super::CheckId, String)>,
+    log_writer: &mpsc::Sender<super::logs::LogEvent>,
+    mut shutdown: broadcast::Receiver<()>,
+    mut message_receiver: mpsc::Receiver<OutboundMessage>,
+    autostart: bool,
+    scope: &'scope Scope<'scope, 'env>,
+) -> eyre::Result<()> {
+    let mut paused = !autostart;
+    let mut check_prompt_values = HashMap::new();
+
+    loop {
+        update_stats(daemon, &check_id, |h| {
+            h.currently_running.store(false, Ordering::Relaxed);
+            h.started.store(!paused, Ordering::Relaxed);
+        })?;
+
+        if wait_for_trigger(
+            daemon,
+            &check_id,
+            &mut message_receiver,
+            &mut shutdown,
+            &mut paused,
+        )? {
+            return Ok(());
+        }
+
+        update_stats(daemon, &check_id, |h| {
+            h.currently_running.store(true, Ordering::Relaxed);
+            h.started.store(!paused, Ordering::Relaxed);
+        })?;
+
+        let (prompt_reader_raw, prompt_writer_raw) = std::io::pipe()?;
+        let (answer_reader_raw, answer_writer_raw) = std::io::pipe()?;
+        let log_writer = log_writer.clone();
+
+        let check_id_child = check_id.clone();
+        let child_check = check.clone();
+        let child = scope.spawn(move || {
+            if let Err(e) = run_child(
+                check_id_child,
+                child_check,
+                prompt_writer_raw,
+                answer_reader_raw,
+                log_writer,
+            ) {
+                eprintln!("Could not run check process: {e}");
+            }
+        });
+
+        if let Err(e) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
+                Box::pin(run_parent(
+                    &check_id,
+                    prompt_reader_raw,
+                    answer_writer_raw,
+                    &mut prompt_writer,
+                    &mut message_receiver,
+                    &mut check_prompt_values,
+                ))
+                .await
+            })
+        {
+            eprintln!("Could not manage check child process: {e}");
+        }
+
+        let _ = child.join();
     }
 }
 
@@ -288,7 +382,6 @@ async fn run_parent(
     prompt_writer: &mut mpsc::Sender<(super::CheckId, String)>,
     message_receiver: &mut mpsc::Receiver<OutboundMessage>,
     check_prompt_values: &mut HashMap<String, String>,
-    child: nix::unistd::Pid,
 ) -> eyre::Result<()> {
     let mut message_buffer = [0u8; 16384];
 
@@ -310,7 +403,6 @@ async fn run_parent(
 
         match msg {
             ChildToParentMsg::Done => {
-                signal::kill(child, signal::SIGINT)?;
                 break;
             }
             ChildToParentMsg::Prompt(p) => {
@@ -341,8 +433,6 @@ async fn run_parent(
         }
     }
 
-    wait::waitpid(child, Some(wait::WaitPidFlag::empty()))?;
-
     Ok(())
 }
 
@@ -351,7 +441,8 @@ fn run_child(
     check: super::CheckTypes,
     mut prompt_writer_raw: PipeWriter,
     answer_reader_raw: PipeReader,
-    log_writer: PipeWriter,
+    #[cfg(unix)] log_writer: PipeWriter,
+    #[cfg(windows)] log_writer: mpsc::Sender<super::logs::LogEvent>,
 ) -> eyre::Result<()> {
     if let Err(e) = run_troubleshooter(
         check_id,
@@ -374,7 +465,8 @@ fn run_troubleshooter(
     check: super::CheckTypes,
     prompt_writer_raw: &mut PipeWriter,
     mut answer_reader_raw: PipeReader,
-    mut log_writer: PipeWriter,
+    #[cfg(unix)] mut log_writer: PipeWriter,
+    #[cfg(windows)] mut log_writer: mpsc::Sender<super::logs::LogEvent>,
 ) -> eyre::Result<()> {
     let mut runner = crate::checks::DaemonTroubleshooter::new(move |prompt| {
         let prompt_msg = serde_json::to_string(&ChildToParentMsg::Prompt(prompt.to_string()))?;
@@ -412,8 +504,14 @@ fn run_troubleshooter(
         steps,
     });
 
-    let result_json = serde_json::to_string(&result)?;
-    log_writer.write_all(result_json.as_bytes())?;
+    #[cfg(unix)]
+    {
+        let result_json = serde_json::to_string(&result)?;
+        log_writer.write_all(result_json.as_bytes())?;
+    }
+
+    #[cfg(windows)]
+    log_writer.blocking_send(result);
 
     Ok(())
 }
