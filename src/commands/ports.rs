@@ -529,11 +529,24 @@ fn reduce_port_list(
         };
 
         #[cfg(windows)]
-        let cmd = record
-            .exe()
-            .unwrap_or("")
-            .to_owned()
-            .replace(r"\Device\HarddiskVolume3\", r"C:\");
+        let cmd = {
+            let cmd = record
+                .exe()
+                .unwrap_or("")
+                .to_owned()
+                .replace(r"\Device\HarddiskVolume3\", r"C:\");
+
+            let (path, exe) = match cmd.rsplit_once(r"\") {
+                Some((path, exe)) => (path, exe),
+                None => ("", &*cmd),
+            };
+            format!(
+                "{}{}{}",
+                path.bright_black(),
+                if path.is_empty() { "" } else { r"\" },
+                exe
+            )
+        };
 
         #[cfg(target_os = "linux")]
         let udp_state_matches = matches!(record.state(), SocketState::Closed | SocketState::Listen);
