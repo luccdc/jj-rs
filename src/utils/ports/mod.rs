@@ -91,6 +91,7 @@ pub trait OsSocketRecord {
     fn exe(&self) -> Option<&str>;
 }
 
+#[derive(Clone)]
 pub struct SocketRecord {
     inner: OsSocketRecordImpl,
 }

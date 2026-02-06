@@ -167,6 +167,130 @@ impl CheckStep<'_> for BinaryPortsCheck {
             ))
         }
     }
+
+    #[cfg(windows)]
+    fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
+        use std::collections::HashMap;
+
+        use crate::utils::ports::SocketRecord;
+
+        use windows::Win32::System::{
+            ProcessStatus::{EnumProcesses, GetProcessImageFileNameA},
+            Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+        };
+
+        let ports = crate::utils::ports::list_ports()?;
+
+        let mut ports = ports.into_iter().fold(
+            HashMap::<u64, Vec<SocketRecord>>::new(),
+            |mut hash, port| {
+                let Some(pid) = port.pid() else {
+                    return hash;
+                };
+
+                let entry = hash.entry(pid);
+                entry.or_default().push(port);
+
+                hash
+            },
+        );
+
+        let processes = unsafe {
+            let mut pids = vec![0u32; 4096];
+            let mut pids_enumed = 0u32;
+
+            EnumProcesses(pids.as_mut_ptr() as _, 4096 * 4, &mut pids_enumed as _)?;
+
+            pids[..(pids_enumed as usize)]
+                .iter()
+                .filter_map(|pid| -> Option<(u32, String)> {
+                    let proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, *pid).ok()?;
+
+                    let mut image_name = [0; 1024];
+
+                    let len = GetProcessImageFileNameA(proc, &mut image_name) as usize;
+
+                    let image = String::from_utf8_lossy(&image_name[..len]).to_string();
+
+                    Some((*pid, image))
+                })
+                .filter(|(_, image)| {
+                    self.process_names
+                        .iter()
+                        .any(|proc_name| image.ends_with(&**proc_name))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let proc_listening = processes
+            .iter()
+            .flat_map(|(pid, _)| ports.get(&(*pid as u64)))
+            .any(|sockets| {
+                sockets.iter().any(|socket| {
+                    !socket.local_addr().is_loopback()
+                        && socket.local_port() == self.port
+                        && (socket.state()
+                            == (match self.protocol {
+                                CheckIpProtocol::Tcp => ports::SocketState::Listen,
+                                CheckIpProtocol::Udp => ports::SocketState::Unknown,
+                            }))
+                        && (socket.socket_type()
+                            == (match self.protocol {
+                                CheckIpProtocol::Tcp => ports::SocketType::Tcp,
+                                CheckIpProtocol::Udp => ports::SocketType::Udp,
+                            }))
+                })
+            });
+
+        let context_procs = processes
+            .iter()
+            .flat_map(|(pid, image)| {
+                ports
+                    .remove_entry(&(*pid as u64))
+                    .map(|(pid, sockets)| (pid, image, sockets))
+            })
+            .map(|(pid, image, sockets)| {
+                serde_json::json!({
+                    "pid": pid,
+                    "exe": image,
+                    "ports": sockets
+                        .iter()
+                        .filter(|port| self.port > 60000 || port.local_port() < 60000)
+                        .take(16) // DNS server has something like 8000 ports open...
+                        .map(|port| serde_json::json!({
+                            "local_address": format!("{}", port.local_addr()),
+                            "local_port": port.local_port(),
+                            "state": format!("{}", port.state()),
+                            "type": format!("{}", port.socket_type())
+                        }))
+                        .collect::<serde_json::Value>()
+                })
+            })
+            .collect::<serde_json::Value>();
+
+        if proc_listening {
+            Ok(CheckResult::succeed(
+                format!(
+                    "Successfully found a process listening on port {}",
+                    self.port
+                ),
+                serde_json::json!({
+                    "processes": context_procs
+                }),
+            ))
+        } else {
+            Ok(CheckResult::fail(
+                format!(
+                    "Could not find a process with specified names listening on port {}",
+                    self.port
+                ),
+                serde_json::json!({
+                    "specified_names": self.process_names,
+                    "processes": context_procs
+                }),
+            ))
+        }
+    }
 }
 
 /// Check for processes started from a binary with the specified name, and

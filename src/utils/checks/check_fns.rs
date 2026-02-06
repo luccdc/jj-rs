@@ -2,7 +2,6 @@
 //! includes building blocks for applying simple checks or applying filters
 //! to checks
 
-#[cfg(unix)]
 mod binary_ports_check;
 mod check_fn;
 mod filter_check;
@@ -15,7 +14,6 @@ mod passive_tcpdump_check;
 mod service_checks;
 mod tcp_connect_check;
 
-#[cfg(unix)]
 pub use binary_ports_check::*;
 pub use check_fn::*;
 pub use filter_check::*;

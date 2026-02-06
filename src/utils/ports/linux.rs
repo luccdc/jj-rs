@@ -342,13 +342,13 @@ pub fn enrich_ip_stats(
 ///
 /// Example parsing IPv4 data:
 /// ```
-/// # use {jj_rs::utils::ports::{SocketType, parse_ip_stats}, std::net::Ipv4Addr};
+/// # use {jj_rs::utils::ports::{linux::parse_ip_stats, SocketType}, std::net::Ipv4Addr};
 /// parse_ip_stats::<_, Ipv4Addr>("/proc/net/tcp", SocketType::Tcp);
 /// ```
 ///
 /// Example parsing IPv6 data:
 /// ```
-/// # use {jj_rs::utils::ports::{SocketType, parse_ip_stats}, std::net::Ipv6Addr};
+/// # use {jj_rs::utils::ports::{linux::parse_ip_stats, SocketType}, std::net::Ipv6Addr};
 /// parse_ip_stats::<_, Ipv6Addr>("/proc/net/udp6", SocketType::Udp);
 /// ```
 pub fn parse_ip_stats<P, A>(

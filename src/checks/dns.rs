@@ -49,20 +49,12 @@ impl Default for Dns {
     }
 }
 
-
-
 #[cfg(unix)]
 impl Troubleshooter for Dns {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
-
         Ok(vec![
             filter_check(
-                systemd_services_check(vec![
-                    "named",
-                    "bind9",
-                    "unbound",
-                    "dnsmasq",
-                ]),
+                systemd_services_check(vec!["named", "bind9", "unbound", "dnsmasq"]),
                 self.host.is_loopback() || self.local,
                 "Cannot check systemd service on remote host",
             ),
@@ -101,7 +93,15 @@ impl Troubleshooter for Dns {
 #[cfg(windows)]
 impl Troubleshooter for Dns {
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
-        Ok(vec![check_fn("DNS Query", |tr| Ok(self.try_dns_query(tr)))])
+        Ok(vec![
+            binary_ports_check(
+                ["dns.exe"],
+                self.port,
+                CheckIpProtocol::Udp,
+                self.host.is_loopback() || self.local,
+            ),
+            check_fn("DNS Query", |tr| Ok(self.try_dns_query(tr))),
+        ])
     }
 
     fn is_local(&self) -> bool {
@@ -119,9 +119,7 @@ impl Dns {
         let start = Utc::now();
 
         // Try using nslookup as it is very common
-        let cmd = format!(
-            "nslookup -port={port} -q={qtype} {domain} {host}"
-        );
+        let cmd = format!("nslookup -port={port} -q={qtype} {domain} {host}");
         let res = crate::utils::qx(&cmd);
 
         let end = Utc::now();

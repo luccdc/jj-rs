@@ -607,7 +607,9 @@ impl CliTroubleshooter {
             }
             CheckResultType::Success => {
                 println!("{}", "Service appears to be up!".green());
+
                 if t.is_local() {
+                    #[cfg(windows)]
                     println!("{}", "WARNING: you are using localhost for testing, you will not be able to identify if firewall is the problem".yellow());
                 }
             }
