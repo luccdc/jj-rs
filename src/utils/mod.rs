@@ -20,9 +20,9 @@ pub mod logs;
 #[cfg(unix)]
 pub mod nft;
 pub mod os_version;
-pub mod pager;
 #[cfg(unix)]
 pub mod packages;
+pub mod pager;
 #[cfg(unix)]
 pub mod pamtester;
 #[cfg(unix)]

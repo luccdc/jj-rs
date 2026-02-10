@@ -32,11 +32,14 @@ pub struct Distro {
 #[allow(dead_code)]
 impl Distro {
     pub fn is_deb_based(&self) -> bool {
-        self.root_family == OsFamily::Debian || self.derived_family == Some(OsFamily::Debian)
+        use OsFamily as OsF;
+        self.root_family == OsF::Debian || self.derived_family == Some(OsF::Debian)
     }
 
     pub fn is_rhel_based(&self) -> bool {
-        self.root_family == OsFamily::RedHat || self.derived_family == Some(OsFamily::RedHat)
+        use OsFamily as OsF;
+        matches!(self.root_family, OsF::RedHat | OsF::Fedora)
+            || matches!(self.derived_family, Some(OsF::RedHat | OsF::Fedora))
     }
 
     pub fn is_rhel_or_deb_based(&self) -> bool {
