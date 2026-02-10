@@ -21,24 +21,28 @@ mod utils;
 define_commands! {
     commands::Commands {
         // utility commands
-        [unix] DownloadShell, ds => download_shell::DownloadShell,
         Check, c => check::Check,
         CheckDaemon, cd => check_daemon::CheckDaemon,
         [unix] Elk => elk::Elk,
         Serve, s => serve::Serve,
         Get, g => get::Get,
+        [unix] DownloadShell, ds => download_shell::DownloadShell,
+        [unix] CheckDaemon, cd => check_daemon::CheckDaemon,
+        [unix] Elk => elk::Elk,
 
         // sysinfo commands
+        Stat, st => stat::Stat,
         [unix] Enum, e => r#enum::Enum,
         Ports, p => ports::Ports,
-        Stat, st => stat::Stat,
 
         // admin commands
         Backup, bu => backup::Backup,
+        File, f => file::File,
         [unix] Useradd, ua => useradd::Useradd,
         [unix] Firewall, fw => firewall::Firewall,
+        [unix] AptInstall, ai => apt::AptInstall,
+        [unix] DnfInstall, di => dnf::DnfInstall,
         [unix] Ssh => ssh::Ssh,
-        File => file::File,
 
         // Embedded binaries
         [unix] Nft => nft::Nft,

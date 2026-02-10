@@ -22,6 +22,8 @@ pub mod nft;
 pub mod os_version;
 pub mod pager;
 #[cfg(unix)]
+pub mod packages;
+#[cfg(unix)]
 pub mod pamtester;
 #[cfg(unix)]
 pub mod passwd;
