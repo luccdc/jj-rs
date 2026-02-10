@@ -1,7 +1,7 @@
-#[allow(dead_code)]
 use eyre::{Result, eyre};
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct MemStats {
     pub total_bytes: u64,
     pub avail_bytes: u64, // pressure / MemAvailable definition
@@ -10,6 +10,7 @@ pub struct MemStats {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct DiskStats {
     pub total_bytes: u64,
     pub avail_bytes: u64, // available to non-root where possible
@@ -19,6 +20,7 @@ pub struct DiskStats {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct Snapshot {
     pub cpu_percent: f64,
     pub mem: MemStats,

@@ -28,13 +28,13 @@ pub mod passwd;
 pub mod ports;
 #[allow(dead_code)]
 pub mod regex;
-pub mod system;
 #[cfg(unix)]
 pub mod scheduling;
 #[cfg(unix)]
 pub mod shell_audit;
 #[cfg(unix)]
 pub mod ssh;
+pub mod system;
 #[cfg(unix)]
 pub mod systemd;
 /// Alias for Perl's qx
