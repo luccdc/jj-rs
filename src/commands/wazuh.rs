@@ -38,7 +38,7 @@ pub struct WazuhSubcommandArgs {
     sneaky_ip: Option<Ipv4Addr>,
 
     /// Where will temporary files be downloaded and extracted
-    #[arg(long, short = 'w', default_value = "/tmp/wazuh-install")]
+    #[arg(long, short = 'w', default_value = "/tmp/wazuh-working-dir")]
     working_dir: PathBuf,
 }
 
@@ -895,9 +895,12 @@ fn install_dashboard(
 
     let mut dashboard_config_2 = None;
 
-    for i in 0..5 {
+    for i in 0..15 {
         match std::fs::read_to_string("/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml") {
             Ok(v) => {
+                let Ok(_) = serde_yaml_ng::from_str::<Value>(&v) else {
+                    continue;
+                };
                 dashboard_config_2 = Some(v);
                 break;
             }
@@ -906,7 +909,7 @@ fn install_dashboard(
                     "Attempt {}; Error waiting for wazuh dashboard to generate configuration file: {e}",
                     i + 1
                 );
-                std::thread::sleep(std::time::Duration::from_secs(3));
+                std::thread::sleep(std::time::Duration::from_secs(5));
             }
         };
     }
@@ -985,7 +988,7 @@ fn get_public_ip(bb: &Busybox) -> eyre::Result<String> {
         .1[0];
 
     Ok(
-        pcre!(&ips =~ m{r"^[0-9]+:\s" default_dev r":\s.*?inet\s([^\s]+)"}xms)
+        pcre!(&ips =~ m{r"^[0-9]+:\s" default_dev r":\s.*?inet\s([^/]+)"}xms)
             .get(0)
             .ok_or(eyre!("Could not find associated IP!"))?
             .extract::<1>()
