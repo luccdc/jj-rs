@@ -38,6 +38,20 @@ impl CheckStep<'_> for SystemdServiceCheck {
                         }),
                     ));
                 }
+
+                if service_info
+                    .get("ActiveState")
+                    .is_some_and(|field| field == "failed")
+                {
+                    return Ok(CheckResult::succeed(
+                        format!("systemd service '{name}' has died"),
+                        serde_json::json!({
+                           "service": name,
+                           "main_pid": service_info.get("MainPID"),
+                           "running_since": service_info.get("InactiveEnterTimestamp")
+                        }),
+                    ));
+                }
             }
         }
 

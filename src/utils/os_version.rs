@@ -30,11 +30,11 @@ pub struct Distro {
 #[allow(dead_code)]
 impl Distro {
     pub fn is_deb_based(&self) -> bool {
-        matches!(self.root_family, OsFamily::Debian)
+        self.root_family == OsFamily::Debian || self.derived_family == Some(OsFamily::Debian)
     }
 
     pub fn is_rhel_based(&self) -> bool {
-        matches!(self.root_family, OsFamily::RedHat)
+        self.root_family == OsFamily::RedHat || self.derived_family == Some(OsFamily::RedHat)
     }
 
     pub fn is_rhel_or_deb_based(&self) -> bool {
@@ -42,7 +42,7 @@ impl Distro {
     }
 
     pub fn is_windows(&self) -> bool {
-        matches!(self.root_family, OsFamily::Windows)
+        self.root_family == OsFamily::Windows
     }
 }
 
@@ -50,6 +50,18 @@ impl From<&str> for OsFamily {
     fn from(s: &str) -> Self {
         let s = s.to_lowercase();
 
+        if s.contains("rhel") || s.contains("redhat") {
+            return OsFamily::RedHat;
+        }
+        if s.contains("debian") {
+            return OsFamily::Debian;
+        }
+        if s.contains("alpine") {
+            return OsFamily::Alpine;
+        }
+        if s.contains("arch") {
+            return OsFamily::Arch;
+        }
         if s.contains("centos") {
             return OsFamily::CentOS;
         }
@@ -58,18 +70,6 @@ impl From<&str> for OsFamily {
         }
         if s.contains("ubuntu") {
             return OsFamily::Ubuntu;
-        }
-        if s.contains("debian") {
-            return OsFamily::Debian;
-        }
-        if s.contains("rhel") || s.contains("redhat") {
-            return OsFamily::RedHat;
-        }
-        if s.contains("alpine") {
-            return OsFamily::Alpine;
-        }
-        if s.contains("arch") {
-            return OsFamily::Arch;
         }
 
         OsFamily::Other(s)

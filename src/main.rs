@@ -56,6 +56,7 @@ define_checks! {
         /// Troubleshoot an SSH connection
         Ssh, "ssh" => ssh::SshTroubleshooter,
         Dns, "dns" => dns::Dns,
+        Http, "http" => http::HttpTroubleshooter,
     }
 }
 

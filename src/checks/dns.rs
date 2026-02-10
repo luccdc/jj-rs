@@ -66,16 +66,19 @@ impl Troubleshooter for Dns {
             ),
             binary_ports_check(
                 #[cfg(unix)]
-                ["named", "bind9", "unbound", "dnsmasq"],
+                Some(["named", "bind9", "unbound", "dnsmasq"]),
                 #[cfg(windows)]
-                ["dns.exe"],
+                Some(["dns.exe"]),
                 self.port,
                 CheckIpProtocol::Udp,
                 self.host.is_loopback() || self.local,
             ),
             #[cfg(unix)]
             binary_ports_check(
-                ["named", "bind9", "unbound", "dnsmasq"],
+                #[cfg(unix)]
+                Some(["named", "bind9", "unbound", "dnsmasq"]),
+                #[cfg(windows)]
+                Some(["dns.exe"]),
                 self.port,
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,

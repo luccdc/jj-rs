@@ -72,9 +72,9 @@ impl Troubleshooter for SshTroubleshooter {
             #[cfg(unix)]
             binary_ports_check(
                 #[cfg(unix)]
-                ["sshd"],
+                Some(["sshd"]),
                 #[cfg(windows)]
-                ["sshd.exe"],
+                Some(["sshd.exe"]),
                 self.port,
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,

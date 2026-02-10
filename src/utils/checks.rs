@@ -632,7 +632,7 @@ fn render_extra_details(depth: usize, obj: &serde_json::Value) {
             print!("{n}");
         }
         Value::String(s) => {
-            print!(r#""{s}""#);
+            print!(r#""{}""#, s.replace("\r", ""));
         }
         Value::Array(ve) => {
             if ve.is_empty() {

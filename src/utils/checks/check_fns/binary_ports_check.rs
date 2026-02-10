@@ -10,7 +10,7 @@ use crate::utils::{
 use super::CheckIpProtocol;
 
 struct BinaryPortsCheck {
-    process_names: Vec<String>,
+    process_names: Option<Vec<String>>,
     port: u16,
     protocol: CheckIpProtocol,
     run_local: bool,
@@ -43,8 +43,11 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 nix::fcntl::readlink(&*format!("/proc/{dir}/exe"))
                     .ok()
                     .filter(|exe| {
+                        let Some(pnames) = &self.process_names else {
+                            return true;
+                        };
                         let exe_str = exe.to_string_lossy();
-                        self.process_names
+                        pnames
                             .iter()
                             .any(|proc_name| exe_str.ends_with(&**proc_name))
                     })
@@ -102,25 +105,32 @@ impl CheckStep<'_> for BinaryPortsCheck {
             })
             .collect::<Vec<_>>();
 
-        let proc_listening = procs.iter().any(|(_, _, ports)| {
-            ports.iter().any(|port| {
-                !port.local_address.is_loopback()
-                    && port.local_port == self.port
-                    && (port.state
-                        == (match self.protocol {
-                            CheckIpProtocol::Tcp => ports::linux::SocketState::LISTEN,
-                            CheckIpProtocol::Udp => ports::linux::SocketState::CLOSE,
-                        }))
-                    && (port.socket_type
-                        == (match self.protocol {
-                            CheckIpProtocol::Tcp => ports::SocketType::Tcp,
-                            CheckIpProtocol::Udp => ports::SocketType::Udp,
-                        }))
-            })
-        });
-
-        let context_procs = procs
+        let procs_listening = procs
             .iter()
+            .filter(|(_, _, ports)| {
+                ports.iter().any(|port| {
+                    !port.local_address.is_loopback()
+                        && port.local_port == self.port
+                        && (port.state
+                            == (match self.protocol {
+                                CheckIpProtocol::Tcp => ports::linux::SocketState::LISTEN,
+                                CheckIpProtocol::Udp => ports::linux::SocketState::CLOSE,
+                            }))
+                        && (port.socket_type
+                            == (match self.protocol {
+                                CheckIpProtocol::Tcp => ports::SocketType::Tcp,
+                                CheckIpProtocol::Udp => ports::SocketType::Udp,
+                            }))
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let filtered_procs = procs.iter().collect::<Vec<_>>();
+
+        let context_procs = self
+            .process_names
+            .as_ref()
+            .map_or_else(|| procs_listening.iter(), |_| filtered_procs.iter())
             .map(|(pid, exe, ports)| {
                 serde_json::json!({
                     "pid": pid,
@@ -138,17 +148,7 @@ impl CheckStep<'_> for BinaryPortsCheck {
             })
             .collect::<serde_json::Value>();
 
-        if proc_listening {
-            Ok(CheckResult::succeed(
-                format!(
-                    "Successfully found a process listening on port {}",
-                    self.port
-                ),
-                serde_json::json!({
-                    "processes": context_procs
-                }),
-            ))
-        } else {
+        if procs_listening.is_empty() {
             let mut msg = format!(
                 "Could not find a process with specified names listening on port {}",
                 self.port
@@ -162,6 +162,16 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 msg,
                 serde_json::json!({
                     "specified_names": self.process_names,
+                    "processes": context_procs
+                }),
+            ))
+        } else {
+            Ok(CheckResult::succeed(
+                format!(
+                    "Successfully found a process listening on port {}",
+                    self.port
+                ),
+                serde_json::json!({
                     "processes": context_procs
                 }),
             ))
@@ -215,9 +225,10 @@ impl CheckStep<'_> for BinaryPortsCheck {
                     Some((*pid, image))
                 })
                 .filter(|(_, image)| {
-                    self.process_names
-                        .iter()
-                        .any(|proc_name| image.ends_with(&**proc_name))
+                    let Some(pnames) = &self.process_names else {
+                        return true;
+                    };
+                    pnames.iter().any(|proc_name| image.ends_with(&**proc_name))
                 })
                 .collect::<Vec<_>>()
         };
@@ -242,31 +253,33 @@ impl CheckStep<'_> for BinaryPortsCheck {
                 })
             });
 
-        let context_procs = processes
-            .iter()
-            .flat_map(|(pid, image)| {
-                ports
-                    .remove_entry(&(*pid as u64))
-                    .map(|(pid, sockets)| (pid, image, sockets))
-            })
-            .map(|(pid, image, sockets)| {
-                serde_json::json!({
-                    "pid": pid,
-                    "exe": image,
-                    "ports": sockets
-                        .iter()
-                        .filter(|port| self.port > 60000 || port.local_port() < 60000)
-                        .take(16) // DNS server has something like 8000 ports open...
-                        .map(|port| serde_json::json!({
-                            "local_address": format!("{}", port.local_addr()),
-                            "local_port": port.local_port(),
-                            "state": format!("{}", port.state()),
-                            "type": format!("{}", port.socket_type())
-                        }))
-                        .collect::<serde_json::Value>()
+        let context_procs = self.process_names.as_ref().map(|_| {
+            processes
+                .iter()
+                .flat_map(|(pid, image)| {
+                    ports
+                        .remove_entry(&(*pid as u64))
+                        .map(|(pid, sockets)| (pid, image, sockets))
                 })
-            })
-            .collect::<serde_json::Value>();
+                .map(|(pid, image, sockets)| {
+                    serde_json::json!({
+                        "pid": pid,
+                        "exe": image,
+                        "ports": sockets
+                            .iter()
+                            .filter(|port| self.port > 60000 || port.local_port() < 60000)
+                            .take(16) // DNS server has something like 8000 ports open...
+                            .map(|port| serde_json::json!({
+                                "local_address": format!("{}", port.local_addr()),
+                                "local_port": port.local_port(),
+                                "state": format!("{}", port.state()),
+                                "type": format!("{}", port.socket_type())
+                            }))
+                            .collect::<serde_json::Value>()
+                    })
+                })
+                .collect::<serde_json::Value>()
+        });
 
         if proc_listening {
             Ok(CheckResult::succeed(
@@ -296,27 +309,28 @@ impl CheckStep<'_> for BinaryPortsCheck {
 /// Check for processes started from a binary with the specified name, and
 /// verify that a specified port is listening for TCP or open for UDP
 ///
+/// If None is specified for process_names, then this just searches for
+/// any PID listening on the correct port
+///
 /// Example:
 /// ```
 /// # use jj_rs::utils::checks::{CheckIpProtocol, binary_ports_check};
 /// binary_ports_check(
-///     ["sshd"],
+///     Some(["sshd"]),
 ///     22,
 ///     CheckIpProtocol::Tcp,
 ///     true
 /// );
 /// ```
 pub fn binary_ports_check<'a, I: IntoIterator<Item = S>, S: AsRef<str>>(
-    process_names: I,
+    process_names: Option<I>,
     port: u16,
     protocol: CheckIpProtocol,
     run_local: bool,
 ) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(BinaryPortsCheck {
         process_names: process_names
-            .into_iter()
-            .map(|s| s.as_ref().to_string())
-            .collect(),
+            .map(|m| m.into_iter().map(|s| s.as_ref().to_string()).collect()),
         port,
         protocol,
         run_local,
