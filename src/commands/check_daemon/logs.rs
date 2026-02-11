@@ -26,6 +26,7 @@ impl LogConfig {
 #[non_exhaustive]
 pub enum LogEvent {
     Result(TroubleshooterResult),
+    StateChange(super::CheckId),
 }
 
 async fn get_log_file(p: &Path) -> Option<File> {
