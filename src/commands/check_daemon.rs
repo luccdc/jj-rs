@@ -48,7 +48,10 @@ use eyre::Context;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::checks::{CheckResult, CheckResultType};
+use crate::{
+    checks::{CheckResult, CheckResultType},
+    spawn_rt,
+};
 
 pub use crate::checks::CheckTypes;
 
@@ -64,7 +67,7 @@ struct TroubleshooterResult {
     timestamp: chrono::DateTime<chrono::Utc>,
     check_id: CheckId,
     overall_result: CheckResultType,
-    steps: HashMap<String, (String, CheckResult)>,
+    steps: Vec<(String, CheckResult)>,
 }
 
 type HostCheck = HashMap<Arc<str>, CheckTypes>;
@@ -187,75 +190,81 @@ impl super::Command for CheckDaemon {
         };
 
         std::thread::scope(|scope| -> eyre::Result<()> {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?
-                .block_on(async {
-                    let (send_shutdown, shutdown) = broadcast::channel(1);
-                    let (prompt_writer, prompt_reader) = mpsc::channel(128);
-                    let (log_event_sender, log_event_receiver) = mpsc::channel(128);
+            spawn_rt!(async {
+                let (send_shutdown, shutdown) = broadcast::channel(1);
+                let (prompt_writer, prompt_reader) = mpsc::channel(128);
+                let (log_event_sender, log_event_receiver) = mpsc::channel(128);
 
-                    #[cfg(unix)]
-                    let (log_writer, log_receiver) = {
-                        let (log_writer, log_receiver) = tokio::net::unix::pipe::pipe()?;
-                        (
-                            std::io::PipeWriter::from(log_writer.into_blocking_fd()?),
+                #[cfg(unix)]
+                let (log_writer, log_receiver) = {
+                    let (log_writer, log_receiver) = tokio::net::unix::pipe::pipe()?;
+                    (
+                        std::io::PipeWriter::from(log_writer.into_blocking_fd()?),
+                        log_receiver,
+                    )
+                };
+                #[cfg(windows)]
+                let (log_writer, log_receiver) = tokio::sync::mpsc::channel(8192);
+
+                scope.spawn(|| {
+                    spawn_rt!(async {
+                        Box::pin(logs::log_handler_thread(
+                            log_config,
                             log_receiver,
-                        )
-                    };
-                    #[cfg(windows)]
-                    let (log_writer, log_receiver) = tokio::sync::mpsc::channel(8192);
-
-                    scope.spawn(|| {
-                        tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()?
-                            .block_on(async {
-                                Box::pin(logs::log_handler_thread(
-                                    log_config,
-                                    log_receiver,
-                                    log_event_sender,
-                                    shutdown,
-                                ))
-                                .await
-                            })
-                    });
-
-                    for (host, checks) in &config.checks {
-                        for (check_name, check) in checks {
-                            check_thread::register_check(
-                                &daemon,
-                                (
-                                    CheckId(Arc::clone(host), Arc::clone(check_name)),
-                                    check.clone(),
-                                ),
-                                scope,
-                                prompt_writer.clone(),
-                                #[cfg(unix)]
-                                log_writer.try_clone()?,
-                                #[cfg(windows)]
-                                log_writer.clone(),
-                                send_shutdown.subscribe(),
-                                !self.interactive_mode,
-                            )?;
-                        }
-                    }
-
-                    if self.interactive_mode {
-                        // tui::main(&checks, &daemon, &logs, prompt_reader, answer_writer, scope)
-                        todo!()
-                    } else {
-                        basic_log_runner(
-                            &daemon,
-                            log_event_receiver,
-                            prompt_reader,
-                            send_shutdown,
-                            self.show_extra_details,
-                        )
+                            log_event_sender,
+                            shutdown,
+                        ))
                         .await
+                    })
+                });
+
+                for (host, checks) in &config.checks {
+                    for (check_name, check) in checks {
+                        check_thread::register_check(
+                            &daemon,
+                            (
+                                CheckId(Arc::clone(host), Arc::clone(check_name)),
+                                check.clone(),
+                            ),
+                            scope,
+                            prompt_writer.clone(),
+                            #[cfg(unix)]
+                            log_writer.try_clone()?,
+                            #[cfg(windows)]
+                            log_writer.clone(),
+                            send_shutdown.subscribe(),
+                            !self.interactive_mode,
+                        )?;
                     }
-                })
+                }
+
+                if self.interactive_mode {
+                    tui::main(
+                        self.log_file,
+                        &daemon,
+                        (log_event_receiver, prompt_reader),
+                        log_writer,
+                        (prompt_writer, scope),
+                        send_shutdown,
+                    )
+                    .await
+                } else {
+                    basic_log_runner(
+                        &daemon,
+                        log_event_receiver,
+                        prompt_reader,
+                        send_shutdown,
+                        self.show_extra_details,
+                    )
+                    .await
+                }
+            })
         })
+    }
+
+    fn setup_tracing(&self) -> eyre::Result<()> {
+        // do nothing; let TUI do rendering and handle events
+        Ok(())
     }
 }
 
@@ -279,7 +288,7 @@ async fn basic_log_runner<'scope, 'env: 'scope>(
                 break Ok(());
             }
             Some(event) = logs_reader.recv() => {
-                let logs::LogEvent::Result(res) = event;
+                let logs::LogEvent::Result(res) = event else { continue; };
 
                 let mut stdout = stdout().lock();
 
@@ -296,11 +305,7 @@ async fn basic_log_runner<'scope, 'env: 'scope>(
                     },
                 )?;
 
-                let mut keys = res.steps.keys().collect::<Vec<_>>();
-                keys.sort();
-
-                for key in keys {
-                    let check = &res.steps[key];
+                for check in &res.steps {
                     let details_str = serde_json::to_string(&check.1.extra_details);
                     if show_extra_details {
                         writeln!(

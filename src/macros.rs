@@ -349,3 +349,26 @@ macro_rules! pcre {
         $crate::pcre!(($inp) $($tt)*)
     }};
 }
+
+/// Spawn a tokio runtime on the current thread and run the provided Future to completion
+///
+/// # Example
+///
+/// ```
+/// # use jj_rs::spawn_rt;
+/// # fn demo() -> eyre::Result<()> {
+/// spawn_rt!(async {
+///     tokio::fs::read("/dev/zero").await
+/// })?
+/// # Ok(())
+/// # }
+/// ```
+#[macro_export]
+macro_rules! spawn_rt {
+    (async $($b:tt)+) => {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async $($b)+)
+    }
+}

@@ -29,6 +29,8 @@ pub enum OutboundMessage {
 fn update_stats<F>(
     daemon: &RwLock<super::RuntimeDaemonConfig>,
     id: &super::CheckId,
+    #[cfg(unix)] log_writer: &mut PipeWriter,
+    #[cfg(windows)] log_writer: &mut mpsc::Sender<super::logs::LogEvent>,
     update_func: F,
 ) -> eyre::Result<()>
 where
@@ -52,6 +54,17 @@ where
 
     (update_func)(&check.1);
 
+    let result = super::logs::LogEvent::StateChange(id.clone());
+
+    #[cfg(unix)]
+    {
+        let result_json = serde_json::to_string(&result)?;
+        log_writer.write_all(result_json.as_bytes())?;
+    }
+
+    #[cfg(windows)]
+    log_writer.blocking_send(result);
+
     Ok(())
 }
 
@@ -66,38 +79,6 @@ pub fn register_check<'scope, 'env: 'scope>(
     autostart: bool,
 ) -> eyre::Result<()> {
     let (message_sender, message_receiver) = tokio::sync::mpsc::channel(128);
-
-    scope.spawn({
-        let check_id = check_id.clone();
-        let check = check.clone();
-        move || {
-            #[cfg(unix)]
-            if let Err(e) = check_thread(
-                daemon,
-                (check_id, check),
-                prompt_writer,
-                &log_writer,
-                shutdown,
-                message_receiver,
-                autostart,
-            ) {
-                eprintln!("Failed to run check thread! {e}");
-            }
-            #[cfg(windows)]
-            if let Err(e) = check_thread(
-                daemon,
-                (check_id, check),
-                prompt_writer,
-                &log_writer,
-                shutdown,
-                message_receiver,
-                autostart,
-                scope,
-            ) {
-                eprintln!("Failed to run check thread! {e}");
-            }
-        }
-    });
 
     {
         let Ok(mut checks) = daemon.write() else {
@@ -117,7 +98,7 @@ pub fn register_check<'scope, 'env: 'scope>(
         host.insert(
             Arc::clone(&check_id.1),
             (
-                check,
+                check.clone(),
                 super::RuntimeCheckHandle {
                     message_sender,
                     currently_running: AtomicBool::from(false),
@@ -127,6 +108,38 @@ pub fn register_check<'scope, 'env: 'scope>(
         );
     }
 
+    scope.spawn({
+        let check_id = check_id.clone();
+        let check = check.clone();
+        move || {
+            #[cfg(unix)]
+            if let Err(e) = check_thread(
+                daemon,
+                (check_id, check),
+                prompt_writer,
+                log_writer,
+                shutdown,
+                message_receiver,
+                autostart,
+            ) {
+                eprintln!("Failed to run check thread! {e}");
+            }
+            #[cfg(windows)]
+            if let Err(e) = check_thread(
+                daemon,
+                (check_id, check),
+                prompt_writer,
+                log_writer,
+                shutdown,
+                message_receiver,
+                autostart,
+                scope,
+            ) {
+                eprintln!("Failed to run check thread! {e}");
+            }
+        }
+    });
+
     Ok(())
 }
 
@@ -135,7 +148,7 @@ fn check_thread<'scope, 'env: 'scope>(
     daemon: &'env RwLock<super::RuntimeDaemonConfig>,
     (check_id, check): (super::CheckId, super::CheckTypes),
     mut prompt_writer: mpsc::Sender<(super::CheckId, String)>,
-    log_writer: &PipeWriter,
+    mut log_writer: PipeWriter,
     mut shutdown: broadcast::Receiver<()>,
     mut message_receiver: mpsc::Receiver<OutboundMessage>,
     autostart: bool,
@@ -144,7 +157,7 @@ fn check_thread<'scope, 'env: 'scope>(
     let mut check_prompt_values = HashMap::new();
 
     loop {
-        update_stats(daemon, &check_id, |h| {
+        update_stats(daemon, &check_id, &mut log_writer, |h| {
             h.currently_running.store(false, Ordering::Relaxed);
             h.started.store(!paused, Ordering::Relaxed);
         })?;
@@ -155,11 +168,12 @@ fn check_thread<'scope, 'env: 'scope>(
             &mut message_receiver,
             &mut shutdown,
             &mut paused,
+            &mut log_writer,
         )? {
             return Ok(());
         }
 
-        update_stats(daemon, &check_id, |h| {
+        update_stats(daemon, &check_id, &mut log_writer, |h| {
             h.currently_running.store(true, Ordering::Relaxed);
             h.started.store(!paused, Ordering::Relaxed);
         })?;
@@ -212,7 +226,7 @@ fn check_thread<'scope, 'env: 'scope>(
     daemon: &'env RwLock<super::RuntimeDaemonConfig>,
     (check_id, check): (super::CheckId, super::CheckTypes),
     mut prompt_writer: mpsc::Sender<(super::CheckId, String)>,
-    log_writer: &mpsc::Sender<super::logs::LogEvent>,
+    mut log_writer: mpsc::Sender<super::logs::LogEvent>,
     mut shutdown: broadcast::Receiver<()>,
     mut message_receiver: mpsc::Receiver<OutboundMessage>,
     autostart: bool,
@@ -222,7 +236,7 @@ fn check_thread<'scope, 'env: 'scope>(
     let mut check_prompt_values = HashMap::new();
 
     loop {
-        update_stats(daemon, &check_id, |h| {
+        update_stats(daemon, &check_id, &mut log_writer, |h| {
             h.currently_running.store(false, Ordering::Relaxed);
             h.started.store(!paused, Ordering::Relaxed);
         })?;
@@ -233,11 +247,12 @@ fn check_thread<'scope, 'env: 'scope>(
             &mut message_receiver,
             &mut shutdown,
             &mut paused,
+            &mut log_writer,
         )? {
             return Ok(());
         }
 
-        update_stats(daemon, &check_id, |h| {
+        update_stats(daemon, &check_id, &mut log_writer, |h| {
             h.currently_running.store(true, Ordering::Relaxed);
             h.started.store(!paused, Ordering::Relaxed);
         })?;
@@ -288,6 +303,8 @@ fn wait_for_trigger(
     message_receiver: &mut mpsc::Receiver<OutboundMessage>,
     shutdown: &mut broadcast::Receiver<()>,
     paused: &mut bool,
+    #[cfg(unix)] log_writer: &mut PipeWriter,
+    #[cfg(windows)] log_writer: &mut mpsc::Sender<super::logs::LogEvent>,
 ) -> eyre::Result<bool> {
     let timeout = {
         let Ok(read) = daemon.read() else {
@@ -346,7 +363,7 @@ fn wait_for_trigger(
                             OutboundMessage::PromptResponse(_) => {}
                             OutboundMessage::Stop => {
                                 *paused = true;
-                                update_stats(daemon, check_id, |h| {
+                                update_stats(daemon, check_id, log_writer, |h| {
                                     h.currently_running.store(true, Ordering::Relaxed);
                                     h.started.store(false, Ordering::Relaxed);
                                 })?;
@@ -485,16 +502,14 @@ fn run_troubleshooter(
 
     let mut overall_result = CheckResultType::NotRun;
 
-    let mut steps = HashMap::new();
+    let mut steps = Vec::new();
 
     for (i, check) in checks.into_iter().enumerate() {
-        let key = format!("step{i}");
-
         let value = check.run_check(&mut runner)?;
 
         overall_result &= value.result_type;
 
-        steps.insert(key, (check.name().to_string(), value));
+        steps.push((check.name().to_string(), value));
     }
 
     let result = super::logs::LogEvent::Result(super::TroubleshooterResult {
