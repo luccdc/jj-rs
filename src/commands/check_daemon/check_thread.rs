@@ -18,6 +18,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::checks::CheckResultType;
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub enum OutboundMessage {
     Start,
     Stop,
@@ -368,7 +369,6 @@ fn wait_for_trigger(
                             OutboundMessage::Stop => {
                                 *paused = true;
                                 update_stats(daemon, check_id, log_writer, |h| {
-                                    h.currently_running.store(true, Ordering::Relaxed);
                                     h.started.store(false, Ordering::Relaxed);
                                 })?;
                                 break;
@@ -508,7 +508,7 @@ fn run_troubleshooter(
 
     let mut steps = Vec::new();
 
-    for (i, check) in checks.into_iter().enumerate() {
+    for check in checks.into_iter() {
         let value = check.run_check(&mut runner)?;
 
         overall_result &= value.result_type;
