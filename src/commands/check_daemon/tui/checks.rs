@@ -7,9 +7,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     Frame,
     layout::{Margin, Rect},
-    style::{Color, Style, Styled, Stylize},
+    style::{Color, Style, Styled, Stylize, palette::tailwind::NEUTRAL},
     text::{Line, Text},
-    widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarState},
+    widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 use strum::FromRepr;
 
@@ -70,6 +70,7 @@ enum CheckHighlight {
     AllResults(usize),
 }
 
+#[derive(Clone)]
 struct ShowCheckConfigState {
     id: CheckId,
     vertical_scroll: usize,
@@ -115,6 +116,82 @@ impl CheckTabData {
         self.current_highlight_index = 0;
         self.current_highlight_state = CheckHighlight::Check;
     }
+}
+
+fn get_check_json(tui: &super::Tui<'_>, config: CheckId) -> Option<serde_json::Value> {
+    let lock = tui.checks.read().ok()?;
+    let host = lock.checks.get(&config.0)?;
+    let check = host.get(&config.1)?;
+
+    serde_json::to_value(&check.0)
+        .ok()
+        .and_then(|v| v.as_object().and_then(|o| o.values().next().cloned()))
+}
+
+fn render_check_config(
+    check_json: serde_json::Value,
+    frame: &mut Frame,
+    inner_area: Rect,
+    config: &mut ShowCheckConfigState,
+) {
+    let serde_json::Value::Object(obj) = check_json else {
+        return;
+    };
+
+    let max_width = obj.keys().map(String::len).max().unwrap_or_default();
+
+    let styles = [NEUTRAL.c950, NEUTRAL.c700];
+
+    let lines = obj
+        .into_iter()
+        .enumerate()
+        .map(|(i, (key, val))| {
+            Line::default()
+                .spans(vec![
+                    format!("{:<max_width$}: ", format!("{key}")).dark_gray(),
+                    serde_json::to_string(&val).unwrap_or_default().into(),
+                ])
+                .bg(styles[i % 2])
+        })
+        .collect::<Vec<_>>();
+
+    let max_width = lines.iter().map(Line::width).max().unwrap_or_default() as isize;
+    let depth = lines.len() as isize;
+
+    let display_width = inner_area.width as isize;
+    let display_height = inner_area.height as isize;
+
+    let width = (max_width - display_width).max(0) as usize;
+    let height = (depth - display_height).max(0) as usize;
+
+    config.horizontal_scroll_state = config.horizontal_scroll_state.content_length(width);
+    config.vertical_scroll_state = config.vertical_scroll_state.content_length(height);
+
+    frame.render_widget(
+        Paragraph::new(lines).scroll((
+            config.vertical_scroll as u16,
+            config.horizontal_scroll as u16,
+        )),
+        inner_area,
+    );
+
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight),
+        inner_area.clone().inner(Margin {
+            vertical: 2,
+            horizontal: 0,
+        }),
+        &mut config.vertical_scroll_state,
+    );
+
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::HorizontalBottom),
+        inner_area.clone().inner(Margin {
+            vertical: 0,
+            horizontal: 2,
+        }),
+        &mut config.horizontal_scroll_state,
+    );
 }
 
 pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab_selected: bool) {
@@ -490,16 +567,28 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
         &mut tui.check_tab_data.horizontal_scrollbar_state,
     );
 
-    if let Some(show_config) = &tui.check_tab_data.check_config_to_show {
+    // this way avoids the borrow checker; we want to borrow immutably later
+    // but can't borrow tui (even immutably) if we have the mutable reference
+    let json = tui
+        .check_tab_data
+        .check_config_to_show
+        .as_ref()
+        .map(|c| c.id.clone())
+        .and_then(|id| get_check_json(tui, id));
+    if let Some(show_config) = &mut tui.check_tab_data.check_config_to_show
+        && let Some(json) = json
+    {
         let area = inner_area.clone().inner(Margin {
-            vertical: 10,
-            horizontal: 10,
+            vertical: 2,
+            horizontal: 5,
         });
         frame.render_widget(Clear, area.clone());
         let block = Block::bordered();
         frame.render_widget(&block, area.clone());
 
         let inner_area = block.inner(area);
+
+        render_check_config(json, frame, inner_area, show_config);
     }
 }
 
@@ -516,8 +605,44 @@ pub async fn handle_keypress(tui: &mut super::Tui<'_>, key: KeyEvent) -> bool {
         return false;
     };
 
-    if let Some(_) = &tui.check_tab_data.check_config_to_show {
-        tui.check_tab_data.check_config_to_show = None;
+    if let Some(show_config) = &mut tui.check_tab_data.check_config_to_show {
+        if let KeyCode::Char('0') = key.code {
+            show_config.horizontal_scroll = 0;
+            show_config.horizontal_scroll_state = show_config
+                .horizontal_scroll_state
+                .position(show_config.horizontal_scroll);
+        } else if let KeyCode::Char('_') = key.code {
+            let _ = show_config.vertical_scroll.saturating_sub(1);
+            show_config.vertical_scroll_state = show_config
+                .vertical_scroll_state
+                .position(show_config.vertical_scroll);
+            show_config.horizontal_scroll = 0;
+            show_config.horizontal_scroll_state = show_config
+                .horizontal_scroll_state
+                .position(show_config.horizontal_scroll);
+        } else if is_generic_down(&key) {
+            let _ = show_config.vertical_scroll.saturating_add(1);
+            show_config.vertical_scroll_state = show_config
+                .vertical_scroll_state
+                .position(show_config.vertical_scroll);
+        } else if is_generic_up(&key) {
+            let _ = show_config.vertical_scroll.saturating_sub(1);
+            show_config.vertical_scroll_state = show_config
+                .vertical_scroll_state
+                .position(show_config.vertical_scroll);
+        } else if is_generic_left(&key) {
+            let _ = show_config.horizontal_scroll.saturating_sub(1);
+            show_config.horizontal_scroll_state = show_config
+                .horizontal_scroll_state
+                .position(show_config.horizontal_scroll);
+        } else if is_generic_right(&key) {
+            let _ = show_config.horizontal_scroll.saturating_add(1);
+            show_config.horizontal_scroll_state = show_config
+                .horizontal_scroll_state
+                .position(show_config.horizontal_scroll);
+        } else {
+            tui.check_tab_data.check_config_to_show = None;
+        }
         tui.buffer.clear();
         return true;
     }
@@ -713,10 +838,6 @@ fn set_vertical_scroll(tui: &mut super::Tui<'_>) {
                 return;
             }
         };
-
-    let total_height = (0..tui.check_tab_data.last_rendered_check_ids.len())
-        .map(|i| get_vertical_position(tui, i))
-        .sum::<usize>();
 
     let Ok(size) = crossterm::terminal::window_size() else {
         return;
