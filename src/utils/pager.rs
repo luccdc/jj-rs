@@ -15,6 +15,8 @@ struct Pager {
 #[cfg(unix)]
 impl Drop for Pager {
     fn drop(&mut self) {
+        let _ = crossterm::terminal::enable_raw_mode();
+
         if let Some(s) = self.stdin.take() {
             drop(s);
         }
@@ -22,6 +24,8 @@ impl Drop for Pager {
         if let Err(e) = self.child.wait() {
             eprintln!("Could not wait for pager to die! {e}");
         }
+
+        let _ = crossterm::terminal::disable_raw_mode();
     }
 }
 

@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Margin, Rect},
     style::{Color, Style, Styled, Stylize},
     text::{Line, Text},
-    widgets::{Paragraph, Scrollbar, ScrollbarState},
+    widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarState},
 };
 use strum::FromRepr;
 
@@ -36,6 +36,7 @@ enum CheckControls {
     #[default]
     RunOnce,
     StartStop,
+    ShowCheckConfig,
     ShowHideAllResults,
 }
 
@@ -44,14 +45,16 @@ impl CheckControls {
         match self {
             Self::RunOnce => Self::RunOnce,
             Self::StartStop => Self::RunOnce,
-            Self::ShowHideAllResults => Self::StartStop,
+            Self::ShowCheckConfig => Self::StartStop,
+            Self::ShowHideAllResults => Self::ShowCheckConfig,
         }
     }
 
     fn right(&self) -> Self {
         match self {
             Self::RunOnce => Self::StartStop,
-            Self::StartStop => Self::ShowHideAllResults,
+            Self::StartStop => Self::ShowCheckConfig,
+            Self::ShowCheckConfig => Self::ShowHideAllResults,
             Self::ShowHideAllResults => Self::ShowHideAllResults,
         }
     }
@@ -67,6 +70,31 @@ enum CheckHighlight {
     AllResults(usize),
 }
 
+struct ShowCheckConfigState {
+    id: CheckId,
+    vertical_scroll: usize,
+    vertical_scroll_state: ScrollbarState,
+    horizontal_scroll: usize,
+    horizontal_scroll_state: ScrollbarState,
+}
+
+struct ShowResultState {
+    id: CheckId,
+    result_id: usize,
+    vertical_scroll: usize,
+    vertical_scroll_state: ScrollbarState,
+    horizontal_scroll: usize,
+    horizontal_scroll_state: ScrollbarState,
+}
+
+struct ShowResultStepState {
+    step_id: usize,
+    vertical_scroll: usize,
+    vertical_scroll_state: ScrollbarState,
+    horizontal_scroll: usize,
+    horizontal_scroll_state: ScrollbarState,
+}
+
 #[derive(Default)]
 pub struct CheckTabData {
     vertical_scrollbar_position: usize,
@@ -76,9 +104,17 @@ pub struct CheckTabData {
     open_checks: HashMap<CheckId, OpenCheckState>,
     current_highlight_state: CheckHighlight,
     current_highlight_index: usize,
-    current_result_view: Option<(CheckId, usize)>,
-    current_step_view: Option<usize>,
+    current_result_view: Option<ShowResultState>,
+    current_step_view: Option<ShowResultStepState>,
     last_rendered_check_ids: Vec<CheckId>,
+    check_config_to_show: Option<ShowCheckConfigState>,
+}
+
+impl CheckTabData {
+    pub fn reset_to_top(&mut self) {
+        self.current_highlight_index = 0;
+        self.current_highlight_state = CheckHighlight::Check;
+    }
 }
 
 pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab_selected: bool) {
@@ -137,42 +173,42 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
             };
 
             let mut check_render = vec![Line::default().spans(vec![
-                    if open_state.is_some() {
-                        " ↓ "
-                    } else {
-                        " → "
+                if open_state.is_some() {
+                    " ↓ "
+                } else {
+                    " → "
+                }
+                .into(),
+                format!("{}", check.display_name()).set_style(check_line_style.dark_gray()),
+                format!(": {}.{} (", id.0, id.1).set_style(check_line_style),
+                if currently_running {
+                    "RUNNING".set_style(check_line_style.bg(Color::Green))
+                } else {
+                    "WAITING".set_style(check_line_style.yellow())
+                },
+                ", ".set_style(check_line_style),
+                match results
+                    .and_then(|logs| logs.iter().next_back())
+                    .map(|result| result.overall_result)
+                {
+                    Some(CheckResultType::NotRun) | None => {
+                        "NOT RUN".set_style(check_line_style.dark_gray())
                     }
-                    .into(),
-                    format!("{}", check.display_name()).set_style(check_line_style.dark_gray()),
-                    format!(": {}.{} (", id.0, id.1).set_style(check_line_style),
-                    if currently_running {
-                        "RUNNING".set_style(check_line_style.bg(Color::Green))
-                    } else {
-                        "WAITING".set_style(check_line_style.yellow())
-                    },
-                    ", ".set_style(check_line_style),
-                    match results
-                        .and_then(|logs| logs.iter().next_back())
-                        .map(|result| result.overall_result)
-                    {
-                        Some(CheckResultType::NotRun) | None => {
-                            "NOT RUN".set_style(check_line_style.dark_gray())
-                        }
-                        Some(CheckResultType::Success) => {
-                            "PASS".set_style(check_line_style.bg(Color::Green))
-                        }
-                        Some(CheckResultType::Failure) => {
-                            "FAIL".set_style(check_line_style.bg(Color::Red))
-                        }
-                    },
-                    ", ".set_style(check_line_style),
-                    if started {
-                        "ENABLED".set_style(check_line_style.bg(Color::Green))
-                    } else {
-                        "DISABLED".set_style(check_line_style.dark_gray())
-                    },
-                    ")".set_style(check_line_style),
-                ])];
+                    Some(CheckResultType::Success) => {
+                        "PASS".set_style(check_line_style.bg(Color::Green))
+                    }
+                    Some(CheckResultType::Failure) => {
+                        "FAIL".set_style(check_line_style.bg(Color::Red))
+                    }
+                },
+                ", ".set_style(check_line_style),
+                if started {
+                    "ENABLED".set_style(check_line_style.bg(Color::Green))
+                } else {
+                    "DISABLED".set_style(check_line_style.dark_gray())
+                },
+                ")".set_style(check_line_style),
+            ])];
 
             if let Some(open_state) = open_state {
                 let logs = tui.logs.get(&id);
@@ -216,6 +252,17 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                         Style::new()
                     };
 
+                    let controls_showconf_style = if current_selected
+                        && tui.check_tab_data.current_highlight_state
+                            == CheckHighlight::Controls(CheckControls::ShowCheckConfig)
+                    {
+                        Style::new().bg(Color::Yellow).black().underlined()
+                    } else if controls_selected {
+                        Style::new().underlined()
+                    } else {
+                        Style::new()
+                    };
+
                     let controls_showhide_style = if current_selected
                         && tui.check_tab_data.current_highlight_state
                             == CheckHighlight::Controls(CheckControls::ShowHideAllResults)
@@ -228,19 +275,21 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                     };
 
                     check_render.push(Line::default().spans(vec![
-                                "     ".into(),
-                                "Run Once".set_style(controls_runonce_style),
-                                " | ".set_style(controls_style.clone()),
-                                if started { "Stop" } else { "Start" }
-                                    .set_style(controls_startstop_style),
-                                " | ".set_style(controls_style.clone()),
-                                if open_state.viewing_all {
-                                    "Hide extra results"
-                                } else {
-                                    "Show all results"
-                                }
-                                .set_style(controls_showhide_style),
-                            ]))
+                        "     ".into(),
+                        "Run Once".set_style(controls_runonce_style),
+                        " | ".set_style(controls_style.clone()),
+                        if started { "Stop" } else { "Start" }
+                            .set_style(controls_startstop_style),
+                        " | ".set_style(controls_style.clone()),
+                        "Show Config".set_style(controls_showconf_style),
+                        " | ".set_style(controls_style.clone()),
+                        if open_state.viewing_all {
+                            "Hide extra results"
+                        } else {
+                            "Show all results"
+                        }
+                        .set_style(controls_showhide_style),
+                    ]))
                 }
 
                 {
@@ -395,12 +444,18 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
         })
         .collect::<Vec<_>>();
 
+    let display_width = inner_area.width as isize;
+    let display_height = inner_area.height as isize;
+
     let max_width = display_lines
         .iter()
         .map(Line::width)
         .max()
-        .unwrap_or_default();
-    let max_depth = display_lines.len();
+        .unwrap_or_default() as isize;
+    let max_depth = display_lines.len() as isize;
+
+    let max_width = (max_width - display_width).max(0) as usize;
+    let max_height = (max_depth - display_height).max(0) as usize;
 
     tui.check_tab_data.horizontal_scrollbar_state = tui
         .check_tab_data
@@ -409,7 +464,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
     tui.check_tab_data.vertical_scrollbar_state = tui
         .check_tab_data
         .vertical_scrollbar_state
-        .content_length(max_depth);
+        .content_length(max_height);
 
     let paragraph = Paragraph::new(display_lines).scroll((
         tui.check_tab_data.vertical_scrollbar_position as u16,
@@ -427,35 +482,45 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
         &mut tui.check_tab_data.vertical_scrollbar_state,
     );
     frame.render_stateful_widget(
-        Scrollbar::new(ratatui::widgets::ScrollbarOrientation::HorizontalBottom),
+        Scrollbar::new(ratatui::widgets::ScrollbarOrientation::HorizontalBottom).thumb_symbol("🬋"),
         inner_area.clone().inner(Margin {
             vertical: 0,
             horizontal: 2,
         }),
         &mut tui.check_tab_data.horizontal_scrollbar_state,
     );
+
+    if let Some(show_config) = &tui.check_tab_data.check_config_to_show {
+        let area = inner_area.clone().inner(Margin {
+            vertical: 10,
+            horizontal: 10,
+        });
+        frame.render_widget(Clear, area.clone());
+        let block = Block::bordered();
+        frame.render_widget(&block, area.clone());
+
+        let inner_area = block.inner(area);
+    }
 }
 
-pub async fn handle_keypress(tui: &mut super::Tui<'_>, key: KeyEvent) {
+pub async fn handle_keypress(tui: &mut super::Tui<'_>, key: KeyEvent) -> bool {
     let KeyEventKind::Press = key.kind else {
-        return;
+        return false;
     };
-
-    if tui.check_tab_data.current_highlight_index == 0
-        && tui.check_tab_data.current_highlight_state == CheckHighlight::Check
-        && is_generic_up(&key)
-    {
-        tui.current_selection = super::CurrentSelection::Tabs;
-        return;
-    }
 
     let Some(current_check_selected) = tui
         .check_tab_data
         .last_rendered_check_ids
         .get(tui.check_tab_data.current_highlight_index)
     else {
-        return;
+        return false;
     };
+
+    if let Some(_) = &tui.check_tab_data.check_config_to_show {
+        tui.check_tab_data.check_config_to_show = None;
+        tui.buffer.clear();
+        return true;
+    }
 
     if tui.check_tab_data.current_highlight_state == CheckHighlight::Check
         && let KeyCode::Enter | KeyCode::Char(' ') = key.code
@@ -473,13 +538,145 @@ pub async fn handle_keypress(tui: &mut super::Tui<'_>, key: KeyEvent) {
                 .open_checks
                 .insert(current_check_selected.clone(), Default::default());
         }
+        tui.buffer.clear();
+        set_vertical_scroll(tui);
+        return true;
     }
 
-    handle_movement(tui, &key);
-    handle_selects(tui, &key).await;
+    if let Ok(v) = tui.buffer.parse::<usize>() {
+        let mut handled = false;
+        for _ in 0..v {
+            handled |= handle_movement(tui, &key);
+        }
+        if handled {
+            tui.buffer.clear();
+            return true;
+        }
+    } else {
+        if handle_movement(tui, &key) {
+            tui.buffer.clear();
+            return true;
+        }
+    }
+    if handle_selects(tui, &key).await {
+        tui.buffer.clear();
+        return true;
+    }
+    return false;
 }
 
-async fn handle_selects(tui: &mut super::Tui<'_>, key: &KeyEvent) {
+async fn handle_selects(tui: &mut super::Tui<'_>, key: &KeyEvent) -> bool {
+    let Some(current_check_selected) = tui
+        .check_tab_data
+        .last_rendered_check_ids
+        .get(tui.check_tab_data.current_highlight_index)
+    else {
+        return false;
+    };
+
+    if let Some(open_state) = tui
+        .check_tab_data
+        .open_checks
+        .get_mut(&current_check_selected)
+        && let CheckHighlight::Controls(control) = &tui.check_tab_data.current_highlight_state
+        && let KeyCode::Char(' ') | KeyCode::Enter = key.code
+    {
+        match *control {
+            CheckControls::RunOnce => {
+                let Ok(lock) = tui.checks.read() else {
+                    return false;
+                };
+
+                let Some(host) = lock.checks.get(&current_check_selected.0) else {
+                    return false;
+                };
+                let Some(check) = host.get(&current_check_selected.1) else {
+                    return false;
+                };
+
+                if check.1.currently_running.load(Ordering::Acquire) {
+                    return false;
+                }
+
+                let _ = check
+                    .1
+                    .message_sender
+                    .send(OutboundMessage::TriggerNow)
+                    .await;
+            }
+            CheckControls::StartStop => {
+                let Ok(lock) = tui.checks.read() else {
+                    return false;
+                };
+
+                let Some(host) = lock.checks.get(&current_check_selected.0) else {
+                    return false;
+                };
+                let Some(check) = host.get(&current_check_selected.1) else {
+                    return false;
+                };
+
+                if check.1.started.load(Ordering::Acquire) {
+                    let _ = check.1.message_sender.send(OutboundMessage::Stop).await;
+                } else {
+                    let _ = check.1.message_sender.send(OutboundMessage::Start).await;
+                }
+            }
+            CheckControls::ShowCheckConfig => {
+                tui.check_tab_data.check_config_to_show = Some(ShowCheckConfigState {
+                    id: current_check_selected.clone(),
+                    vertical_scroll: 0,
+                    vertical_scroll_state: ScrollbarState::default(),
+                    horizontal_scroll: 0,
+                    horizontal_scroll_state: ScrollbarState::default(),
+                });
+            }
+            CheckControls::ShowHideAllResults => {
+                open_state.viewing_all = !open_state.viewing_all;
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
+fn get_vertical_position(tui: &super::Tui<'_>, check_index: usize) -> usize {
+    let Some(current_check_selected) = tui.check_tab_data.last_rendered_check_ids.get(check_index)
+    else {
+        return 0;
+    };
+
+    let Some(current_check_open) = tui.check_tab_data.open_checks.get(&current_check_selected)
+    else {
+        return 1;
+    };
+
+    let Some(logs) = tui.logs.get(&current_check_selected) else {
+        return if current_check_open.viewing_all { 6 } else { 8 };
+    };
+
+    let base_height = 4
+        + logs.len().min(5).max(1)
+        + logs
+            .iter()
+            .filter(|c| c.overall_result == CheckResultType::Failure)
+            .count()
+            .min(5)
+            .max(1);
+
+    if current_check_open.viewing_all {
+        base_height + logs.len().max(1)
+    } else {
+        base_height
+    }
+}
+
+fn set_vertical_scroll(tui: &mut super::Tui<'_>) {
+    let previous_checks_height = (0..tui.check_tab_data.current_highlight_index)
+        .map(|i| get_vertical_position(tui, i))
+        .sum::<usize>();
+
     let Some(current_check_selected) = tui
         .check_tab_data
         .last_rendered_check_ids
@@ -488,67 +685,94 @@ async fn handle_selects(tui: &mut super::Tui<'_>, key: &KeyEvent) {
         return;
     };
 
-    if let Some(open_state) = tui
-        .check_tab_data
-        .open_checks
-        .get_mut(&current_check_selected)
-        && let CheckHighlight::Controls(control) = &tui.check_tab_data.current_highlight_state
-    {
-        if *control == CheckControls::RunOnce
-            && let KeyCode::Char(' ') | KeyCode::Enter = key.code
-        {
-            let Ok(lock) = tui.checks.read() else {
-                return;
-            };
+    let current_check_open = tui.check_tab_data.open_checks.get(&current_check_selected);
 
-            let Some(host) = lock.checks.get(&current_check_selected.0) else {
-                return;
-            };
-            let Some(check) = host.get(&current_check_selected.1) else {
-                return;
-            };
+    let logs = tui.logs.get(&current_check_selected);
 
-            let _ = check
-                .1
-                .message_sender
-                .send(OutboundMessage::TriggerNow)
-                .await;
-        }
-        if *control == CheckControls::StartStop
-            && let KeyCode::Char(' ') | KeyCode::Enter = key.code
-        {
-            let Ok(lock) = tui.checks.read() else {
-                return;
-            };
-
-            let Some(host) = lock.checks.get(&current_check_selected.0) else {
-                return;
-            };
-            let Some(check) = host.get(&current_check_selected.1) else {
-                return;
-            };
-
-            if check.1.started.load(Ordering::Acquire) {
-                let _ = check.1.message_sender.send(OutboundMessage::Stop).await;
-            } else {
-                let _ = check.1.message_sender.send(OutboundMessage::Start).await;
+    let current_position = previous_checks_height
+        + match (
+            &tui.check_tab_data.current_highlight_state,
+            current_check_open,
+            logs,
+        ) {
+            (CheckHighlight::Check, _, _) => 1,
+            (CheckHighlight::Controls(_), _, _) => 2,
+            (CheckHighlight::RecentResults(i), _, _) => 4 + i,
+            (CheckHighlight::BadResults(i), _, Some(logs)) => 5 + logs.len().min(5).max(1) + i,
+            (CheckHighlight::AllResults(i), Some(open), Some(logs)) if open.viewing_all => {
+                6 + logs.len().min(5).max(1)
+                    + logs
+                        .iter()
+                        .filter(|r| r.overall_result == CheckResultType::Failure)
+                        .count()
+                        .min(5)
+                        .max(1)
+                    + i
             }
-        }
-        if *control == CheckControls::ShowHideAllResults
-            && let KeyCode::Char(' ') | KeyCode::Enter = key.code
-        {
-            open_state.viewing_all = !open_state.viewing_all;
-        }
+            _ => {
+                return;
+            }
+        };
+
+    let total_height = (0..tui.check_tab_data.last_rendered_check_ids.len())
+        .map(|i| get_vertical_position(tui, i))
+        .sum::<usize>();
+
+    let Ok(size) = crossterm::terminal::window_size() else {
+        return;
+    };
+
+    // 6: 3 for tab header, 2 for borders of tab area, 1 for command buffer
+    let scroll_area = size.rows - 6;
+
+    if current_position < 5 {
+        tui.check_tab_data.vertical_scrollbar_position = 0;
+        tui.check_tab_data.vertical_scrollbar_state = tui
+            .check_tab_data
+            .vertical_scrollbar_state
+            .position(tui.check_tab_data.vertical_scrollbar_position);
+    }
+
+    let vsp = tui.check_tab_data.vertical_scrollbar_position as isize;
+    let current_position = current_position as isize;
+    let scroll_area = scroll_area as isize;
+
+    if current_position - vsp < 5 {
+        tui.check_tab_data.vertical_scrollbar_position = 0 as usize;
+        tui.check_tab_data.vertical_scrollbar_state = tui
+            .check_tab_data
+            .vertical_scrollbar_state
+            .position(tui.check_tab_data.vertical_scrollbar_position);
+        return;
+    }
+
+    if (scroll_area + vsp) - current_position < 5 {
+        tui.check_tab_data.vertical_scrollbar_position =
+            (current_position + 5 - scroll_area) as usize;
+        tui.check_tab_data.vertical_scrollbar_state = tui
+            .check_tab_data
+            .vertical_scrollbar_state
+            .position(tui.check_tab_data.vertical_scrollbar_position);
     }
 }
 
-fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
+fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) -> bool {
+    if tui.check_tab_data.current_highlight_index == 0
+        && tui.check_tab_data.current_highlight_state == CheckHighlight::Check
+        && is_generic_up(&key)
+    {
+        tui.current_selection = super::CurrentSelection::Tabs;
+        tui.buffer.clear();
+        set_vertical_scroll(tui);
+        return true;
+    }
+
     let Some(current_check_selected) = tui
         .check_tab_data
         .last_rendered_check_ids
         .get(tui.check_tab_data.current_highlight_index)
     else {
-        return;
+        return false;
     };
 
     if let Some(open_state) = tui.check_tab_data.open_checks.get(&current_check_selected) {
@@ -564,16 +788,16 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
                 if open_state.viewing_all {
                     let logs_length = tui
                         .logs
-                        .get(current_check_selected)
+                        .get(prev_check_id)
                         .map(|l| l.len())
                         .unwrap_or_default();
 
                     tui.check_tab_data.current_highlight_state =
-                        CheckHighlight::AllResults(logs_length);
+                        CheckHighlight::AllResults(logs_length - 1);
                 } else {
                     let logs_length = tui
                         .logs
-                        .get(current_check_selected)
+                        .get(prev_check_id)
                         .map(|l| {
                             l.iter()
                                 .filter(|r| r.overall_result == CheckResultType::Failure)
@@ -589,7 +813,8 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
                 tui.check_tab_data.current_highlight_state = CheckHighlight::Check;
             }
             tui.check_tab_data.current_highlight_index -= 1;
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_down(&key)
@@ -597,35 +822,67 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
         {
             tui.check_tab_data.current_highlight_state =
                 CheckHighlight::Controls(CheckControls::RunOnce);
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_up(&key)
             && let CheckHighlight::Controls(_) = tui.check_tab_data.current_highlight_state
         {
             tui.check_tab_data.current_highlight_state = CheckHighlight::Check;
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_down(&key)
             && let CheckHighlight::Controls(_) = tui.check_tab_data.current_highlight_state
         {
             tui.check_tab_data.current_highlight_state = CheckHighlight::RecentResults(0);
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_left(&key)
             && let CheckHighlight::Controls(control) = &tui.check_tab_data.current_highlight_state
         {
             tui.check_tab_data.current_highlight_state = CheckHighlight::Controls(control.left());
-            return;
+            set_vertical_scroll(tui);
+            return true;
+        }
+
+        if is_generic_left(key) && tui.check_tab_data.horizontal_scrollbar_position == 0 {
+            tui.check_tab_data.current_highlight_state = CheckHighlight::Check;
+            tui.check_tab_data
+                .open_checks
+                .remove(current_check_selected);
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_right(&key)
             && let CheckHighlight::Controls(control) = &tui.check_tab_data.current_highlight_state
         {
             tui.check_tab_data.current_highlight_state = CheckHighlight::Controls(control.right());
-            return;
+            set_vertical_scroll(tui);
+            return true;
+        }
+
+        if let KeyCode::Char('0') = key.code
+            && let CheckHighlight::Controls(_) = &tui.check_tab_data.current_highlight_state
+        {
+            tui.check_tab_data.current_highlight_state =
+                CheckHighlight::Controls(CheckControls::RunOnce);
+            set_vertical_scroll(tui);
+            return true;
+        }
+
+        if let KeyCode::Char('$') = key.code
+            && let CheckHighlight::Controls(_) = &tui.check_tab_data.current_highlight_state
+        {
+            tui.check_tab_data.current_highlight_state =
+                CheckHighlight::Controls(CheckControls::ShowHideAllResults);
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_up(&key)
@@ -633,14 +890,16 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
         {
             tui.check_tab_data.current_highlight_state =
                 CheckHighlight::Controls(CheckControls::RunOnce);
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_up(&key)
             && let CheckHighlight::RecentResults(i) = tui.check_tab_data.current_highlight_state
         {
             tui.check_tab_data.current_highlight_state = CheckHighlight::RecentResults(i - 1);
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_down(&key)
@@ -657,7 +916,8 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
             } else {
                 tui.check_tab_data.current_highlight_state = CheckHighlight::RecentResults(i + 1);
             }
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_up(&key)
@@ -671,13 +931,16 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
 
             tui.check_tab_data.current_highlight_state =
                 CheckHighlight::RecentResults(logs_length.clamp(0, 4));
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_up(&key)
             && let CheckHighlight::BadResults(i) = tui.check_tab_data.current_highlight_state
         {
             tui.check_tab_data.current_highlight_state = CheckHighlight::BadResults(i - 1);
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_down(&key)
@@ -705,7 +968,8 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
             } else {
                 tui.check_tab_data.current_highlight_state = CheckHighlight::BadResults(i + 1);
             }
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_up(&key)
@@ -724,14 +988,16 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
 
             tui.check_tab_data.current_highlight_state = CheckHighlight::BadResults(logs_length);
 
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_up(&key)
             && let CheckHighlight::AllResults(i) = tui.check_tab_data.current_highlight_state
         {
             tui.check_tab_data.current_highlight_state = CheckHighlight::AllResults(i - 1);
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_down(&key)
@@ -753,14 +1019,16 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
             } else {
                 tui.check_tab_data.current_highlight_state = CheckHighlight::AllResults(i + 1);
             }
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
     } else {
         if is_generic_down(&key) {
             tui.check_tab_data.current_highlight_index =
                 (1 + tui.check_tab_data.current_highlight_index)
                     .clamp(0, tui.check_tab_data.last_rendered_check_ids.len() - 1);
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
 
         if is_generic_up(&key) {
@@ -773,16 +1041,16 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
                 if open_state.viewing_all {
                     let logs_length = tui
                         .logs
-                        .get(current_check_selected)
+                        .get(prev_check_id)
                         .map(|l| l.len())
                         .unwrap_or_default();
 
                     tui.check_tab_data.current_highlight_state =
-                        CheckHighlight::AllResults(logs_length);
+                        CheckHighlight::AllResults(logs_length - 1);
                 } else {
                     let logs_length = tui
                         .logs
-                        .get(current_check_selected)
+                        .get(prev_check_id)
                         .map(|l| {
                             l.iter()
                                 .filter(|r| r.overall_result == CheckResultType::Failure)
@@ -798,7 +1066,35 @@ fn handle_movement(tui: &mut super::Tui<'_>, key: &KeyEvent) {
                 tui.check_tab_data.current_highlight_state = CheckHighlight::Check;
             }
             tui.check_tab_data.current_highlight_index -= 1;
-            return;
+            set_vertical_scroll(tui);
+            return true;
         }
     }
+
+    if let KeyCode::Char('h') | KeyCode::Left = key.code {
+        tui.check_tab_data.horizontal_scrollbar_position = tui
+            .check_tab_data
+            .horizontal_scrollbar_position
+            .saturating_sub(1);
+        tui.check_tab_data.horizontal_scrollbar_state = tui
+            .check_tab_data
+            .horizontal_scrollbar_state
+            .position(tui.check_tab_data.horizontal_scrollbar_position);
+        set_vertical_scroll(tui);
+        return true;
+    }
+    if let KeyCode::Char('l') | KeyCode::Right = key.code {
+        tui.check_tab_data.horizontal_scrollbar_position = tui
+            .check_tab_data
+            .horizontal_scrollbar_position
+            .saturating_add(1);
+        tui.check_tab_data.horizontal_scrollbar_state = tui
+            .check_tab_data
+            .horizontal_scrollbar_state
+            .position(tui.check_tab_data.horizontal_scrollbar_position);
+        set_vertical_scroll(tui);
+        return true;
+    }
+
+    return false;
 }

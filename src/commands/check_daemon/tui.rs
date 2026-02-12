@@ -22,13 +22,15 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout},
     style::{Color, Style},
-    text::Text,
+    text::{Line, Text},
     widgets::{Block, Clear, Tabs},
 };
 use strum::FromRepr;
 use tokio::sync::{broadcast, mpsc};
 
-use super::{CheckId, RuntimeDaemonConfig, TroubleshooterResult, logs};
+use super::{
+    CheckId, RuntimeDaemonConfig, TroubleshooterResult, check_thread::OutboundMessage, logs,
+};
 
 mod checks;
 
@@ -72,6 +74,7 @@ pub async fn main<'scope, 'env: 'scope>(
         prompt_entry: Default::default(),
         check_tab_data: Default::default(),
         previous_render_time: 0,
+        buffer: String::new(),
     };
 
     loop {
@@ -140,8 +143,12 @@ async fn load_previous_logs(
 fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
     frame.render_widget(Clear, frame.area());
 
-    let vertical = Layout::vertical([Constraint::Length(3), Constraint::Min(2)]);
-    let [tab_header, tab_body] = vertical.areas(frame.area());
+    let vertical = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(2),
+        Constraint::Length(1),
+    ]);
+    let [tab_header, tab_body, cmdline] = vertical.areas(frame.area());
 
     let highlighted_style = Style::new().fg(Color::Yellow);
 
@@ -174,6 +181,7 @@ fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
 
     frame.render_widget(body_block, tab_body);
     frame.render_widget(Clear, inner_area);
+    frame.render_widget(Line::from(tui.buffer.clone()), cmdline);
 
     match tui.current_tab {
         Tab::Checks => checks::render(
@@ -207,6 +215,83 @@ fn is_generic_right(key: &KeyEvent) -> bool {
     (matches!(key.code, KeyCode::Char('l') | KeyCode::Right) && key.modifiers.is_empty())
 }
 
+async fn handle_cmd_buffer<'scope, 'env: 'scope>(
+    tui: &mut Tui<'_>,
+    c: char,
+    #[cfg(unix)] log_writer: &PipeWriter,
+    #[cfg(windows)] log_writer: &tokio::sync::mpsc::Sender<super::logs::LogEvent>,
+    prompt_writer: &mpsc::Sender<(CheckId, String)>,
+    checks_scope: &'scope std::thread::Scope<'scope, 'env>,
+) {
+    if c != '\n' {
+        tui.buffer.push(c);
+
+        if tui.buffer == "gg" {
+            tui.check_tab_data.reset_to_top();
+            tui.current_selection = CurrentSelection::Tabs;
+            tui.buffer.clear();
+        }
+
+        return;
+    }
+
+    if !tui.buffer.starts_with(":") {
+        return;
+    }
+
+    let cmd = tui.buffer[1..].split(' ').collect::<Vec<_>>();
+
+    match cmd[..] {
+        [action @ ("start" | "stop" | "trigger"), "all"] => {
+            let Ok(lock) = tui.checks.read() else {
+                return;
+            };
+
+            let action = match action {
+                "start" => OutboundMessage::Start,
+                "stop" => OutboundMessage::Stop,
+                "trigger" => OutboundMessage::TriggerNow,
+                _ => unreachable!(),
+            };
+
+            for hosts in lock.checks.values() {
+                for check in hosts.values() {
+                    _ = check.1.message_sender.send(action.clone()).await;
+                }
+            }
+        }
+        [action @ ("start" | "stop" | "trigger"), id] => {
+            let Ok(lock) = tui.checks.read() else {
+                return;
+            };
+
+            let action = match action {
+                "start" => OutboundMessage::Start,
+                "stop" => OutboundMessage::Stop,
+                "trigger" => OutboundMessage::TriggerNow,
+                _ => unreachable!(),
+            };
+
+            if let [host, check] = id.split('.').collect::<Vec<_>>()[..] {
+                if let Some(host) = lock.checks.get(host)
+                    && let Some(check) = host.get(check)
+                {
+                    _ = check.1.message_sender.send(action).await;
+                }
+            } else if !id.contains('.') {
+                if let Some(host) = lock.checks.get(id) {
+                    for check in host.values() {
+                        _ = check.1.message_sender.send(action.clone()).await;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    tui.buffer.clear();
+}
+
 async fn handle_key_event<'scope, 'env: 'scope>(
     tui: &mut Tui<'_>,
     event: Event,
@@ -215,6 +300,33 @@ async fn handle_key_event<'scope, 'env: 'scope>(
     prompt_writer: &mpsc::Sender<(CheckId, String)>,
     checks_scope: &'scope std::thread::Scope<'scope, 'env>,
 ) -> eyre::Result<ControlFlow<()>> {
+    if tui.buffer.starts_with(":")
+        && let Event::Key(key) = event
+        && let KeyCode::Char(c) = key.code
+    {
+        handle_cmd_buffer(tui, c, log_writer, prompt_writer, checks_scope).await;
+
+        return Ok(ControlFlow::Continue(()));
+    }
+
+    if tui.buffer.starts_with(":")
+        && let Event::Key(key) = event
+        && let KeyCode::Enter = key.code
+    {
+        handle_cmd_buffer(tui, '\n', log_writer, prompt_writer, checks_scope).await;
+
+        return Ok(ControlFlow::Continue(()));
+    }
+
+    if tui.buffer.starts_with(":")
+        && let Event::Key(key) = event
+        && let KeyCode::Backspace = key.code
+    {
+        tui.buffer.pop();
+
+        return Ok(ControlFlow::Continue(()));
+    }
+
     if tui.current_selection == CurrentSelection::Tabs {
         let Event::Key(key) = event else {
             return Ok(ControlFlow::Continue(()));
@@ -226,13 +338,27 @@ async fn handle_key_event<'scope, 'env: 'scope>(
             } else {
                 match key.code {
                     KeyCode::Char('l') | KeyCode::Right => {
+                        tui.buffer.clear();
                         tui.current_tab = tui.current_tab.right();
                     }
                     KeyCode::Char('h') | KeyCode::Left => {
+                        tui.buffer.clear();
                         tui.current_tab = tui.current_tab.left();
                     }
+                    KeyCode::Char('0') => {
+                        tui.buffer.clear();
+                        tui.current_tab = Tab::Checks;
+                    }
+                    KeyCode::Char('$') => {
+                        tui.buffer.clear();
+                        tui.current_tab = Tab::Exit;
+                    }
                     KeyCode::Enter if tui.current_tab == Tab::Exit => {
+                        tui.buffer.clear();
                         return Ok(ControlFlow::Break(()));
+                    }
+                    KeyCode::Char(c) => {
+                        handle_cmd_buffer(tui, c, log_writer, prompt_writer, checks_scope).await;
                     }
                     _ => {}
                 }
@@ -243,18 +369,25 @@ async fn handle_key_event<'scope, 'env: 'scope>(
     }
 
     if let Event::Key(key) = event {
-        match tui.current_tab {
+        let handled = match tui.current_tab {
             Tab::Checks => checks::handle_keypress(tui, key).await,
             Tab::AddCheck => {
                 tui.current_selection = CurrentSelection::Tabs;
+                true
             }
             Tab::Settings => {
                 tui.current_selection = CurrentSelection::Tabs;
+                true
             }
             Tab::Logs => {
                 tui.current_selection = CurrentSelection::Tabs;
+                true
             }
-            Tab::Exit => {}
+            Tab::Exit => true,
+        };
+
+        if !handled && let KeyCode::Char(c) = key.code {
+            handle_cmd_buffer(tui, c, log_writer, prompt_writer, checks_scope).await;
         }
     }
 
@@ -307,6 +440,7 @@ struct Tui<'parent> {
     prompt_entry: PromptEntry,
     check_tab_data: checks::CheckTabData,
     previous_render_time: usize,
+    buffer: String,
 }
 
 #[derive(Default)]
