@@ -100,6 +100,14 @@ macro_rules! define_checks {
             }
 
             impl $cname {
+                pub fn display_name(&self) -> &'static str {
+                    match self {
+                        $(
+                            Self::$name(inner) => inner.display_name()
+                        ),+,
+                    }
+                }
+
                 pub fn troubleshooter(self) -> Box<dyn $crate::utils::checks::Troubleshooter> {
                     match self {
                         $(

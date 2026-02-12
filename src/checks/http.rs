@@ -111,6 +111,10 @@ impl Default for HttpTroubleshooter {
 }
 
 impl Troubleshooter for HttpTroubleshooter {
+    fn display_name(&self) -> &'static str {
+        "HTTP"
+    }
+
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         Ok(vec![
             #[cfg(unix)]
