@@ -275,7 +275,7 @@ impl DownloadContainer {
             None => {
                 nft.exec(
                     format!(
-                        "add rule inet {ns_name} postrouting oifname \"{public_if}\" masquerade"
+                        "add rule inet {ns_name} postrouting iifname \"{ns_name}.0\" masquerade"
                     ),
                     None,
                 )
