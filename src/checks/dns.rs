@@ -50,6 +50,10 @@ impl Default for Dns {
 }
 
 impl Troubleshooter for Dns {
+    fn display_name(&self) -> &'static str {
+        "DNS"
+    }
+
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         Ok(vec![
             #[cfg(unix)]

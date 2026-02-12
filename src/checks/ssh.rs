@@ -53,6 +53,10 @@ impl Default for SshTroubleshooter {
 }
 
 impl Troubleshooter for SshTroubleshooter {
+    fn display_name(&self) -> &'static str {
+        "SSH"
+    }
+
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         let distro = get_distro().context("could not load distribution for ssh check")?;
 

@@ -58,7 +58,7 @@ where
 
     #[cfg(unix)]
     {
-        let result_json = serde_json::to_string(&result)?;
+        let result_json = serde_json::to_string(&result)? + "\n";
         log_writer.write_all(result_json.as_bytes())?;
     }
 
@@ -265,13 +265,13 @@ fn check_thread<'scope, 'env: 'scope>(
         let child_check = check.clone();
         let child = scope.spawn(move || {
             if let Err(e) = run_child(
-                check_id_child,
+                check_id_child.clone(),
                 child_check,
                 prompt_writer_raw,
                 answer_reader_raw,
                 log_writer,
             ) {
-                eprintln!("Could not run check process: {e}");
+                eprintln!("[{:?}] Could not run check process: {e}", &check_id_child);
             }
         });
 
@@ -290,7 +290,7 @@ fn check_thread<'scope, 'env: 'scope>(
                 .await
             })
         {
-            eprintln!("Could not manage check child process: {e}");
+            eprintln!("[{check_id:?}] Could not manage check child process: {e}");
         }
 
         let _ = child.join();
@@ -330,7 +330,9 @@ fn wait_for_trigger(
                         msg = message_receiver.recv() => msg
                     } {
                         match msg {
-                            OutboundMessage::Die => return Ok(true),
+                            OutboundMessage::Die => {
+                                return Ok(true);
+                            }
                             OutboundMessage::Start => {
                                 *paused = false;
                                 return Ok(false);
@@ -355,7 +357,9 @@ fn wait_for_trigger(
                         msg = message_receiver.recv() => msg
                     } {
                         match msg {
-                            OutboundMessage::Die => return Ok(true),
+                            OutboundMessage::Die => {
+                                return Ok(true);
+                            }
                             OutboundMessage::Start => {
                                 *paused = false;
                                 return Ok(false);
@@ -404,7 +408,7 @@ async fn run_parent(
 
     loop {
         let Ok(bytes) = prompt_reader_raw.read(&mut message_buffer) else {
-            eprintln!("Could not receive message from check child!");
+            eprintln!("[{check_id:?}] Could not receive message from check child!");
             continue;
         };
 
@@ -414,7 +418,7 @@ async fn run_parent(
         }
 
         let Ok(msg) = serde_json::from_slice::<ChildToParentMsg>(&message_buffer[..bytes]) else {
-            eprintln!("Could not parse message from child");
+            eprintln!("[{check_id:?}] Could not parse message from child");
             continue;
         };
 
@@ -430,7 +434,7 @@ async fn run_parent(
 
                     loop {
                         let Some(m) = message_receiver.recv().await else {
-                            eyre::bail!("Did not receive prompt response message");
+                            eyre::bail!("[{check_id:?}] Did not receive prompt response message");
                         };
                         let OutboundMessage::PromptResponse(r) = m else {
                             continue;
@@ -462,13 +466,13 @@ fn run_child(
     #[cfg(windows)] log_writer: mpsc::Sender<super::logs::LogEvent>,
 ) -> eyre::Result<()> {
     if let Err(e) = run_troubleshooter(
-        check_id,
+        check_id.clone(),
         check,
         &mut prompt_writer_raw,
         answer_reader_raw,
         log_writer,
     ) {
-        eprintln!("Could not run check! {e}");
+        eprintln!("[{check_id:?}] Could not run check! {e}");
     }
 
     let done_msg = serde_json::to_string(&ChildToParentMsg::Done)?;
@@ -521,7 +525,7 @@ fn run_troubleshooter(
 
     #[cfg(unix)]
     {
-        let result_json = serde_json::to_string(&result)?;
+        let result_json = serde_json::to_string(&result)? + "\n";
         log_writer.write_all(result_json.as_bytes())?;
     }
 

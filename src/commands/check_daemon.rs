@@ -59,7 +59,7 @@ mod check_thread;
 mod logs;
 mod tui;
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct CheckId(Arc<str>, Arc<str>);
 
 #[derive(Serialize, Deserialize)]
@@ -194,6 +194,17 @@ impl super::Command for CheckDaemon {
                 let (send_shutdown, shutdown) = broadcast::channel(1);
                 let (prompt_writer, prompt_reader) = mpsc::channel(128);
                 let (log_event_sender, log_event_receiver) = mpsc::channel(128);
+
+                // #[cfg(unix)]
+                // let (app_log_writer, app_log_receiver) = {
+                //     let (app_log_writer, app_log_receiver) = tokio::net::unix::pipe::pipe()?;
+                //     (
+                //         std::io::PipeWriter::from(app_log_writer.into_blocking_fd()?),
+                //         app_log_receiver,
+                //     )
+                // };
+                // #[cfg(windows)]
+                // let (app_log_writer, app_log_receiver) = tokio::sync::mpsc::channel(8192);
 
                 #[cfg(unix)]
                 let (log_writer, log_receiver) = {

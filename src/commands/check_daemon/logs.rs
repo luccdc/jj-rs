@@ -82,7 +82,7 @@ pub async fn log_handler_thread(
 
     loop {
         #[cfg(unix)]
-        let Ok(msg) = ({
+        let msgs = {
             let bytes_res = tokio::select! {
                 b = log_pipe.read(&mut log_buffer) => b,
                 _ = shutdown.recv() => {
@@ -101,15 +101,15 @@ pub async fn log_handler_thread(
                 break Ok(());
             }
 
-            serde_json::from_slice(&log_buffer[..bytes])
-        }) else {
-            eprintln!("Could not deserialize message from check");
-            continue;
+            log_buffer[..bytes]
+                .split(|b| *b == 0x0A)
+                .filter_map(|sl| serde_json::from_slice(sl).ok())
+                .collect::<Vec<_>>()
         };
 
         #[cfg(windows)]
-        let msg = tokio::select! {
-            Some(v) = log_pipe.recv() => v,
+        let msgs = tokio::select! {
+            Some(v) = log_pipe.recv() => vec![v],
             _ = shutdown.recv() => {
                 break Ok(())
             },
@@ -118,33 +118,35 @@ pub async fn log_handler_thread(
             }
         };
 
-        // The idea is that other log events can be sent, such as progress updates
-        #[allow(irrefutable_let_patterns)]
-        if let LogEvent::Result(r) = &msg
-            && (log_file.is_some() || log_socket.is_some())
-        {
-            let Ok(json) = serde_json::to_string(&r) else {
-                eprintln!("Could not serialize message to log and send to file and socket");
-                continue;
-            };
-
-            let json = json + "\n";
-
-            if let Some(ref mut lf) = log_file
-                && let Err(e) = lf.write(json.as_bytes()).await
+        for msg in msgs {
+            // The idea is that other log events can be sent, such as progress updates
+            #[allow(irrefutable_let_patterns)]
+            if let LogEvent::Result(r) = &msg
+                && (log_file.is_some() || log_socket.is_some())
             {
-                eprintln!("Could not write to log file: {e}");
+                let Ok(json) = serde_json::to_string(&r) else {
+                    eprintln!("Could not serialize message to log and send to file and socket");
+                    continue;
+                };
+
+                let json = json + "\n";
+
+                if let Some(ref mut lf) = log_file
+                    && let Err(e) = lf.write(json.as_bytes()).await
+                {
+                    eprintln!("Could not write to log file: {e}");
+                }
+
+                if let Some(ref mut ls) = log_socket
+                    && let Err(e) = ls.write(json.as_bytes()).await
+                {
+                    eprintln!("Could not write to log file: {e}");
+                }
             }
 
-            if let Some(ref mut ls) = log_socket
-                && let Err(e) = ls.write(json.as_bytes()).await
-            {
-                eprintln!("Could not write to log file: {e}");
+            if let Err(e) = log_event_sender.send(msg).await {
+                eprintln!("Could not dispatch log event: {e}");
             }
-        }
-
-        if let Err(e) = log_event_sender.send(msg).await {
-            eprintln!("Could not dispatch log event: {e}");
         }
     }
 }
