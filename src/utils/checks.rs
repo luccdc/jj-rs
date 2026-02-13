@@ -358,7 +358,7 @@ impl BitAndAssign for CheckResultType {
 
 /// Contains data about the results of running a check, including
 /// when it happened, what happened, a brief summary, and any extra useful information
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct CheckResult {
     pub timestamp: DateTime<Utc>,
     pub result_type: CheckResultType,

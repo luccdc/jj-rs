@@ -62,7 +62,7 @@ mod tui;
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct CheckId(Arc<str>, Arc<str>);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct TroubleshooterResult {
     timestamp: chrono::DateTime<chrono::Utc>,
     check_id: CheckId,

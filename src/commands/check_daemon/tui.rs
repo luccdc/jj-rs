@@ -171,7 +171,11 @@ fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
         tab_header,
     );
 
-    let body_block = if tui.current_selection == CurrentSelection::TabBody {
+    let body_block = if tui.current_selection == CurrentSelection::TabBody
+        && match tui.current_tab {
+            Tab::Checks => checks::show_border_on_area(tui),
+            _ => true,
+        } {
         Block::bordered().border_style(highlighted_style)
     } else {
         Block::bordered()
