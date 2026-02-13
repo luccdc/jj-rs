@@ -21,6 +21,7 @@ use futures::StreamExt;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
+    prelude::Margin,
     style::{Color, Style},
     text::{Line, Text},
     widgets::{Block, Clear, Tabs},
@@ -33,6 +34,11 @@ use super::{
 };
 
 mod checks;
+mod components {
+    pub mod text_input;
+}
+
+use components::text_input::{TextInput, TextInputState};
 
 pub async fn main<'scope, 'env: 'scope>(
     log_file_path: Option<PathBuf>,
@@ -97,6 +103,9 @@ pub async fn main<'scope, 'env: 'scope>(
             }
             Some((check_id, prompt)) = prompt_reader.recv() => {
                 tui_state.current_prompts.push_back((check_id, prompt));
+                if tui_state.prompt_entry.is_none() {
+                    tui_state.prompt_entry = Some(Default::default());
+                }
             }
             Some(event) = logs_reader.recv() => {
                 // Update events are implicitly handled
@@ -144,19 +153,14 @@ fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
     frame.render_widget(Clear, frame.area());
 
     let vertical = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(2),
+        Constraint::Length(1),
+        Constraint::Min(7),
         Constraint::Length(1),
     ]);
     let [tab_header, tab_body, cmdline] = vertical.areas(frame.area());
 
     let highlighted_style = Style::new().fg(Color::Yellow);
 
-    let tab_block = if tui.current_selection == CurrentSelection::Tabs {
-        Block::bordered().border_style(highlighted_style.clone())
-    } else {
-        Block::bordered()
-    };
     let highlighted_tab_style = if tui.current_selection == CurrentSelection::Tabs {
         Style::new().bg(Color::Yellow)
     } else {
@@ -165,7 +169,6 @@ fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
 
     frame.render_widget(
         &Tabs::new(vec!["Checks", "Add", "Settings", "Logs", "Exit"])
-            .block(tab_block)
             .highlight_style(highlighted_tab_style)
             .select(tui.current_tab as usize),
         tab_header,
@@ -191,13 +194,37 @@ fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
         Tab::Checks => checks::render(
             tui,
             frame,
-            inner_area,
+            inner_area.clone(),
             tui.current_selection == CurrentSelection::TabBody,
         ),
         Tab::AddCheck => {}
         Tab::Settings => {}
         Tab::Logs => {}
         Tab::Exit => {}
+    }
+
+    if let (Some(prompt_state), Some(prompt)) = (&mut tui.prompt_entry, tui.current_prompts.get(0))
+    {
+        let vertical = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(3),
+            Constraint::Fill(1),
+        ]);
+        let [_, tab_body, _] = vertical.areas(inner_area.clone());
+
+        let input = TextInput::default().label(Some(&format!(
+            "[{}.{}]: {}",
+            prompt.0.0, prompt.0.1, prompt.1
+        )));
+        prompt_state.set_selected(true);
+
+        let tab_body = tab_body.inner(Margin {
+            vertical: 0,
+            horizontal: 2,
+        });
+
+        input.set_cursor_position(tab_body.clone(), frame, prompt_state);
+        frame.render_stateful_widget(input, tab_body, prompt_state);
     }
 }
 
@@ -331,6 +358,50 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         return Ok(ControlFlow::Continue(()));
     }
 
+    {
+        let (final_prompt_input, handled_popup_prompt) = if let Some(input_state) =
+            &mut tui.prompt_entry
+            && let Event::Key(key) = event
+        {
+            (
+                input_state
+                    .handle_keybind(key)
+                    .then(|| input_state.input().to_owned()),
+                true,
+            )
+        } else {
+            (None, false)
+        };
+        if let Some(input) = &final_prompt_input
+            && let Some(prompt) = tui.current_prompts.get(0).clone()
+        {
+            let message_sender = tui.checks.read().ok().and_then(|checks| {
+                checks.checks.get(&prompt.0.0).and_then(|host| {
+                    host.get(&prompt.0.1)
+                        .map(|handle| handle.1.message_sender.clone())
+                })
+            });
+
+            eprintln!("Got here: {}", message_sender.is_some());
+
+            if let Some(message_sender) = message_sender {
+                let _ = message_sender
+                    .send(OutboundMessage::PromptResponse(input.clone()))
+                    .await;
+            }
+        }
+        if final_prompt_input.is_some() {
+            tui.prompt_entry = None;
+            tui.current_prompts.pop_front();
+            if let Some(next_prompt) = tui.current_prompts.get(0) {
+                tui.prompt_entry = Some(Default::default());
+            }
+        }
+        if handled_popup_prompt {
+            return Ok(ControlFlow::Continue(()));
+        }
+    }
+
     if tui.current_selection == CurrentSelection::Tabs {
         let Event::Key(key) = event else {
             return Ok(ControlFlow::Continue(()));
@@ -438,17 +509,11 @@ impl Tab {
 struct Tui<'parent> {
     checks: &'parent RwLock<RuntimeDaemonConfig>,
     current_prompts: VecDeque<(CheckId, String)>,
+    prompt_entry: Option<TextInputState>,
     current_selection: CurrentSelection,
     current_tab: Tab,
     logs: HashMap<CheckId, Vec<TroubleshooterResult>>,
-    prompt_entry: PromptEntry,
     check_tab_data: checks::CheckTabData,
     previous_render_time: usize,
     buffer: String,
-}
-
-#[derive(Default)]
-struct PromptEntry {
-    input: String,
-    character_index: usize,
 }

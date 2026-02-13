@@ -217,7 +217,7 @@ fn render_result_config(
         format!("Check {}: ", result.timestamp.format("%Y-%m-%d %H:%M:%S %Z")).into(),
         match result.overall_result {
             CheckResultType::Success => "PASS".bg(Color::Green),
-            CheckResultType::Failure => "PASS".bg(Color::Red),
+            CheckResultType::Failure => "FAIL".bg(Color::Red),
             CheckResultType::NotRun => "NOT RUN".cyan(),
         },
     ])];
@@ -236,7 +236,7 @@ fn render_result_config(
                 "   ".into(),
                 match step.1.result_type {
                     CheckResultType::Success => "PASS".set_style(style.bg(Color::Green)),
-                    CheckResultType::Failure => "PASS".set_style(style.bg(Color::Red)),
+                    CheckResultType::Failure => "FAIL".set_style(style.bg(Color::Red)),
                     CheckResultType::NotRun => "!RUN".set_style(style.cyan()),
                 },
                 ": ".set_style(style),
@@ -299,7 +299,7 @@ fn render_step_report(
             .spans(vec![
                 match result.result_type {
                     CheckResultType::Success => "PASS".bg(Color::Green),
-                    CheckResultType::Failure => "PASS".bg(Color::Red),
+                    CheckResultType::Failure => "FAIL".bg(Color::Red),
                     CheckResultType::NotRun => "NOT RUN".cyan(),
                 },
                 " ".into(),
@@ -558,8 +558,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                         for (j, log) in logs {
                             let style = if i == j { style } else { Style::new() };
 
-                            check_render.push(
-                                Line::default().spans(vec![
+                            check_render.push(Line::default().spans(vec![
                                     "      ".into(),
                                     match log.overall_result {
                                         CheckResultType::Success => {
@@ -574,8 +573,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                     },
                                     format!(" {} ", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
                                         .set_style(style),
-                                ]),
-                            )
+                                ]))
                         }
                     } else {
                         check_render.push(Line::default().spans(vec![
@@ -617,8 +615,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                         for (j, log) in logs {
                             let style = if i == j { style } else { Style::new() };
 
-                            check_render.push(
-                                Line::default().spans(vec![
+                            check_render.push(Line::default().spans(vec![
                                     "      ".into(),
                                     match log.overall_result {
                                         CheckResultType::Success => {
@@ -633,8 +630,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                     },
                                     format!(" {} ", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
                                         .set_style(style),
-                                ]),
-                            )
+                                ]))
                         }
                     } else {
                         check_render.push(Line::default().spans(vec![
@@ -665,8 +661,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                         for (j, log) in logs {
                             let style = if i == j { style } else { Style::new() };
 
-                            check_render.push(
-                                Line::default().spans(vec![
+                            check_render.push(Line::default().spans(vec![
                                     "      ".into(),
                                     match log.overall_result {
                                         CheckResultType::Success => {
@@ -681,8 +676,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                     },
                                     format!(" {} ", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
                                         .set_style(style),
-                                ]),
-                            )
+                                ]))
                         }
                     } else {
                         check_render.push(Line::default().spans(vec![
