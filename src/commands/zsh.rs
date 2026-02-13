@@ -115,7 +115,7 @@ impl super::Command for Zsh {
             .finish()
             .context("Could not finish writing decompressing zsh")?;
 
-        let args = str_to_cstr(&self.args)?;
+        let args = str_to_cstr(&[vec!["zsh".to_string()], self.args].concat())?;
 
         execv(
             &CString::from_str(&format!("/proc/self/fd/{}", zsh_file.as_raw_fd()))
