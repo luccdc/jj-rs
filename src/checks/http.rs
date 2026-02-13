@@ -261,11 +261,11 @@ impl HttpTroubleshooter {
                 .hunks()
                 .map(|hunk| {
                     serde_json::json!({
-                        "after": serde_json::json!({
+                        "response": serde_json::json!({
                             "line_range": [hunk.after.start, hunk.after.end],
                             "lines": response_text_lines[hunk.after.start as usize..hunk.after.end as usize].to_vec()
                         }),
-                        "before": serde_json::json!({
+                        "reference": serde_json::json!({
                             "line_range": [hunk.before.start, hunk.before.end],
                             "lines": file_content_lines[hunk.before.start as usize..hunk.before.end as usize].to_vec()
                         }),
@@ -273,11 +273,20 @@ impl HttpTroubleshooter {
                 })
                 .collect::<Vec<_>>();
 
-            if hunks.len() <= difference_count as usize {
+            let lines_changed: u32 = diff
+                .hunks()
+                .map(|hunk| {
+                    (hunk.before.end - hunk.before.start) + (hunk.after.end - hunk.after.start)
+                })
+                .sum();
+
+            if lines_changed as usize <= difference_count as usize {
                 Ok(CheckResult::succeed(
                     "Response text is similar enough to reference",
                     serde_json::json!({
                         "status_code": status,
+                        "measured_difference_count": lines_changed,
+                        "difference_count": difference_count,
                         "differences": hunks,
                     }),
                 ))
