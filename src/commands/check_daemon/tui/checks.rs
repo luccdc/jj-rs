@@ -23,12 +23,6 @@ use super::{
     is_generic_right, is_generic_up,
 };
 
-#[derive(Debug)]
-struct OpenResultState {
-    index: usize,
-    extra_details_render: Vec<usize>,
-}
-
 #[derive(Default, Debug)]
 struct OpenCheckState {
     viewing_all: bool,

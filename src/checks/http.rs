@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use super::*;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-struct CliHeader {
+pub struct CliHeader {
     name: String,
     value: String,
 }

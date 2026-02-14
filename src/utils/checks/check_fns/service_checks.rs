@@ -73,6 +73,7 @@ impl CheckStep<'_> for SystemdServiceCheck {
 /// # use jj_rs::utils::checks::systemd_service_check;
 /// systemd_service_check("ssh");
 /// ```
+#[allow(dead_code)]
 #[cfg(unix)]
 pub fn systemd_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(SystemdServiceCheck {
@@ -139,6 +140,7 @@ impl CheckStep<'_> for OpenrcServiceCheck {
 /// # use jj_rs::utils::checks::openrc_service_check;
 /// openrc_service_check("ssh");
 /// ```
+#[allow(dead_code)]
 #[cfg(unix)]
 pub fn openrc_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(OpenrcServiceCheck {

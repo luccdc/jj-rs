@@ -1,9 +1,6 @@
 use std::{net::Ipv4Addr, sync::Arc};
 
 use chrono::Utc;
-use eyre::Context;
-
-use crate::utils::os_version::get_distro;
 
 use super::*;
 
@@ -58,8 +55,6 @@ impl Troubleshooter for SshTroubleshooter {
     }
 
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
-        let distro = get_distro().context("could not load distribution for ssh check")?;
-
         Ok(vec![
             #[cfg(unix)]
             filter_check(

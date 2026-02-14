@@ -1,14 +1,10 @@
 #[cfg(unix)]
 use std::io::PipeWriter;
-use std::{
-    net::{IpAddr, Ipv4Addr},
-    sync::Arc,
-};
+use std::{net::Ipv4Addr, sync::Arc};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     Frame,
-    buffer::Buffer,
     layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Style, Styled, Stylize},
     text::Line,

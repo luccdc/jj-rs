@@ -275,14 +275,7 @@ fn is_generic_right(key: &KeyEvent) -> bool {
     (matches!(key.code, KeyCode::Char('l') | KeyCode::Right) && key.modifiers.is_empty())
 }
 
-async fn handle_cmd_buffer<'scope, 'env: 'scope>(
-    tui: &mut Tui<'_>,
-    c: char,
-    #[cfg(unix)] log_writer: &PipeWriter,
-    #[cfg(windows)] log_writer: &tokio::sync::mpsc::Sender<super::logs::LogEvent>,
-    prompt_writer: &mpsc::Sender<(CheckId, String)>,
-    checks_scope: &'scope std::thread::Scope<'scope, 'env>,
-) {
+async fn handle_cmd_buffer<'scope, 'env: 'scope>(tui: &mut Tui<'_>, c: char) {
     if c != '\n' {
         tui.buffer.push(c);
 
@@ -365,7 +358,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         && let Event::Key(key) = event
         && let KeyCode::Char(c) = key.code
     {
-        handle_cmd_buffer(tui, c, log_writer, prompt_writer, checks_scope).await;
+        handle_cmd_buffer(tui, c).await;
 
         return Ok(ControlFlow::Continue(()));
     }
@@ -374,7 +367,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         && let Event::Key(key) = event
         && let KeyCode::Enter = key.code
     {
-        handle_cmd_buffer(tui, '\n', log_writer, prompt_writer, checks_scope).await;
+        handle_cmd_buffer(tui, '\n').await;
 
         return Ok(ControlFlow::Continue(()));
     }
@@ -421,7 +414,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         if final_prompt_input.is_some() {
             tui.prompt_entry = None;
             tui.current_prompts.pop_front();
-            if let Some(next_prompt) = tui.current_prompts.get(0) {
+            if let Some(_) = tui.current_prompts.get(0) {
                 tui.prompt_entry = Some(Default::default());
             }
         }
@@ -467,7 +460,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
                         return Ok(ControlFlow::Break(()));
                     }
                     KeyCode::Char(c) => {
-                        handle_cmd_buffer(tui, c, log_writer, prompt_writer, checks_scope).await;
+                        handle_cmd_buffer(tui, c).await;
                     }
                     _ => {}
                 }
@@ -503,7 +496,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         };
 
         if !handled && let KeyCode::Char(c) = key.code {
-            handle_cmd_buffer(tui, c, log_writer, prompt_writer, checks_scope).await;
+            handle_cmd_buffer(tui, c).await;
         }
     }
 

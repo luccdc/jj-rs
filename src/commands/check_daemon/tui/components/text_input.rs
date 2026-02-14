@@ -250,10 +250,6 @@ where
         }
     }
 
-    pub fn input(&self) -> &str {
-        &self.input
-    }
-
     pub fn parse(&self) -> Result<T, String> {
         (self.parse)(&self.input)
     }
