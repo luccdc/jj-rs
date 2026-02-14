@@ -38,6 +38,8 @@
 //! fn check_login(password: String) -> eyre::Result<()> { unimplemented!() }
 //!
 //! impl Troubleshooter for SshTroubleshooter {
+//!     fn display_name(&self) -> &'static str { "SSH" }
+//!
 //!     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn CheckStep<'a> + 'a>>> {
 //!         Ok(vec![
 //!             check_fn("Check systemd service", |_| {

@@ -375,7 +375,7 @@ macro_rules! pcre {
 /// # fn demo() -> eyre::Result<()> {
 /// spawn_rt!(async {
 ///     tokio::fs::read("/dev/zero").await
-/// })?
+/// })?;
 /// # Ok(())
 /// # }
 /// ```
