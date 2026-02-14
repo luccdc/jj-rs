@@ -571,7 +571,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                             "NOT RUN".set_style(style.dark_gray())
                                         }
                                     },
-                                    format!(" {} ", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
+                                    format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
                                         .set_style(style),
                                 ]))
                         }
@@ -628,7 +628,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                             "NOT RUN".set_style(style.dark_gray())
                                         }
                                     },
-                                    format!(" {} ", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
+                                    format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
                                         .set_style(style),
                                 ]))
                         }
@@ -674,7 +674,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                             "NOT RUN".set_style(style.dark_gray())
                                         }
                                     },
-                                    format!(" {} ", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
+                                    format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
                                         .set_style(style),
                                 ]))
                         }

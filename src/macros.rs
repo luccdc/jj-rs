@@ -100,6 +100,29 @@ macro_rules! define_checks {
             }
 
             impl $cname {
+                pub fn key_from_name(name: &str) -> Option<&'static str> {
+                    #[allow(unreachable_code)]
+                    match name {
+                        $(
+                            n if n == $mod::$struct::default().display_name() => {
+                                $(return Some($alias);)?
+                                return Some(stringify!($name));
+                            }
+                        ),+,
+                        _ => {
+                            None
+                        }
+                    }
+                }
+
+                pub fn check_names() -> Vec<&'static str> {
+                    vec![
+                        $(
+                            $mod::$struct::display_name(&$mod::$struct::default())
+                        ),+,
+                    ]
+                }
+
                 pub fn display_name(&self) -> &'static str {
                     match self {
                         $(

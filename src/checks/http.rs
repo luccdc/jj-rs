@@ -31,62 +31,62 @@ impl std::str::FromStr for CliHeader {
 pub struct HttpTroubleshooter {
     /// The address of the web server in question
     #[arg(long, short = 'H', default_value = "127.0.0.1")]
-    host: Ipv4Addr,
+    pub host: Ipv4Addr,
 
     /// The port of the HTTP server
     #[arg(long, short, default_value_t = 80)]
-    port: u16,
+    pub port: u16,
 
     /// A reference file that shows what is "good". If not provided, this check will check the status code
     #[arg(long, group = "content-check")]
-    reference_file: Option<PathBuf>,
+    pub reference_file: Option<PathBuf>,
 
     /// How many differences are allowed between the reference file and the response from the HTTP server. Defaults to 0, or an exact match
     #[arg(long)]
-    reference_difference_count: Option<u32>,
+    pub reference_difference_count: Option<u32>,
 
     /// Content to check against the HTTP response, an alternative to reference-file. If not provided, this check will check the status code
     #[arg(long, group = "content-check")]
-    reference_content: Option<String>,
+    pub reference_content: Option<String>,
 
     /// Content to search for *in* the HTTP response, not in totality. If not provided, this check will check the status code
     #[arg(long, group = "content-check")]
-    content: Option<String>,
+    pub content: Option<String>,
 
     /// A SHA256 hash of the HTTP response. If not provided, this check will check the status code
     #[arg(long, group = "content-check")]
-    content_hash: Option<String>,
+    pub content_hash: Option<String>,
 
     /// Error text that indicates the server is not appropriately responding (e.g., "error"). Ignored if checking for a SHA256 hash
     #[arg(long)]
-    negative_content_checks: Vec<String>,
+    pub negative_content_checks: Vec<String>,
 
     /// Use case insensitive search for negative content checks
     #[arg(long, requires = "negative_content_checks")]
-    ignore_case_negative_checks: bool,
+    pub ignore_case_negative_checks: bool,
 
     /// Extra headers, in the form of `key=value`
     #[arg(long, short = 'E')]
-    headers: Vec<CliHeader>,
+    pub headers: Vec<CliHeader>,
 
     /// Status code to check for
     #[arg(long, short = 's', default_value_t = 200)]
-    valid_status: u16,
+    pub valid_status: u16,
 
     /// URI on the web server to check
     #[arg(long, short = 'u', default_value = "/")]
-    uri: String,
+    pub uri: String,
 
     /// If the remote host is specified, indicate that the traffic sent to the remote host will be sent
     /// back to this server via NAT reflection (e.g., debug firewall on another machine, network firewall
     /// WAN IP for this machine)
     #[arg(long, short)]
-    local: bool,
+    pub local: bool,
 
     /// Listen for an external connection attempt, and diagnose what appears to
     /// be going wrong with such a check. All other steps attempt to initiate connections
     #[arg(long, short)]
-    external: bool,
+    pub external: bool,
 }
 
 impl Default for HttpTroubleshooter {

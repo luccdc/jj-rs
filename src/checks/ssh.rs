@@ -13,30 +13,30 @@ use super::*;
 pub struct SshTroubleshooter {
     /// The host to connect to and attempt signing in
     #[arg(long, short = 'H', default_value = "127.0.0.1")]
-    host: Ipv4Addr,
+    pub host: Ipv4Addr,
 
     /// The port of the SSH server
     #[arg(long, short, default_value_t = 22)]
-    port: u16,
+    pub port: u16,
 
     /// The user to sign in as
     #[arg(long, short, default_value = "root")]
-    user: String,
+    pub user: String,
 
     /// [`CheckValue`] The password to authenticate with
     #[arg(long, short = 'P', default_value_t = Default::default())]
-    password: CheckValue,
+    pub password: CheckValue,
 
     /// If the remote host is specified, indicate that the traffic sent to the remote host will be sent
     /// back to this server via NAT reflection (e.g., debug firewall on another machine, network firewall
     /// WAN IP for this machine)
     #[arg(long, short)]
-    local: bool,
+    pub local: bool,
 
     /// Listen for an external connection attempt, and diagnose what appears to
     /// be going wrong with such a check. All other steps attempt to initiate connections
     #[arg(long, short)]
-    external: bool,
+    pub external: bool,
 }
 
 impl Default for SshTroubleshooter {

@@ -163,7 +163,7 @@ impl super::Command for CheckDaemon {
         });
 
         let config = match self.daemon_config {
-            DaemonConfigArg::ConfigPath { config_file } => {
+            DaemonConfigArg::ConfigPath { ref config_file } => {
                 let config_parsed: eyre::Result<DaemonConfig> = std::fs::read(config_file)
                     .context("Could not read daemon configuration")
                     .and_then(|c| {
@@ -177,14 +177,14 @@ impl super::Command for CheckDaemon {
                 }
             }
             DaemonConfigArg::Single {
-                host,
-                service,
-                check,
+                ref host,
+                ref service,
+                ref check,
             } => {
                 let mut host_svcs = HashMap::new();
-                host_svcs.insert(Arc::from(service), check);
+                host_svcs.insert(Arc::from(&**service), check.clone());
                 let mut checks = HashMap::new();
-                checks.insert(Arc::from(host), host_svcs);
+                checks.insert(Arc::from(&**host), host_svcs);
                 DaemonConfig { checks }
             }
         };
@@ -251,7 +251,13 @@ impl super::Command for CheckDaemon {
 
                 if self.interactive_mode {
                     tui::main(
-                        self.log_file,
+                        (
+                            match self.daemon_config {
+                                DaemonConfigArg::ConfigPath { config_file } => Some(config_file),
+                                DaemonConfigArg::Single { .. } => None,
+                            },
+                            self.log_file,
+                        ),
                         &daemon,
                         (log_event_receiver, prompt_reader),
                         log_writer,

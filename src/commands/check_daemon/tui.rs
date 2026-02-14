@@ -12,6 +12,7 @@ use std::{
     collections::{HashMap, VecDeque},
     ops::ControlFlow,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::RwLock,
 };
 
@@ -22,7 +23,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout},
     prelude::Margin,
-    style::{Color, Style},
+    style::{Color, Style, Styled},
     text::{Line, Text},
     widgets::{Block, Clear, Tabs},
 };
@@ -33,6 +34,7 @@ use super::{
     CheckId, RuntimeDaemonConfig, TroubleshooterResult, check_thread::OutboundMessage, logs,
 };
 
+mod add_check;
 mod checks;
 mod components {
     pub mod text_input;
@@ -41,7 +43,7 @@ mod components {
 use components::text_input::{TextInput, TextInputState};
 
 pub async fn main<'scope, 'env: 'scope>(
-    log_file_path: Option<PathBuf>,
+    (config_file_path, log_file_path): (Option<PathBuf>, Option<PathBuf>),
     checks: &'env RwLock<RuntimeDaemonConfig>,
     (mut logs_reader, mut prompt_reader): (
         mpsc::Receiver<logs::LogEvent>,
@@ -74,14 +76,20 @@ pub async fn main<'scope, 'env: 'scope>(
     let mut tui_state = Tui {
         checks,
         current_prompts: Default::default(),
+        config_file_path,
         current_tab: Tab::Checks,
         current_selection: CurrentSelection::Tabs,
         logs,
         prompt_entry: Default::default(),
         check_tab_data: Default::default(),
+        add_check_tab: Default::default(),
         previous_render_time: 0,
         buffer: String::new(),
+        check_setup_task: None,
     };
+
+    let mut empty_setup_task = Box::pin(futures::future::pending())
+        as Pin<Box<dyn Future<Output = Box<dyn for<'a, 'b> FnOnce(&'a mut Tui<'b>) -> ()>>>>;
 
     loop {
         let start = Utc::now();
@@ -96,7 +104,8 @@ pub async fn main<'scope, 'env: 'scope>(
                     event,
                     &log_writer,
                     &prompt_writer,
-                    &checks_scope
+                    &checks_scope,
+                    &send_shutdown
                 ).await? {
                     break;
                 }
@@ -113,6 +122,10 @@ pub async fn main<'scope, 'env: 'scope>(
 
                 let check_logs = tui_state.logs.entry(res.check_id.clone()).or_default();
                 check_logs.push(res);
+            }
+            callback = tui_state.check_setup_task.as_mut().unwrap_or(&mut empty_setup_task) => {
+                tui_state.check_setup_task = None;
+                (callback)(&mut tui_state);
             }
             _ = &mut ctrl_c => {
                 break;
@@ -168,15 +181,26 @@ fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
     };
 
     frame.render_widget(
-        &Tabs::new(vec!["Checks", "Add", "Settings", "Logs", "Exit"])
-            .highlight_style(highlighted_tab_style)
-            .select(tui.current_tab as usize),
+        &Tabs::new(vec![
+            "Checks".into(),
+            "Add".set_style(if tui.config_file_path.is_none() {
+                Style::new().fg(Color::DarkGray)
+            } else {
+                Style::new()
+            }),
+            "Settings".into(),
+            "Logs".into(),
+            "Exit".into(),
+        ])
+        .highlight_style(highlighted_tab_style)
+        .select(tui.current_tab as usize),
         tab_header,
     );
 
     let body_block = if tui.current_selection == CurrentSelection::TabBody
         && match tui.current_tab {
             Tab::Checks => checks::show_border_on_area(tui),
+            Tab::AddCheck => false,
             _ => true,
         } {
         Block::bordered().border_style(highlighted_style)
@@ -197,7 +221,12 @@ fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
             inner_area.clone(),
             tui.current_selection == CurrentSelection::TabBody,
         ),
-        Tab::AddCheck => {}
+        Tab::AddCheck => add_check::render(
+            tui,
+            frame,
+            inner_area.clone(),
+            tui.current_selection == CurrentSelection::TabBody,
+        ),
         Tab::Settings => {}
         Tab::Logs => {}
         Tab::Exit => {}
@@ -324,12 +353,13 @@ async fn handle_cmd_buffer<'scope, 'env: 'scope>(
 }
 
 async fn handle_key_event<'scope, 'env: 'scope>(
-    tui: &mut Tui<'_>,
+    tui: &mut Tui<'env>,
     event: Event,
     #[cfg(unix)] log_writer: &PipeWriter,
     #[cfg(windows)] log_writer: &tokio::sync::mpsc::Sender<super::logs::LogEvent>,
     prompt_writer: &mpsc::Sender<(CheckId, String)>,
     checks_scope: &'scope std::thread::Scope<'scope, 'env>,
+    send_shutdown: &tokio::sync::broadcast::Sender<()>,
 ) -> eyre::Result<ControlFlow<()>> {
     if tui.buffer.starts_with(":")
         && let Event::Key(key) = event
@@ -382,8 +412,6 @@ async fn handle_key_event<'scope, 'env: 'scope>(
                 })
             });
 
-            eprintln!("Got here: {}", message_sender.is_some());
-
             if let Some(message_sender) = message_sender {
                 let _ = message_sender
                     .send(OutboundMessage::PromptResponse(input.clone()))
@@ -415,10 +443,16 @@ async fn handle_key_event<'scope, 'env: 'scope>(
                     KeyCode::Char('l') | KeyCode::Right => {
                         tui.buffer.clear();
                         tui.current_tab = tui.current_tab.right();
+                        if tui.current_tab == Tab::AddCheck && tui.config_file_path.is_none() {
+                            tui.current_tab = tui.current_tab.right();
+                        }
                     }
                     KeyCode::Char('h') | KeyCode::Left => {
                         tui.buffer.clear();
                         tui.current_tab = tui.current_tab.left();
+                        if tui.current_tab == Tab::AddCheck && tui.config_file_path.is_none() {
+                            tui.current_tab = tui.current_tab.left();
+                        }
                     }
                     KeyCode::Char('0') => {
                         tui.buffer.clear();
@@ -428,7 +462,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
                         tui.buffer.clear();
                         tui.current_tab = Tab::Exit;
                     }
-                    KeyCode::Enter if tui.current_tab == Tab::Exit => {
+                    _ if tui.current_tab == Tab::Exit => {
                         tui.buffer.clear();
                         return Ok(ControlFlow::Break(()));
                     }
@@ -447,8 +481,15 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         let handled = match tui.current_tab {
             Tab::Checks => checks::handle_keypress(tui, key).await,
             Tab::AddCheck => {
-                tui.current_selection = CurrentSelection::Tabs;
-                true
+                add_check::handle_keypress(
+                    tui,
+                    key,
+                    log_writer,
+                    prompt_writer,
+                    checks_scope,
+                    send_shutdown,
+                )
+                .await
             }
             Tab::Settings => {
                 tui.current_selection = CurrentSelection::Tabs;
@@ -458,7 +499,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
                 tui.current_selection = CurrentSelection::Tabs;
                 true
             }
-            Tab::Exit => true,
+            Tab::Exit => return Ok(ControlFlow::Break(())),
         };
 
         if !handled && let KeyCode::Char(c) = key.code {
@@ -509,11 +550,15 @@ impl Tab {
 struct Tui<'parent> {
     checks: &'parent RwLock<RuntimeDaemonConfig>,
     current_prompts: VecDeque<(CheckId, String)>,
+    config_file_path: Option<PathBuf>,
     prompt_entry: Option<TextInputState>,
     current_selection: CurrentSelection,
     current_tab: Tab,
     logs: HashMap<CheckId, Vec<TroubleshooterResult>>,
     check_tab_data: checks::CheckTabData,
+    add_check_tab: add_check::AddCheckState,
     previous_render_time: usize,
     buffer: String,
+    check_setup_task:
+        Option<Pin<Box<dyn Future<Output = Box<dyn for<'a, 'b> FnOnce(&'a mut Tui<'b>) -> ()>>>>>,
 }

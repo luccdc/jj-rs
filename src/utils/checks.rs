@@ -99,7 +99,7 @@ use super::qx;
 /// than just String for checks. This struct provides the
 /// [`CheckValue::resolve_value`] and [`CheckValue::resolve_prompt`]
 /// functions, which when called allows for collapsing this to a String.
-/// It allows the operator to specify `:STDIN:`, `:FILE:/path`, or any other
+/// It allows the operator to specify `-`, `@/path`, or any other
 /// value and resolve it by either prompting the operator, reading
 /// a file path, or using the value as it is provided
 ///
@@ -120,13 +120,13 @@ use super::qx;
 ///
 /// ```toml
 /// [tarpit.ssh]
-/// password = ":STDIN:"
+/// password = "-"
 /// ```
 ///
 /// Or as an argument to a check:
 ///
 /// ```bash
-/// jj check ssh -p :FILE:/var/password
+/// jj check ssh -p @/var/password
 /// ```
 ///
 /// Then, in source code you can use the following:
@@ -151,10 +151,10 @@ impl fmt::Display for CheckValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.original {
             CheckValueInternal::File(p) => {
-                write!(f, ":FILE:{}", p.display())
+                write!(f, "@{}", p.display())
             }
             CheckValueInternal::Stdin => {
-                write!(f, ":STDIN:")
+                write!(f, "-")
             }
             CheckValueInternal::Value(_) => {
                 write!(f, ":REDACTED:")
@@ -223,9 +223,9 @@ impl CheckValue {
 
     /// Takes the current value and reduces it to a string
     ///
-    /// - If the internal value represents `:STDIN:`, it reads from stdin after
+    /// - If the internal value represents `-`, it reads from stdin after
     ///   prompting the user
-    /// - If the internal value represents `:FILE:<PATH>`, it reads from the file path
+    /// - If the internal value represents `@<PATH>`, it reads from the file path
     /// - Otherwise, it just reads the internal value
     pub fn resolve_prompt<I: AsRef<str>>(
         &self,
@@ -260,14 +260,14 @@ impl FromStr for CheckValue {
     type Err = Infallible;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == ":STDIN:" {
+        if s == "-" {
             return Ok(CheckValue {
                 original: CheckValueInternal::Stdin,
                 internal: Mutex::new(CheckValueInternal::Stdin).into(),
             });
         }
 
-        if let Some(path) = s.strip_prefix(":FILE:") {
+        if let Some(path) = s.strip_prefix("@") {
             return Ok(CheckValue {
                 original: CheckValueInternal::File(PathBuf::from(path)),
                 internal: Mutex::new(CheckValueInternal::File(PathBuf::from(path))).into(),

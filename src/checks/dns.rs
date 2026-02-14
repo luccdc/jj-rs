@@ -10,30 +10,30 @@ use super::*;
 pub struct Dns {
     /// The host to query (the domain name)
     #[arg(long, short = 'd', default_value = "google.com")]
-    domain: String,
+    pub domain: String,
 
     /// The DNS server to query
     #[arg(long, short = 'H', default_value = "127.0.0.1")]
-    host: Ipv4Addr,
+    pub host: Ipv4Addr,
 
     /// The port of the DNS server
     #[arg(long, short, default_value_t = 53)]
-    port: u16,
+    pub port: u16,
 
     /// The query type (A, AAAA, MX, etc.)
     #[arg(long, short = 't', default_value = "A")]
-    qtype: String,
+    pub qtype: String,
 
     /// If the remote host is specified, indicate that the traffic sent to the remote host will be sent
     /// back to this server via NAT reflection (e.g., debug firewall on another machine, network firewall
     /// WAN IP for this machine)
     #[arg(long, short)]
-    local: bool,
+    pub local: bool,
 
     /// Listen for an external connection attempt, and diagnose what appears to
     /// be going wrong with such a check. All other steps attempt to initiate connections
     #[arg(long, short)]
-    external: bool,
+    pub external: bool,
 }
 
 impl Default for Dns {
