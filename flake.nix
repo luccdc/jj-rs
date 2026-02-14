@@ -137,7 +137,7 @@
           winDevShellTools = with pkgs;
             [ wineWow64Packages.minimal ] ++ windowsLibraries;
 
-          devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant ]);
+          devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant shellcheck ]);
 
           gzip-binary = name: binary:
             pkgs.runCommand "${name}-gzipped" { } ''
@@ -248,6 +248,7 @@
               ${lib.concatMapStringsSep "\\\n"
                 (p:
                   ''-C ${p} bin '') staticTools}  \
+              --transform='s,jj-rs,jj,'        \
               --transform='s,^bin,jj-bin,'        \
               --show-transformed-names            \
               --owner=0 --group=0
@@ -274,6 +275,17 @@
               partitionType = "count";
               cargoNextestPartitionsExtraArgs = "--no-tests=pass";
             });
+
+            shellcheck = pkgs.runCommandNoCC "shellcheck" {
+              src = ./.;
+              nativeBuildInputs = with pkgs; [
+                shellcheck
+              ];
+            } ''
+              touch $out
+              shellcheck --rcfile $src/.shellcheckrc \
+                  $(find $src -name '*.sh') >&2
+            '';
           };
 
           packages = {

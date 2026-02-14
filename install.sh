@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
-set -e
 # Install jiujitsu and friends
-# This script is meant to be run from the tools tarball!
+set -eu
 
-DEFAULT_PREFIX="/jj"
+DEFAULT_PREFIX="/usr/local/jj"
+PREFIX=${1:-${DEFAULT_PREFIX}}
 
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    cat<<EOF
+if [ "${PREFIX}" = "--help" ] || [ "${PREFIX}" = "-h" ]; then
+    cat<<HELPMSG
 Install Jiujitsu and all the tools it comes with,
 and ensure the installation path is on path.
 
@@ -14,32 +14,33 @@ Usage:
     $0 [prefix]
 
 Arguments:
-    prefix      The prefix to install to. Default: $DEFAULT_PREFIX
-EOF
-    exit
+    prefix      The prefix to install to.
+                Default: ${DEFAULT_PREFIX}
+HELPMSG
+    exit 0
 fi
 
-IN=${1%%/}
-PREFIX=${IN:-$DEFAULT_PREFIX}
-
-add_prefix_to_path () {
-    [ echo "export PATH=$PREFIX:\$PATH" >> ~/.profile ] &&
-        echo "Added prefix to path!" && source ~/.profile ||
-            echo "Unable to add prefix to path!"
-}
-
-if [ ! -d "$PREFIX" ]; then
-    mkdir -p "$PREFIX"
+if [ ! -d ./jj-bin ]; then
+    printf 'Unable to find jj-bin/ in directory!\n'
+    printf 'Please run me from the same directory you unziped jj.tgz in!\n'
+    exit 1
 fi
 
-echo "Installing tools to $PREFIX"
+(set -x
+ mkdir -p "${PREFIX}"
+ install -m755 ./jj-bin/* "${PREFIX}"
+)
 
-install -m755 ./jj-bin/* $PREFIX
+# Next, add the prefix to path if possible.
+case :${PATH}:
+in *:${PREFIX}:*)  printf "Prefix found on path! Not adding prefix to path.\n";;
+  *) {
+      printf "Adding path to profile files...\n"
+      printf "export PATH=%s:\${PATH}\n" "${PREFIX}" | tee -a ~/.profile ~/.zprofile
 
-echo "Tools installed. Configuring path"
-
-
-case :$PATH:
-in *:$PREFIX:*)  echo "Prefix found on path! Not adding prefix to path.";;
-  *) echo "Prefix not on path!" && add_prefix_to_path
+      [ -d /etc/sudoers.d ] && 
+          printf 'Defaults   secure_path = "%s:/bin:/sbin:/usr/bin:/usr/sbin"\n' "${PREFIX}" >> /etc/sudoers.d/jj
+  }
 esac
+
+printf "\nBe sure to run '. ~/.profile' to pick up changes\n"
