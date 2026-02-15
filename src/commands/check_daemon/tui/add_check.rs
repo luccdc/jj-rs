@@ -1073,14 +1073,10 @@ fn handle_wizard<'scope, 'env: 'scope>(
                         tui.buffer.clear();
                         return true;
                     };
-                    let Ok(mut config_parsed) = std::fs::read(path)
+                    let mut config_parsed = std::fs::read(path)
                         .map_err(|_| ())
                         .and_then(|c| toml::from_slice::<DaemonConfig>(&c).map_err(|_| ()))
-                    else {
-                        eprintln!("Could load old config to save new config");
-                        tui.buffer.clear();
-                        return true;
-                    };
+                        .unwrap_or_default();
 
                     let host = config_parsed.checks.entry(host.input().into());
                     let host = host.or_default();
