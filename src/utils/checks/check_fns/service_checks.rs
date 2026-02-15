@@ -25,6 +25,13 @@ impl CheckStep<'_> for SystemdServiceCheck {
             ));
         }
 
+        if self.service_names.is_empty() {
+            return Ok(CheckResult::not_run(
+                format!("No services were provided to check for",),
+                serde_json::json!(null),
+            ));
+        }
+
         for name in &self.service_names {
             #[allow(clippy::collapsible_if)]
             if let Ok(service_info) = get_service_info(name) {
@@ -105,6 +112,13 @@ impl CheckStep<'_> for OpenrcServiceCheck {
         if qx("which rc-service 2>/dev/null")?.1.trim().is_empty() {
             return Ok(CheckResult::not_run(
                 "`rc-service` not found on host",
+                serde_json::json!(null),
+            ));
+        }
+
+        if self.service_names.is_empty() {
+            return Ok(CheckResult::not_run(
+                format!("No services were provided to check for"),
                 serde_json::json!(null),
             ));
         }
