@@ -184,7 +184,7 @@ fn render(tui: &mut Tui<'_>, frame: &mut Frame) {
         &Tabs::new(vec![
             "Checks".into(),
             "Add".set_style(if tui.config_file_path.is_none() {
-                Style::new().fg(Color::DarkGray)
+                Style::new().fg(Color::Gray)
             } else {
                 Style::new()
             }),

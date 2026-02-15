@@ -155,7 +155,8 @@ fn render_check_config(
         .map(|(i, (key, val))| {
             Line::default()
                 .spans(vec![
-                    format!("{:<max_width$}: ", format!("{key}")).dark_gray(),
+                    format!("{:<max_width$}: ", format!("{key}"))
+                        .set_style(Style::new().fg(Color::Indexed(244))),
                     serde_json::to_string(&val).unwrap_or_default().into(),
                 ])
                 .bg(styles[i % 2])
@@ -411,42 +412,43 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
             };
 
             let mut check_render = vec![Line::default().spans(vec![
-                if open_state.is_some() {
-                    " ↓ "
-                } else {
-                    " → "
-                }
-                .into(),
-                format!("{}", check.display_name()).set_style(check_line_style.dark_gray()),
-                format!(": {}.{} (", id.0, id.1).set_style(check_line_style),
-                if currently_running {
-                    "RUNNING".set_style(check_line_style.bg(Color::Green))
-                } else {
-                    "WAITING".set_style(check_line_style.yellow())
-                },
-                ", ".set_style(check_line_style),
-                match results
-                    .and_then(|logs| logs.iter().next_back())
-                    .map(|result| result.overall_result)
-                {
-                    Some(CheckResultType::NotRun) | None => {
-                        "NOT RUN".set_style(check_line_style.dark_gray())
+                    if open_state.is_some() {
+                        " ↓ "
+                    } else {
+                        " → "
                     }
-                    Some(CheckResultType::Success) => {
-                        "PASS".set_style(check_line_style.bg(Color::Green))
-                    }
-                    Some(CheckResultType::Failure) => {
-                        "FAIL".set_style(check_line_style.bg(Color::Red))
-                    }
-                },
-                ", ".set_style(check_line_style),
-                if started {
-                    "ENABLED".set_style(check_line_style.bg(Color::Green))
-                } else {
-                    "DISABLED".set_style(check_line_style.dark_gray())
-                },
-                ")".set_style(check_line_style),
-            ])];
+                    .into(),
+                    format!("{}", check.display_name())
+                        .set_style(check_line_style.fg(Color::Indexed(244))),
+                    format!(": {}.{} (", id.0, id.1).set_style(check_line_style),
+                    if currently_running {
+                        "RUNNING".set_style(check_line_style.bg(Color::Green))
+                    } else {
+                        "WAITING".set_style(check_line_style.yellow())
+                    },
+                    ", ".set_style(check_line_style),
+                    match results
+                        .and_then(|logs| logs.iter().next_back())
+                        .map(|result| result.overall_result)
+                    {
+                        Some(CheckResultType::NotRun) | None => {
+                            "NOT RUN".set_style(check_line_style.fg(Color::Indexed(244)))
+                        }
+                        Some(CheckResultType::Success) => {
+                            "PASS".set_style(check_line_style.bg(Color::Green))
+                        }
+                        Some(CheckResultType::Failure) => {
+                            "FAIL".set_style(check_line_style.bg(Color::Red))
+                        }
+                    },
+                    ", ".set_style(check_line_style),
+                    if started {
+                        "ENABLED".set_style(check_line_style.bg(Color::Green))
+                    } else {
+                        "DISABLED".set_style(check_line_style.fg(Color::Indexed(244)))
+                    },
+                    ")".set_style(check_line_style),
+                ])];
 
             if let Some(open_state) = open_state {
                 let logs = tui.logs.get(&id);
@@ -469,7 +471,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                             == CheckHighlight::Controls(CheckControls::RunOnce)
                     {
                         if currently_running {
-                            Style::new().bg(Color::DarkGray).underlined()
+                            Style::new().bg(Color::Indexed(244)).underlined()
                         } else {
                             Style::new().bg(Color::Yellow).black().underlined()
                         }
@@ -562,7 +564,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                             "FAIL".set_style(style.bg(Color::Red))
                                         }
                                         CheckResultType::NotRun => {
-                                            "NOT RUN".set_style(style.dark_gray())
+                                            "NOT RUN".set_style(style.fg(Color::Indexed(244)))
                                         }
                                     },
                                     format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
@@ -572,7 +574,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                     } else {
                         check_render.push(Line::default().spans(vec![
                             "      ".into(),
-                            "No recent check results!".set_style(style.dark_gray()),
+                            "No recent check results!".set_style(style.fg(Color::Indexed(244))),
                         ]));
                     }
                 }
@@ -619,7 +621,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                             "FAIL".set_style(style.bg(Color::Red))
                                         }
                                         CheckResultType::NotRun => {
-                                            "NOT RUN".set_style(style.dark_gray())
+                                            "NOT RUN".set_style(style.fg(Color::Indexed(244)))
                                         }
                                     },
                                     format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
@@ -628,9 +630,10 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                         }
                     } else {
                         check_render.push(Line::default().spans(vec![
-                            "      ".into(),
-                            "No recent failed check results!".set_style(style.dark_gray()),
-                        ]));
+                                "      ".into(),
+                                "No recent failed check results!"
+                                    .set_style(style.fg(Color::Indexed(244))),
+                            ]));
                     }
                 }
 
@@ -665,7 +668,7 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                             "FAIL".set_style(style.bg(Color::Red))
                                         }
                                         CheckResultType::NotRun => {
-                                            "NOT RUN".set_style(style.dark_gray())
+                                            "NOT RUN".set_style(style.fg(Color::Indexed(244)))
                                         }
                                     },
                                     format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
@@ -674,9 +677,10 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                         }
                     } else {
                         check_render.push(Line::default().spans(vec![
-                            "      ".into(),
-                            "No recent failed check results!".set_style(style.dark_gray()),
-                        ]));
+                                "      ".into(),
+                                "No recent failed check results!"
+                                    .set_style(style.fg(Color::Indexed(244))),
+                            ]));
                     }
                 }
             }
