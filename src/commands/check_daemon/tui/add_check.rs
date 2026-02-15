@@ -155,7 +155,7 @@ pub fn render(tui: &mut Tui<'_>, frame: &mut Frame, area: Rect, selected: bool) 
         Some(AddCheckWizardState::HttpStage1(s, host, port, uri)) => {
             frame.render_widget(Block::bordered().title("HTTP Check Setup Wizard"), area);
 
-            let [host_block, port_block, uri_block, submit] = Layout::vertical([
+            let [submit, host_block, port_block, uri_block] = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Length(3),
                 Constraint::Length(3),
@@ -481,6 +481,23 @@ fn handle_wizard<'scope, 'env: 'scope>(
                 return true;
             }
 
+            if let KeyCode::BackTab = key.code {
+                if *s == 0 {
+                    *s = 2;
+                } else {
+                    *s = *s - 1;
+                }
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Tab = key.code {
+                *s = *s + 1;
+                if *s == 3 {
+                    *s = 0;
+                }
+                tui.buffer.clear();
+                return true;
+            }
+
             if let KeyCode::Char('p') = key.code
                 && key.modifiers == KeyModifiers::CONTROL
             {
@@ -605,11 +622,28 @@ fn handle_wizard<'scope, 'env: 'scope>(
             if let KeyCode::Char('n') = key.code
                 && key.modifiers == KeyModifiers::CONTROL
             {
-                *s = (*s + 1).min(2);
+                *s = (*s + 1).min(3);
                 tui.buffer.clear();
                 return true;
             } else if let KeyCode::Down = key.code {
-                *s = (*s + 1).min(2);
+                *s = (*s + 1).min(3);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if let KeyCode::BackTab = key.code {
+                if *s == 0 {
+                    *s = 3;
+                } else {
+                    *s = *s - 1;
+                }
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Tab = key.code {
+                *s = *s + 1;
+                if *s == 4 {
+                    *s = 0;
+                }
                 tui.buffer.clear();
                 return true;
             }
@@ -761,6 +795,23 @@ fn handle_wizard<'scope, 'env: 'scope>(
                 return true;
             }
 
+            if let KeyCode::BackTab = key.code {
+                if *s == 0 {
+                    *s = 2;
+                } else {
+                    *s = *s - 1;
+                }
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Tab = key.code {
+                *s = *s + 1;
+                if *s == 3 {
+                    *s = 0;
+                }
+                tui.buffer.clear();
+                return true;
+            }
+
             if let KeyCode::Char('p') = key.code
                 && key.modifiers == KeyModifiers::CONTROL
             {
@@ -896,6 +947,23 @@ fn handle_wizard<'scope, 'env: 'scope>(
                 return true;
             }
 
+            if let KeyCode::BackTab = key.code {
+                if *s == 0 {
+                    *s = fields.len();
+                } else {
+                    *s = *s - 1;
+                }
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Tab = key.code {
+                *s = *s + 1;
+                if *s == fields.len() + 1 {
+                    *s = 0;
+                }
+                tui.buffer.clear();
+                return true;
+            }
+
             if let KeyCode::Char('p') = key.code
                 && key.modifiers == KeyModifiers::CONTROL
             {
@@ -993,6 +1061,23 @@ fn handle_wizard<'scope, 'env: 'scope>(
                 return true;
             } else if let KeyCode::Down = key.code {
                 *s = (*s + 1).min(2);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if let KeyCode::BackTab = key.code {
+                if *s == 0 {
+                    *s = 2;
+                } else {
+                    *s = *s - 1;
+                }
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Tab = key.code {
+                *s = *s + 1;
+                if *s == 3 {
+                    *s = 0;
+                }
                 tui.buffer.clear();
                 return true;
             }
