@@ -60,7 +60,11 @@ impl TextInputState {
     }
 
     pub fn set_input(self, input: String) -> Self {
-        Self { input, ..self }
+        Self {
+            character_index: input.len(),
+            input,
+            ..self
+        }
     }
 
     pub fn handle_keybind(&mut self, event: KeyEvent) -> bool {
@@ -87,7 +91,9 @@ impl TextInputState {
         } else if let KeyCode::Delete = event.code
             && event.modifiers.is_empty()
         {
-            if self.character_index + 1 < self.input.len() {
+            if self.character_index == 0 && self.input.len() == 1 {
+                self.input.clear();
+            } else if self.character_index + 1 < self.input.len() {
                 self.input.remove(self.character_index);
             } else if self.character_index == self.input.len() {
                 self.input.pop();
@@ -259,7 +265,11 @@ where
     }
 
     pub fn set_input(self, input: String) -> Self {
-        Self { input, ..self }
+        Self {
+            character_index: input.len(),
+            input,
+            ..self
+        }
     }
 
     pub fn handle_keybind(&mut self, event: KeyEvent) -> bool {
