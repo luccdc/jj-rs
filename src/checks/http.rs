@@ -87,6 +87,9 @@ pub struct HttpTroubleshooter {
     /// be going wrong with such a check. All other steps attempt to initiate connections
     #[arg(long, short)]
     pub external: bool,
+
+    #[arg(long, short, default_values_t = crate::strvec!["nginx", "php-fpm", "apache2", "httpd"])]
+    pub services: Vec<String>,
 }
 
 impl Default for HttpTroubleshooter {
@@ -106,6 +109,7 @@ impl Default for HttpTroubleshooter {
             uri: "/".to_string(),
             local: false,
             external: false,
+            services: crate::strvec!["nginx", "php-fpm", "apache2", "httpd"],
         }
     }
 }
@@ -119,13 +123,13 @@ impl Troubleshooter for HttpTroubleshooter {
         Ok(vec![
             #[cfg(unix)]
             filter_check(
-                systemd_services_check(vec!["nginx", "php-fpm", "httpd", "apache2"]),
+                systemd_services_check(self.services.clone()),
                 self.host.is_loopback() || self.local,
                 "Cannot check systemd service on remote host",
             ),
             #[cfg(unix)]
             filter_check(
-                openrc_services_check(vec!["nginx", "php-fpm", "httpd", "apache2"]),
+                openrc_services_check(self.services.clone()),
                 self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),
