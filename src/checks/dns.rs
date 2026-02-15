@@ -34,6 +34,14 @@ pub struct Dns {
     /// be going wrong with such a check. All other steps attempt to initiate connections
     #[arg(long, short)]
     pub external: bool,
+
+    /// Disable the download shell used to test the HTTP and TCP connections
+    #[arg(long, short)]
+    pub disable_download_shell: bool,
+
+    /// Specify an IP address to use the download container with
+    #[arg(long, short = 'I')]
+    pub sneaky_ip: Option<Ipv4Addr>,
 }
 
 impl Default for Dns {
@@ -45,6 +53,8 @@ impl Default for Dns {
             qtype: "A".to_string(),
             local: false,
             external: false,
+            disable_download_shell: false,
+            sneaky_ip: None,
         }
     }
 }
@@ -110,11 +120,15 @@ impl Dns {
         let domain = &self.domain;
         let qtype = &self.qtype;
 
-        let start = Utc::now();
-
         // Try using nslookup as it is very common
         let cmd = format!("nslookup -port={port} -q={qtype} {domain} {host}");
-        let res = crate::utils::qx(&cmd);
+
+        let (res, start) = crate::utils::checks::optionally_run_in_container(
+            host.is_loopback() || self.local,
+            self.disable_download_shell,
+            self.sneaky_ip,
+            || crate::utils::qx(&cmd),
+        );
 
         let end = Utc::now();
 

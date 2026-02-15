@@ -34,6 +34,14 @@ pub struct SshTroubleshooter {
     /// be going wrong with such a check. All other steps attempt to initiate connections
     #[arg(long, short)]
     pub external: bool,
+
+    /// Disable the download shell used to test the SSH and TCP connections
+    #[arg(long, short)]
+    pub disable_download_shell: bool,
+
+    /// Specify an IP address to use the download container with
+    #[arg(long, short = 'I')]
+    pub sneaky_ip: Option<Ipv4Addr>,
 }
 
 impl Default for SshTroubleshooter {
@@ -45,6 +53,8 @@ impl Default for SshTroubleshooter {
             password: CheckValue::stdin(),
             local: false,
             external: false,
+            disable_download_shell: false,
+            sneaky_ip: None,
         }
     }
 }
@@ -78,7 +88,12 @@ impl Troubleshooter for SshTroubleshooter {
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,
             ),
-            tcp_connect_check(self.host, self.port),
+            tcp_connect_check(
+                self.host,
+                self.port,
+                self.disable_download_shell,
+                self.sneaky_ip,
+            ),
             #[cfg(unix)]
             immediate_tcpdump_check(
                 self.port,
@@ -115,28 +130,31 @@ impl SshTroubleshooter {
             .clone()
             .resolve_prompt(tr, "Enter a password to sign into the SSH server with: ")?;
 
-        // Wait one second so that logs generated from here on out are more
-        // likely to be related to logging in. Otherwise, the program goes too
-        // fast and will catch logs from previous checks; in particular,
-        // kex_exchange_identification errors from connecting directly and logs
-        // about the download shell being created
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        let start = Utc::now();
-
-        let check_result = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(self.try_connection(host, port, &user, &pass))
-            .into_check_result("Could not attempt the connection to the server");
+        let (check_result, start) = crate::utils::checks::optionally_run_in_container(
+            host.is_loopback() || self.local,
+            self.disable_download_shell,
+            self.sneaky_ip,
+            || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("{e}"))
+                    .and_then(|rt| {
+                        rt.block_on(self.try_connection(host, port, &user, &pass))
+                            .map_err(|e| format!("{e}"))
+                    })
+            },
+        );
 
         let end = Utc::now();
 
         let logs = (self.local || host.is_loopback()).then(|| get_system_logs(start, end));
 
-        Ok(check_result.merge_overwrite_details(serde_json::json!({
-            "system_logs": logs,
-        })))
+        Ok(check_result
+            .into_check_result("Could not contact remote server")
+            .merge_overwrite_details(serde_json::json!({
+                "system_logs": logs,
+            })))
     }
 
     async fn try_connection(

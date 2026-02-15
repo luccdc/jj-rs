@@ -82,6 +82,7 @@ use std::{
     convert::Infallible,
     fmt,
     io::{BufRead, Write},
+    net::Ipv4Addr,
     ops::{BitAndAssign, Deref},
     path::PathBuf,
     str::FromStr,
@@ -95,6 +96,8 @@ use serde::{Deserialize, Serialize, de::Visitor};
 pub mod check_fns;
 pub use check_fns::*;
 
+#[cfg(unix)]
+use super::download_container::DownloadContainer;
 use super::qx;
 
 /// Represents a value that can be used as a richer parameter type
@@ -751,4 +754,65 @@ fn get_logs_systemd(start: DateTime<Utc>, end: DateTime<Utc>) -> eyre::Result<Ve
             .format(format)
     ))
     .map(|(_, o)| o.lines().map(String::from).collect())
+}
+
+/// Utility function to conditionally run a task inside the download container, returning the
+/// result of the computation as well as when the computation started. Can be configured to
+/// delay computation by one second to ensure logs from previous check steps as well as logs
+/// from the creation of a download container are not caught
+///
+/// This is intended to augment `check_fn` and serve as an internal part of the function passed
+/// to `check_fn`
+pub fn optionally_run_in_container<F, T, E>(
+    wait_1s: bool,
+    avoid_download_container: bool,
+    sneaky_ip: Option<Ipv4Addr>,
+    f: F,
+) -> (Result<T, String>, DateTime<Utc>)
+where
+    E: std::fmt::Debug,
+    F: FnOnce() -> Result<T, E>,
+{
+    let backup_time = Utc::now();
+
+    #[cfg(unix)]
+    return if !avoid_download_container
+        && let Ok(container) = DownloadContainer::new(None, sneaky_ip)
+    {
+        let check_result = container
+            .run(|| {
+                if wait_1s {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+                let start = Utc::now();
+                ((f)().map_err(|e| format!("{e:?}")), start)
+            })
+            .map_err(|e| format!("{e:?}"));
+
+        let start_time = check_result
+            .as_ref()
+            .map(|(_, s)| s.clone())
+            .unwrap_or(backup_time);
+
+        (
+            check_result
+                .map(|(r, _)| r)
+                .map_err(|e| format!("{e:?}"))
+                .flatten(),
+            start_time,
+        )
+    } else {
+        if wait_1s {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        return ((f)().map_err(|e| format!("{e:?}")), backup_time);
+    };
+
+    #[cfg(windows)]
+    {
+        if wait_1s {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        return ((f)().map_err(|e| format!("{e:?}")), backup_time);
+    };
 }

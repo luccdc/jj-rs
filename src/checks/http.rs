@@ -88,8 +88,18 @@ pub struct HttpTroubleshooter {
     #[arg(long, short)]
     pub external: bool,
 
-    #[arg(long, short, default_values_t = crate::strvec!["nginx", "php-fpm", "apache2", "httpd"])]
+    /// Specify systemd/openrc/sc services to query
+    #[cfg_attr(unix, arg(long, short, default_values_t = crate::strvec!["nginx", "php-fpm", "apache2", "httpd"]))]
+    #[cfg_attr(windows, arg(long, short, default_values_t = crate::strvec!["IIS"]))]
     pub services: Vec<String>,
+
+    /// Disable the download shell used to test the HTTP and TCP connections
+    #[arg(long, short)]
+    pub disable_download_shell: bool,
+
+    /// Specify an IP address to use the download container with
+    #[arg(long, short = 'I')]
+    pub sneaky_ip: Option<Ipv4Addr>,
 }
 
 impl Default for HttpTroubleshooter {
@@ -110,6 +120,8 @@ impl Default for HttpTroubleshooter {
             local: false,
             external: false,
             services: crate::strvec!["nginx", "php-fpm", "apache2", "httpd"],
+            disable_download_shell: false,
+            sneaky_ip: None,
         }
     }
 }
@@ -133,7 +145,12 @@ impl Troubleshooter for HttpTroubleshooter {
                 self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),
-            tcp_connect_check(self.host, self.port),
+            tcp_connect_check(
+                self.host,
+                self.port,
+                self.disable_download_shell,
+                self.sneaky_ip,
+            ),
             binary_ports_check(
                 // None for Linux, because do we also want to check things like gitea and splunk?
                 // None for Windows because Windows binds using its kernel, with PID 4... it doesn't show up normally
@@ -165,19 +182,12 @@ impl Troubleshooter for HttpTroubleshooter {
 
 impl HttpTroubleshooter {
     fn download_webpage(&self, _tr: &mut dyn TroubleshooterRunner) -> CheckResult {
-        // Wait one second so that logs generated from here on out are more
-        // likely to be related to checks. Otherwise, the program goes too
-        // fast and will catch logs from previous checks
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        let start = Utc::now();
-
-        // Once more for good luck on Windows
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        let check_result = self
-            .try_connection()
-            .into_check_result("Could not attempt connection to the server");
+        let (check_result, start) = crate::utils::checks::optionally_run_in_container(
+            self.host.is_loopback() || self.local,
+            self.disable_download_shell,
+            self.sneaky_ip,
+            || self.try_connection(),
+        );
 
         let end = Utc::now();
 
@@ -191,10 +201,12 @@ impl HttpTroubleshooter {
                 .collect::<Vec<_>>()
         });
 
-        check_result.merge_overwrite_details(serde_json::json!({
-            "system_logs": system_logs,
-            "webserver_logs": webserver_logs
-        }))
+        check_result
+            .into_check_result("Could not attempt connection to the server")
+            .merge_overwrite_details(serde_json::json!({
+                "system_logs": system_logs,
+                "webserver_logs": webserver_logs
+            }))
     }
 
     fn try_connection(&self) -> eyre::Result<CheckResult> {

@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 
 use eyre::Context;
 
@@ -10,6 +10,10 @@ use crate::utils::download_container::DownloadContainer;
 struct TcpConnectCheck {
     ip: IpAddr,
     port: u16,
+    #[cfg_attr(windows, allow_unused)]
+    avoid_download_container: bool,
+    #[cfg_attr(windows, allow_unused)]
+    download_container_ip: Option<Ipv4Addr>,
 }
 
 impl CheckStep<'_> for TcpConnectCheck {
@@ -21,8 +25,25 @@ impl CheckStep<'_> for TcpConnectCheck {
     fn run_check(&self, _tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
         let timeout = std::time::Duration::from_secs(2);
 
-        if self.ip.is_loopback() {
-            let cont = DownloadContainer::new(None, None)
+        if self.avoid_download_container {
+            let addr = SocketAddr::new(self.ip, self.port);
+            let client = TcpStream::connect_timeout(&addr, timeout).map(|_| ());
+
+            if let Err(e) = client {
+                Ok(CheckResult::fail(
+                    format!("Could not connect to {}:{}", self.ip, self.port),
+                    serde_json::json!({
+                        "error": format!("{e:?}")
+                    }),
+                ))
+            } else {
+                Ok(CheckResult::succeed(
+                    format!("Successfully connected to {}:{}", self.ip, self.port),
+                    serde_json::json!(null),
+                ))
+            }
+        } else if self.ip.is_loopback() {
+            let cont = DownloadContainer::new(None, self.download_container_ip)
                 .context("Could not create download container for TCP check")?;
             let client1 = cont
                 .run(|| {
@@ -71,7 +92,7 @@ impl CheckStep<'_> for TcpConnectCheck {
                 ),
             })
         } else {
-            let cont = DownloadContainer::new(None, None)
+            let cont = DownloadContainer::new(None, self.download_container_ip)
                 .context("Could not create download container for TCP check")?;
             let addr = SocketAddr::new(self.ip, self.port);
             let client = cont
@@ -118,9 +139,16 @@ impl CheckStep<'_> for TcpConnectCheck {
 }
 
 /// A simple check that sees if a service port is open and responding to TCP requests
-pub fn tcp_connect_check<'a, I: Into<IpAddr>>(addr: I, port: u16) -> Box<dyn CheckStep<'a> + 'a> {
+pub fn tcp_connect_check<'a, I: Into<IpAddr>>(
+    addr: I,
+    port: u16,
+    avoid_download_container: bool,
+    download_container_ip: Option<Ipv4Addr>,
+) -> Box<dyn CheckStep<'a> + 'a> {
     Box::new(TcpConnectCheck {
         ip: addr.into(),
         port,
+        avoid_download_container,
+        download_container_ip,
     })
 }
