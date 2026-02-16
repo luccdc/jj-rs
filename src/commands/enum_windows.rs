@@ -4,7 +4,8 @@ use clap::{Parser, Subcommand};
 
 use crate::utils::{
     logs::{ellipsize, truncate},
-    pager, qx,
+    pager::{self, PagerOutput},
+    qx,
 };
 
 /// Perform system enumeration or target specific subsystems
@@ -17,7 +18,6 @@ pub struct Enum {
 
 #[derive(Subcommand, Debug)]
 pub enum EnumSubcommands {
-
     /// Current network ports and listening services
     #[command(visible_alias("p"))]
     Ports(super::ports::Ports),
@@ -47,15 +47,13 @@ impl super::Command for Enum {
     }
 }
 
-
-
-fn enum_ports(out: &mut impl Write, p: super::ports::Ports) -> eyre::Result<()> {
+fn enum_ports(out: &mut impl PagerOutput, p: super::ports::Ports) -> eyre::Result<()> {
     writeln!(out, "\n==== PORTS INFO")?;
     p.run(out)
 }
 
 //Hostname enumeration ('H' alias)
-fn enum_hostname(out: &mut impl Write) -> eyre::Result<()> {
+fn enum_hostname(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== HOSTNAME INFO")?;
 
     let name = std::env::var("COMPUTERNAME")

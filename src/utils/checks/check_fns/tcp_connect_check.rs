@@ -10,9 +10,9 @@ use crate::utils::download_container::DownloadContainer;
 struct TcpConnectCheck {
     ip: IpAddr,
     port: u16,
-    #[cfg_attr(windows, allow_unused)]
+    #[cfg_attr(windows, allow(unused))]
     avoid_download_container: bool,
-    #[cfg_attr(windows, allow_unused)]
+    #[cfg_attr(windows, allow(unused))]
     download_container_ip: Option<Ipv4Addr>,
 }
 

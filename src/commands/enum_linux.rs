@@ -1,11 +1,10 @@
-use std::io::Write;
-
 use clap::{Parser, Subcommand};
 
 use crate::utils::{
     busybox::Busybox,
     logs::{ellipsize, truncate},
-    pager, qx,
+    pager::{self, PagerOutput},
+    qx,
 };
 
 /// Perform system enumeration or target specific subsystems
@@ -75,7 +74,7 @@ impl super::Command for Enum {
     }
 }
 
-fn enum_hardware(out: &mut impl Write) -> eyre::Result<()> {
+fn enum_hardware(out: &mut impl PagerOutput) -> eyre::Result<()> {
     let bb = Busybox::new()?;
     writeln!(out, "\n==== HARDWARE INFO")?;
 
@@ -96,7 +95,7 @@ fn enum_hardware(out: &mut impl Write) -> eyre::Result<()> {
     Ok(())
 }
 
-fn enum_ssh(out: &mut impl Write) -> eyre::Result<()> {
+fn enum_ssh(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== SSH AUDIT")?;
 
     // 1. Config Issues
@@ -138,7 +137,7 @@ fn enum_ssh(out: &mut impl Write) -> eyre::Result<()> {
     Ok(())
 }
 
-fn enum_autoruns(out: &mut impl Write) -> eyre::Result<()> {
+fn enum_autoruns(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== AUTORUNS")?;
 
     // --- Timers ---
@@ -233,7 +232,7 @@ fn enum_autoruns(out: &mut impl Write) -> eyre::Result<()> {
     Ok(())
 }
 
-fn enum_containers(out: &mut impl Write) -> eyre::Result<()> {
+fn enum_containers(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== CONTAINER RUNTIMES")?;
 
     let containers = crate::utils::containers::get_containers();
@@ -281,15 +280,15 @@ fn enum_containers(out: &mut impl Write) -> eyre::Result<()> {
     Ok(())
 }
 
-fn enum_ports(out: &mut impl Write, p: super::ports::Ports) -> eyre::Result<()> {
+fn enum_ports(out: &mut impl PagerOutput, p: super::ports::Ports) -> eyre::Result<()> {
     writeln!(out, "\n==== PORTS INFO")?;
     p.run(out)
 }
 
-fn enum_hostname(out: &mut impl Write) -> eyre::Result<()> {
+fn enum_hostname(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== HOSTNAME INFO")?;
     let name = crate::utils::qx("hostname")
-        .map(|(_,s)| s.trim().to_string())
+        .map(|(_, s)| s.trim().to_string())
         .unwrap_or_else(|_| "(unable to read hostname)".to_string());
     writeln!(out, "Hostname: {name}")?;
     Ok(())

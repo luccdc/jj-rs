@@ -1,4 +1,7 @@
-use std::io::{IsTerminal, Write};
+use std::{
+    io::{IsTerminal, Write},
+    ops::Deref,
+};
 
 #[cfg(unix)]
 use std::process::{Child, ChildStdin, Stdio};
@@ -10,6 +13,29 @@ use crate::utils::busybox::Busybox;
 struct Pager {
     child: Child,
     stdin: Option<ChildStdin>,
+}
+
+pub trait PagerOutput: Write {
+    fn is_terminal(&self) -> bool;
+}
+
+impl PagerOutput for std::io::Stdout {
+    fn is_terminal(&self) -> bool {
+        <Self as IsTerminal>::is_terminal(self)
+    }
+}
+
+#[cfg(unix)]
+impl PagerOutput for Pager {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl PagerOutput for Box<dyn PagerOutput> {
+    fn is_terminal(&self) -> bool {
+        self.deref().is_terminal()
+    }
 }
 
 #[cfg(unix)]
@@ -68,11 +94,11 @@ impl Write for Pager {
 }
 
 #[cfg(unix)]
-pub fn get_pager_output(no_pager: bool) -> impl Write {
+pub fn get_pager_output(no_pager: bool) -> impl PagerOutput {
     let stdout = std::io::stdout();
 
-    if !stdout.is_terminal() || no_pager {
-        return Box::new(stdout) as Box<dyn Write>;
+    if !IsTerminal::is_terminal(&stdout) || no_pager {
+        return Box::new(stdout) as Box<dyn PagerOutput>;
     }
 
     let Ok(bb) = Busybox::new() else {
@@ -102,6 +128,6 @@ pub fn get_pager_output(no_pager: bool) -> impl Write {
 }
 
 #[cfg(windows)]
-pub fn get_pager_output(_no_pager: bool) -> impl Write {
+pub fn get_pager_output(_no_pager: bool) -> impl PagerOutput {
     std::io::stdout()
 }

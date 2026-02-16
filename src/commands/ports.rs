@@ -1,10 +1,10 @@
-use std::{collections::HashSet, io::Write, net::IpAddr, path::PathBuf};
+use std::{collections::HashSet, net::IpAddr, path::PathBuf};
 
 use clap::Parser;
 use colored::Colorize;
 
 use crate::utils::{
-    pager,
+    pager::{self, PagerOutput},
     ports::{self, SocketRecord, SocketState, SocketType},
 };
 
@@ -107,7 +107,7 @@ const STANDARD_SERVICE_PORTS: &[u16] = &[
 ];
 
 impl Ports {
-    pub fn run(self, out: &mut impl Write) -> eyre::Result<()> {
+    pub fn run(self, out: &mut impl PagerOutput) -> eyre::Result<()> {
         let mut ports = ports::list_ports()?;
 
         ports.sort_by_key(|r| (r.local_port(), r.local_addr()));
@@ -130,13 +130,19 @@ impl Ports {
 
         #[cfg(target_os = "linux")]
         let reducer = reduce_port_list(
+            out.is_terminal(),
             !self.no_grouping,
             self.display_cmdline,
             self.hide_path,
             self.display_cgroup,
         );
         #[cfg(windows)]
-        let reducer = reduce_port_list(!self.no_grouping, self.display_cmdline, self.hide_path);
+        let reducer = reduce_port_list(
+            out.is_terminal(),
+            !self.no_grouping,
+            self.display_cmdline,
+            self.hide_path,
+        );
 
         let ports = ports
             .into_iter()
@@ -398,7 +404,16 @@ impl Ports {
             write!(
                 out,
                 "{}:{}",
-                port.colored_local_addr, port.colored_local_port
+                if out.is_terminal() {
+                    &port.colored_local_addr
+                } else {
+                    &port.local_addr
+                },
+                if out.is_terminal() {
+                    &port.colored_local_port
+                } else {
+                    &port.local_port
+                }
             )?;
 
             _ = out.write(
@@ -429,6 +444,7 @@ impl Ports {
 //
 // Only TCP listening or UDP unconnected sockets can be reduced
 fn reduce_port_list(
+    terminal: bool,
     perform_grouping: bool,
     display_cmdline: bool,
     hide_path: bool,
@@ -452,7 +468,11 @@ fn reduce_port_list(
 
                 format!(
                     "{}{}{} {} {}",
-                    path.bright_black(),
+                    if terminal {
+                        path.bright_black()
+                    } else {
+                        path.into()
+                    },
                     if path.is_empty() { "" } else { "/" },
                     exe,
                     args,
@@ -470,7 +490,11 @@ fn reduce_port_list(
                 };
                 format!(
                     "{}{}{}",
-                    path.bright_black(),
+                    if terminal {
+                        path.bright_black()
+                    } else {
+                        path.into()
+                    },
                     if path.is_empty() { "" } else { "/" },
                     exe
                 )
@@ -483,7 +507,11 @@ fn reduce_port_list(
                 };
                 format!(
                     "{}{}{} {}",
-                    path.bright_black(),
+                    if terminal {
+                        path.bright_black()
+                    } else {
+                        path.into()
+                    },
                     if path.is_empty() { "" } else { "/" },
                     exe,
                     record
@@ -500,7 +528,11 @@ fn reduce_port_list(
                 };
                 format!(
                     "{}{}{}",
-                    path.bright_black(),
+                    if terminal {
+                        path.bright_black()
+                    } else {
+                        path.into()
+                    },
                     if path.is_empty() { "" } else { "/" },
                     exe
                 )
@@ -542,7 +574,11 @@ fn reduce_port_list(
             };
             format!(
                 "{}{}{}",
-                path.bright_black(),
+                if terminal {
+                    path.bright_black()
+                } else {
+                    path.into()
+                },
                 if path.is_empty() { "" } else { r"\" },
                 exe
             )
