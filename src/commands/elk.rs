@@ -82,7 +82,7 @@ pub struct ElkBeatsArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ElkCommands {
-    /// Install Elasticsearch completely, running all other subcommands except beats
+
     #[command(visible_alias = "in")]
     Install(ElkSubcommandArgs),
 
@@ -125,6 +125,9 @@ pub enum ElkCommands {
     /// Install beats and configure the system to send logs to the ELK stack
     #[command(visible_alias = "beats")]
     InstallBeats(ElkBeatsArgs),
+
+
+    
 }
 
 /// Install, configure, and manage ELK and beats locally and assist across the network
@@ -201,6 +204,21 @@ impl super::Command for Elk {
 
         if let EC::Install(_) | EC::SetupPacketbeat(_) = &self.command {
             setup_packetbeat(&mut elastic_password)?;
+        }
+
+        if let EC::Install(_) = &self.command {
+            println!("
+Configuration Notes:
+    When Installing and configuring ELK, the following ports should be opened up:
+        - 514/udp: Syslog input. Generic from Windows and Linux systems
+        - 2055/udp: Netflow input. Useful from network firewalls
+        - 5044/tcp: Beats input from endpoints
+        - 5601/tcp: Kibana web interface
+        - 8080/tcp: Python web server for distributing certificate
+        - 9001/udp: Palo Alto Syslog input
+        - 9002/udp: Cisco FTD Syslog input
+        - 9200/tcp: Elasticsearch
+");
         }
 
         Ok(())
