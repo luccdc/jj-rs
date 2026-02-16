@@ -31,7 +31,8 @@ define_commands! {
 
         // sysinfo commands
         Stat, st => stat::Stat,
-        [unix] Enum, e => r#enum::Enum,
+        [windows] Enum, e => enum_windows::Enum,
+        [unix] Enum, e => enum_linux::Enum,
         Ports, p => ports::Ports,
 
         // admin commands

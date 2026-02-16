@@ -47,6 +47,7 @@ impl super::Command for Enum {
     fn execute(self) -> eyre::Result<()> {
         let mut ob = pager::get_pager_output(self.no_pager);
 
+        enum_hostname(&mut ob)?;
         match self.subcommand {
             Some(EnumSubcommands::Hardware) => enum_hardware(&mut ob),
             Some(EnumSubcommands::Ssh) => enum_ssh(&mut ob),
@@ -283,4 +284,13 @@ fn enum_containers(out: &mut impl Write) -> eyre::Result<()> {
 fn enum_ports(out: &mut impl Write, p: super::ports::Ports) -> eyre::Result<()> {
     writeln!(out, "\n==== PORTS INFO")?;
     p.run(out)
+}
+
+fn enum_hostname(out: &mut impl Write) -> eyre::Result<()> {
+    writeln!(out, "\n==== HOSTNAME INFO")?;
+    let name = crate::utils::qx("hostname")
+        .map(|(_,s)| s.trim().to_string())
+        .unwrap_or_else(|_| "(unable to read hostname)".to_string());
+    writeln!(out, "Hostname: {name}")?;
+    Ok(())
 }
