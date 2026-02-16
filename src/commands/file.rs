@@ -111,8 +111,8 @@ struct VerifyHashes {
     common: CommonArgs,
 
     /// Only output changed files
-    #[arg(short = 's', long = "short")]
-    short: bool,
+    #[arg(short = 'q', long = "quiet")]
+   quiet: bool,
 
     /// Verify all files in hash file
     #[arg(short = 'a', long = "all")]
@@ -175,7 +175,7 @@ impl VerifyHashes {
 
                         if new_hash == old_hash {
                             //Great! It's valid!
-                            if !self.short {
+                            if !self.quiet {
                                 println!("[1] {disp}");
                             }
                         } else {
@@ -189,7 +189,7 @@ impl VerifyHashes {
                 } else if e.path().is_dir() {
                     if tracked_dirs.remove(e.path()) {
                         // Good dir
-                        if !self.short {
+                        if !self.quiet {
                             println!("[1] {disp}/");
                         }
                     } else {
