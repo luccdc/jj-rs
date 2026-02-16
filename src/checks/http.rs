@@ -119,7 +119,11 @@ impl Default for HttpTroubleshooter {
             uri: "/".to_string(),
             local: false,
             external: false,
-            services: crate::strvec!["nginx", "php-fpm", "apache2", "httpd"],
+            services: if cfg!(unix) {
+                crate::strvec!["nginx", "php-fpm", "apache2", "httpd"]
+            } else {
+                crate::strvec!["IIS"]
+            },
             disable_download_shell: false,
             sneaky_ip: None,
         }
