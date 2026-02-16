@@ -258,7 +258,7 @@ fn setup_zram() -> eyre::Result<()> {
 }
 
 fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<()> {
-    let download_packages_internal = || -> eyre::Result<()> {
+    let download_packages_internal = |download_shell: bool| -> eyre::Result<()> {
         std::fs::create_dir_all(&args.elasticsearch_share_directory)?;
 
         let mut download_threads = vec![];
@@ -269,7 +269,7 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
             for pkg in ["elasticsearch", "logstash", "kibana"] {
                 let args = args.clone();
                 let pkg = pkg.to_string();
-                download_threads.push(thread::spawn(move || {
+                let download_package = move || {
                     let mut dest_path = args.elasticsearch_share_directory.clone();
                     dest_path.push(format!("{pkg}.deb"));
                     let res = download_file(
@@ -281,13 +281,18 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
                     );
                     println!("Done downloading {pkg}!");
                     res
-                }));
+                };
+                if download_shell {
+                    download_package()?;
+                } else {
+                    download_threads.push(thread::spawn(download_package));
+                }
             }
         } else {
             for pkg in ["elasticsearch", "logstash", "kibana"] {
                 let args = args.clone();
                 let pkg = pkg.to_string();
-                download_threads.push(thread::spawn(move || {
+                let download_package = move || {
                     let mut dest_path = args.elasticsearch_share_directory.clone();
                     dest_path.push(format!("{pkg}.rpm"));
                     let res = download_file(
@@ -299,12 +304,17 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
                     );
                     println!("Done downloading {pkg}!");
                     res
-                }));
+                };
+                if download_shell {
+                    download_package()?;
+                } else {
+                    download_threads.push(thread::spawn(download_package));
+                }
             }
         }
 
         for beat in ["auditbeat", "filebeat", "packetbeat"] {
-            download_threads.push(thread::spawn({
+            let download_package = {
                 let args = args.clone();
                 let beat = beat.to_string();
 
@@ -321,9 +331,14 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
                     println!("Done downloading {beat} deb!");
                     res
                 }
-            }));
+            };
+            if download_shell {
+                download_package()?;
+            } else {
+                download_threads.push(thread::spawn(download_package));
+            }
 
-            download_threads.push(thread::spawn({
+            let download_package = {
                 let args = args.clone();
                 let beat = beat.to_string();
 
@@ -340,7 +355,12 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
                     println!("Done downloading {beat} rpm!");
                     res
                 }
-            }));
+            };
+            if download_shell {
+                download_package()?;
+            } else {
+                download_threads.push(thread::spawn(download_package));
+            }
         }
 
         for thread in download_threads {
@@ -361,9 +381,9 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
     if args.use_download_shell {
         let container = DownloadContainer::new(None, args.sneaky_ip)?;
 
-        container.run(download_packages_internal)??;
+        container.run(|| download_packages_internal(true))??;
     } else {
-        download_packages_internal()?;
+        download_packages_internal(false)?;
     }
 
     println!(
@@ -787,7 +807,7 @@ output.logstash:
     Ok(())
 }
 
-fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
+fn download_beats(download_shell: bool, distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
     println!("{}", "--- Downloading beats...".green());
 
     let mut download_threads = vec![];
@@ -795,7 +815,7 @@ fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
     if distro.is_deb_based() {
         for beat in ["auditbeat", "filebeat", "packetbeat"] {
             let args = args.clone();
-            download_threads.push(thread::spawn(move || {
+            let download_package = move || {
                 let res = download_file(
                     &format!(
                         "http://{}:{}/{}.deb",
@@ -805,12 +825,17 @@ fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
                 );
                 println!("Done downloading {beat}!");
                 res
-            }));
+            };
+            if download_shell {
+                download_package()?;
+            } else {
+                download_threads.push(thread::spawn(download_package));
+            }
         }
     } else {
         for beat in ["auditbeat", "filebeat", "packetbeat"] {
             let args = args.clone();
-            download_threads.push(thread::spawn(move || {
+            let download_package = move || {
                 let res = download_file(
                     &format!(
                         "http://{}:{}/{}.rpm",
@@ -820,7 +845,12 @@ fn download_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
                 );
                 println!("Done downloading {beat}!");
                 res
-            }));
+            };
+            if download_shell {
+                download_package()?;
+            } else {
+                download_threads.push(thread::spawn(download_package));
+            }
         }
     }
 
@@ -843,9 +873,9 @@ fn install_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
     if args.use_download_shell {
         let container = DownloadContainer::new(None, args.sneaky_ip)?;
 
-        container.run(|| download_beats(distro, args))??;
+        container.run(|| download_beats(true, distro, args))??;
     } else {
-        download_beats(distro, args)?;
+        download_beats(false, distro, args)?;
     }
 
     println!("--- Done downloading beats packages! Installing beats packages...");
