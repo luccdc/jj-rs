@@ -666,7 +666,7 @@ fn setup_filebeat(password: &mut Option<String>) -> eyre::Result<()> {
     log:
       enabled: true
       var:
-        netflow_host: localhost
+        netflow_host: 0.0.0.0
         netflow_port: 2055
         internal_networks:
           - private
