@@ -38,6 +38,7 @@ const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
 const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
 const AUDITBEAT_SERVICE: &str = include_str!("elk/auditbeat.service");
 const FILEBEAT_SERVICE: &str = include_str!("elk/filebeat.service");
+const PACKETBEAT_SERVICE: &str = include_str!("elk/packetbeat.service");
 
 macro_rules! cpaths {
     ($base:expr, $($others:expr),*$(,)?) => {{
@@ -1472,30 +1473,103 @@ output.logstash:
 fn setup_packetbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Setting up packetbeat".green());
 
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-packetbeat.service",
+        PACKETBEAT_SERVICE.replace(
+            "$PB_HOME",
+            &format!("{}/packetbeat", args.elastic_install_directory.display()),
+        ),
+    )
+    .context("Could not write systemd service for packetbeat")?;
+
     let es_password = get_elastic_password(password)?;
 
+    let pb_home = cpaths!(args.elastic_install_directory, "packetbeat");
+
+    if qx("getenforce")?.1.contains("Enforcing") {
+        println!("SELinux is enabled, configuring contexts...");
+        let pb_path_conf = cpaths!(pb_home, "packetbeat.yml");
+
+        std::fs::create_dir_all(cpaths!(pb_home, "logs"))?;
+        std::fs::create_dir_all(cpaths!(pb_home, "data"))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t usr_t {}",
+            pb_home.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t usr_t -R {}",
+            pb_home.display()
+        ))?;
+        system(&format!("restorecon -R {}", pb_home.display()))?;
+
+        let logs = cpaths!(pb_home, "logs");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_log_t {}",
+            logs.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_log_t -R {}",
+            logs.display()
+        ))?;
+        system(&format!("restorecon -R {}", logs.display()))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t etc_t {}",
+            pb_path_conf.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t etc_t -R {}",
+            pb_path_conf.display()
+        ))?;
+        system(&format!("restorecon -R {}", pb_path_conf.display()))?;
+
+        let data = cpaths!(pb_home, "data");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_lib_t {}",
+            data.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_lib_t -R {}",
+            data.display()
+        ))?;
+        system(&format!("restorecon -R {}", data.display()))?;
+
+        let bin = cpaths!(pb_home, "packetbeat");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t bin_t {}",
+            bin.display()
+        ))?;
+        system(&format!("chcon -u system_u -t bin_t -R {}", bin.display()))?;
+        system(&format!("restorecon -R {}", bin.display()))?;
+    }
+
     std::fs::write(
-        "/etc/packetbeat/packetbeat.yml",
+        cpaths!(pb_home, "packetbeat.yml"),
         format!(
             r#"
 {PACKETBEAT_YML}
 
 output.elasticsearch:
-  hosts: ["https://localhost:9200"]
+  hosts: ["https://localhost:10200"]
   transport: https
   username: elastic
   password: "{es_password}"
   ssl:
     enabled: true
-    certificate_authorities: "/etc/es_certs/http_ca.crt"
-"#
+    certificate_authorities: "{}/http_ca.crt"
+"#,
+            args.elasticsearch_share_directory.display()
         ),
     )?;
 
-    system("packetbeat setup")?;
+    system(&format!(
+        "{0}/packetbeat --path.home {0} --path.config {0} --path.data {0}/data --path.logs {0}/logs setup",
+        pb_home.display()
+    ))?;
 
     std::fs::write(
-        "/etc/packetbeat/packetbeat.yml",
+        cpaths!(pb_home, "packetbeat.yml"),
         format!(
             r#"
 {PACKETBEAT_YML}
@@ -1506,8 +1580,8 @@ output.logstash:
         ),
     )?;
 
-    system("systemctl enable packetbeat")?;
-    system("systemctl restart packetbeat")?;
+    system("systemctl enable jj-packetbeat")?;
+    system("systemctl restart jj-packetbeat")?;
 
     println!("{}", "--- Packetbeat is set up".green());
 
