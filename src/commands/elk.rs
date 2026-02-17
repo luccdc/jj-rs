@@ -37,6 +37,7 @@ const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
 const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
 const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
 const AUDITBEAT_SERVICE: &str = include_str!("elk/auditbeat.service");
+const FILEBEAT_SERVICE: &str = include_str!("elk/filebeat.service");
 
 macro_rules! cpaths {
     ($base:expr, $($others:expr),*$(,)?) => {{
@@ -1307,10 +1308,79 @@ output.logstash:
 fn setup_filebeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Setting up filebeat".green());
 
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-filebeat.service",
+        FILEBEAT_SERVICE.replace(
+            "$FB_HOME",
+            &format!("{}/filebeat", args.elastic_install_directory.display()),
+        ),
+    )
+    .context("Could not write systemd service for filebeat")?;
+
     let es_password = get_elastic_password(password)?;
 
+    let fb_home = cpaths!(args.elastic_install_directory, "filebeat");
+
+    if qx("getenforce")?.1.contains("Enforcing") {
+        println!("SELinux is enabled, configuring contexts...");
+        let fb_path_conf = cpaths!(fb_home, "filebeat.yml");
+
+        std::fs::create_dir_all(cpaths!(fb_home, "logs"))?;
+        std::fs::create_dir_all(cpaths!(fb_home, "data"))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t usr_t {}",
+            fb_home.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t usr_t -R {}",
+            fb_home.display()
+        ))?;
+        system(&format!("restorecon -R {}", fb_home.display()))?;
+
+        let logs = cpaths!(fb_home, "logs");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_log_t {}",
+            logs.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_log_t -R {}",
+            logs.display()
+        ))?;
+        system(&format!("restorecon -R {}", logs.display()))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t etc_t {}",
+            fb_path_conf.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t etc_t -R {}",
+            fb_path_conf.display()
+        ))?;
+        system(&format!("restorecon -R {}", fb_path_conf.display()))?;
+
+        let data = cpaths!(fb_home, "data");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_lib_t {}",
+            data.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_lib_t -R {}",
+            data.display()
+        ))?;
+        system(&format!("restorecon -R {}", data.display()))?;
+
+        let bin = cpaths!(fb_home, "filebeat");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t bin_t {}",
+            bin.display()
+        ))?;
+        system(&format!("chcon -u system_u -t bin_t -R {}", bin.display()))?;
+        system(&format!("restorecon -R {}", bin.display()))?;
+    }
+
     std::fs::write(
-        "/etc/filebeat/filebeat.yml",
+        cpaths!(fb_home, "filebeat.yml"),
         format!(
             r#"
 {FILEBEAT_YML}
@@ -1339,21 +1409,25 @@ fn setup_filebeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> ey
       var.log_level: 5
 
 output.elasticsearch:
-  hosts: ["https://localhost:9200"]
+  hosts: ["https://localhost:10200"]
   transport: https
   username: elastic
   password: "{es_password}"
   ssl:
     enabled: true
-    certificate_authorities: "/etc/es_certs/http_ca.crt"
-"#
+    certificate_authorities: "{}/http_ca.crt"
+"#,
+            args.elasticsearch_share_directory.display()
         ),
     )?;
 
-    system("filebeat setup")?;
+    system(&format!(
+        "{0}/filebeat --path.home {0} --path.config {0} --path.data {0}/data --path.logs {0}/logs setup",
+        fb_home.display()
+    ))?;
 
     std::fs::write(
-        "/etc/filebeat/filebeat.yml",
+        cpaths!(fb_home, "filebeat.yml"),
         format!(
             r#"
 {FILEBEAT_YML}
@@ -1362,7 +1436,7 @@ output.elasticsearch:
     log:
       enabled: true
       var:
-        netflow_host: localhost
+        netflow_host: 0.0.0.0
         netflow_port: 2055
         internal_networks:
           - private
@@ -1387,8 +1461,8 @@ output.logstash:
         ),
     )?;
 
-    system("systemctl enable filebeat")?;
-    system("systemctl restart filebeat")?;
+    system("systemctl enable jj-filebeat")?;
+    system("systemctl restart jj-filebeat")?;
 
     println!("{}", "--- Filebeat is set up".green());
 
