@@ -15,7 +15,6 @@ use colored::Colorize;
 use eyre::{Context, bail};
 use flate2::bufread::GzDecoder;
 use nix::unistd::chown;
-use serde_yaml_ng::Value;
 use tar::Archive;
 use walkdir::WalkDir;
 
@@ -26,19 +25,6 @@ use crate::{
     utils::{download_container::DownloadContainer, os_version::Distro, passwd, qx},
 };
 
-fn concat_paths<P1: AsRef<Path>, P2: AsRef<Path>, S: IntoIterator<Item = P2>>(
-    base: P1,
-    rest: S,
-) -> PathBuf {
-    let mut base = base.as_ref().to_owned();
-
-    for c in rest.into_iter() {
-        base.push(c);
-    }
-
-    base
-}
-
 // Defines a variable called KIBANA_DASHBOARDS of type &'static [&'static str]
 // It includes all the ndjson files for kibana dashboards
 include!(concat!(env!("OUT_DIR"), "/kibana_dashboards.rs"));
@@ -48,6 +34,17 @@ const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.yml");
 const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.yml");
 const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
 const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
+const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
+
+macro_rules! cpaths {
+    ($base:expr, $($others:expr),*$(,)?) => {{
+        let mut path: PathBuf = (&$base).into();
+        $(
+            path.push(&$others);
+        )*
+        path
+    }}
+}
 
 #[derive(Parser, Clone, Debug)]
 #[command(about)]
@@ -69,12 +66,16 @@ pub struct ElkSubcommandArgs {
     elasticsearch_share_directory: PathBuf,
 
     /// Where to install and configure everything ELK related, including beats
-    #[arg(long, short = 'e', default_value = "/opt/es")]
+    #[arg(long, short = 'e', default_value = "/opt/jj-es")]
     elastic_install_directory: PathBuf,
 
     /// Disable syslog input
     #[arg(long, short = 'D')]
     disable_syslog: bool,
+
+    /// Syslog input port for Filebeat
+    #[arg(long, short = 'l', default_value = "1514")]
+    syslog_port: u16,
 
     /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
@@ -163,8 +164,6 @@ impl super::Command for Elk {
     fn execute(self) -> eyre::Result<()> {
         use ElkCommands as EC;
 
-        concat_paths("/opt/es", ["elasticsearch", "elasticsearch.yml"]);
-
         if !qx("systemctl --version")?.1.contains("systemd") {
             eprintln!("{}", "!!! ELK utilities require systemd to run".red());
             return Ok(());
@@ -208,7 +207,7 @@ impl super::Command for Elk {
         }
 
         if let EC::Install(args) | EC::SetupKibana(args) = &self.command {
-            setup_kibana(&mut elastic_password, args)?;
+            setup_kibana(&busybox, &mut elastic_password, args)?;
         }
 
         if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
@@ -387,9 +386,9 @@ fn download_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
 }
 
 fn untar_package(
-    src_path: impl AsRef<Path> + std::fmt::Debug,
-    sub_path: impl AsRef<Path> + std::fmt::Debug,
-    dest_path: impl AsRef<Path> + std::fmt::Debug,
+    src_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
+    sub_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
+    dest_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
 ) -> eyre::Result<()> {
     std::fs::create_dir_all(&dest_path)?;
     let backing_file = File::open(src_path).context("Could not open file for decompression")?;
@@ -401,9 +400,9 @@ fn untar_package(
         let mut entry = entry?;
         if let Ok(sub_path) = entry.path()?.strip_prefix(&sub_path) {
             if let Some(parent) = sub_path.parent() {
-                std::fs::create_dir_all(concat_paths(&dest_path, [parent]))?;
+                std::fs::create_dir_all(cpaths!(dest_path, parent))?;
             }
-            entry.unpack(concat_paths(&dest_path, [sub_path]))?;
+            entry.unpack(cpaths!(dest_path, sub_path))?;
         }
     }
 
@@ -423,12 +422,9 @@ fn extract_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
         "auditbeat",
         "packetbeat",
     ] {
-        let src_path = concat_paths(
-            &args.elasticsearch_share_directory,
-            [format!("{pkg}.tar.gz")],
-        );
+        let src_path = cpaths!(args.elasticsearch_share_directory, format!("{pkg}.tar.gz"));
         let sub_path = format!("{pkg}-{}", args.elastic_version);
-        let dest_path = concat_paths(&args.elastic_install_directory, [pkg]);
+        let dest_path = cpaths!(args.elastic_install_directory, pkg);
         threads.push(thread::spawn(move || -> eyre::Result<()> {
             untar_package(src_path, sub_path, dest_path)?;
             println!("Unpacked {pkg}!");
@@ -458,28 +454,23 @@ fn setup_elasticsearch(
     password: &mut Option<String>,
     args: &ElkSubcommandArgs,
 ) -> eyre::Result<()> {
+    let elastic_password = get_elastic_password(password)?;
     println!("{}", "--- Configuring Elasticsearch".green());
+
+    let es_home = cpaths!(args.elastic_install_directory, "elasticsearch");
+    let es_path_conf = cpaths!(es_home, "config");
 
     std::fs::write(
         "/usr/lib/systemd/system/jj-elasticsearch.service",
         ELASTICSEARCH_SERVICE
-            .replace(
-                "$ES_HOME",
-                &format!("{}/elasticsearch", args.elastic_install_directory.display()),
-            )
-            .replace(
-                "$ES_PATH_CONF",
-                &format!(
-                    "{}/elasticsearch/config",
-                    args.elastic_install_directory.display()
-                ),
-            ),
+            .replace("$ES_HOME", &format!("{}", es_home.display()))
+            .replace("$ES_PATH_CONF", &format!("{}", es_path_conf.display())),
     )
     .context("Could not write systemd service for elasticsearch")?;
 
     println!("Creating jj-elasticsearch group...");
     bb.command("addgroup")
-        .args(["-s", "jj-elasticsearch"])
+        .args(["-S", "jj-elasticsearch"])
         .output()?;
 
     println!("Creating user...");
@@ -492,50 +483,65 @@ fn setup_elasticsearch(
             "-S",
             "-H",
             "-D",
+            "jj-elasticsearch",
         ])
         .output()?;
 
     if qx("getenforce")?.1.contains("Enforcing") {
         println!("SELinux is enabled, configuring contexts...");
 
-        std::fs::create_dir_all(concat_paths(&args.elastic_install_directory, ["logs"]))?;
-        std::fs::create_dir_all(concat_paths(&args.elastic_install_directory, ["data"]))?;
+        std::fs::create_dir_all(cpaths!(&es_home, "logs"))?;
+        std::fs::create_dir_all(cpaths!(&es_home, "data"))?;
 
-        let es_home = format!("{}/elasticsearch", args.elastic_install_directory.display());
         system(&format!(
-            "semanage fcontext -a -s system_u -t usr_t {es_home}",
+            "semanage fcontext -a -s system_u -t usr_t {}",
+            es_home.display()
         ))?;
-        system(&format!("chcon -u system_u -t usr_t -R {es_home}"))?;
-        system(&format!("restorecon -R {es_home}"))?;
+        system(&format!(
+            "chcon -u system_u -t usr_t -R {}",
+            es_home.display()
+        ))?;
+        system(&format!("restorecon -R {}", es_home.display()))?;
 
-        let logs = format!("{es_home}/logs");
+        let logs = cpaths!(es_home, "logs");
         system(&format!(
-            "semanage fcontext -a -s system_u -t var_log_t {logs}",
+            "semanage fcontext -a -s system_u -t var_log_t {}",
+            logs.display()
         ))?;
-        system(&format!("chcon -u system_u -t var_log_t -R {logs}"))?;
-        system(&format!("restorecon -R {logs}"))?;
+        system(&format!(
+            "chcon -u system_u -t var_log_t -R {}",
+            logs.display()
+        ))?;
+        system(&format!("restorecon -R {}", logs.display()))?;
 
-        let config = format!("{es_home}/config");
         system(&format!(
-            "semanage fcontext -a -s system_u -t etc_t {config}",
+            "semanage fcontext -a -s system_u -t etc_t {}",
+            es_path_conf.display()
         ))?;
-        system(&format!("chcon -u system_u -t etc_t -R {config}"))?;
-        system(&format!("restorecon -R {config}"))?;
+        system(&format!(
+            "chcon -u system_u -t etc_t -R {}",
+            es_path_conf.display()
+        ))?;
+        system(&format!("restorecon -R {}", es_path_conf.display()))?;
 
-        let data = format!("{es_home}/data");
+        let data = cpaths!(es_home, "data");
         system(&format!(
-            "semanage fcontext -a -s system_u -t var_lib_t {data}",
+            "semanage fcontext -a -s system_u -t var_lib_t {}",
+            data.display()
         ))?;
-        system(&format!("chcon -u system_u -t var_lib_t -R {data}"))?;
-        system(&format!("restorecon -R {data}"))?;
+        system(&format!(
+            "chcon -u system_u -t var_lib_t -R {}",
+            data.display()
+        ))?;
+        system(&format!("restorecon -R {}", data.display()))?;
     }
 
-    let elasticsearch_user = passwd::load_users("elasticsearch")
+    let elasticsearch_user = passwd::load_users("jj-elasticsearch")
         .ok()
         .and_then(|v| v.into_iter().next())
         .map(|v| v.uid)
         .map(|v| v.into());
-    let elasticsearch_group = passwd::load_groups("elasticsearch")
+    let elasticsearch_group = passwd::load_groups("jj-elasticsearch")
         .ok()
         .and_then(|v| v.into_iter().next())
         .map(|v| v.gid)
@@ -545,10 +551,7 @@ fn setup_elasticsearch(
     let file_perms: Permissions = PermissionsExt::from_mode(0o700);
 
     println!("Setting permissions...");
-    for entry in WalkDir::new(&format!(
-        "{}/elasticsearch",
-        args.elastic_install_directory.display()
-    )) {
+    for entry in WalkDir::new(&es_home) {
         let Ok(entry) = entry else {
             continue;
         };
@@ -563,55 +566,57 @@ fn setup_elasticsearch(
     }
 
     println!("Performing auto configuration of node...");
-    Command::new(concat_paths(
-        &args.elastic_install_directory,
-        ["elasticsearch", "bin", "elasticsearch-cli"],
-    ))
-    .current_dir(concat_paths(
-        &args.elastic_install_directory,
-        ["elasticsearch"],
-    ))
-    .env(
-        "ES_HOME",
-        concat_paths(&args.elastic_install_directory, ["elasticsearch"]),
-    )
-    .env(
-        "ES_PATH_CONF",
-        concat_paths(&args.elastic_install_directory, ["elasticsearch", "config"]),
-    )
-    .env("CLI_NAME", "auto-configure-node")
-    .env(
-        "CLI_LIBS",
-        "modules/x-pack-core,modules/x-pack-security,lib/tools/security-cli",
-    )
-    .spawn()?
-    .wait()?;
+    Command::new("/bin/sh")
+        .args([
+            "-c",
+            &format!(
+                "sudo -E -u jj-elasticsearch {}/bin/elasticsearch-cli",
+                es_home.display()
+            ),
+        ])
+        .current_dir(&es_home)
+        .env("ES_HOME", &format!("{}", es_home.display()))
+        .env("ES_PATH_CONF", &format!("{}", es_path_conf.display()))
+        .env("CLI_NAME", "auto-configure-node")
+        .env(
+            "CLI_LIBS",
+            "modules/x-pack-core,modules/x-pack-security,lib/tools/security-cli",
+        )
+        .spawn()?
+        .wait()?;
 
-    let elasticsearch_config = std::fs::read_to_string(concat_paths(
-        &args.elastic_install_directory,
-        ["elasticsearch", "config", "elasticsearch.yml"],
-    ))
-    .context("Could not read elasticsearch configuration")?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    println!("Applying jj customizations to elasticsearch...");
+    let elasticsearch_config = std::fs::read_to_string(cpaths!(es_path_conf, "elasticsearch.yml"))
+        .context("Could not read elasticsearch configuration")?;
 
     // Why don't we use serde_yaml_ng?
     // Because it parses the entirety of the configuration file as null...
 
     let port_regex =
         regex::Regex::new("(?ms)(#?http.port: [^\n]+)").expect("Static regex failed after testing");
+    let elasticsearch_config = port_regex.replace(&elasticsearch_config, "http.port: 10200");
+
     let seed_hosts_regex = regex::Regex::new("(?ms)(#?discovery.seed_hosts: [^\n]+)")
         .expect("Static regex failed after testing");
-    let discovery_type_regex = regex::Regex::new("(?ms)(#?discovery.type: [^\n]+)")
-        .expect("Static regex failed after testing");
-    let transport_regex = regex::Regex::new("(?ms)(#?transport.port: [^\n]+)")
-        .expect("Static regex failed after testing");
-
-    let elasticsearch_config = port_regex.replace(&elasticsearch_config, "http.port: 10200");
     let elasticsearch_config =
         seed_hosts_regex.replace(&elasticsearch_config, "discovery.seed_hosts: []");
+
+    let discovery_type_regex = regex::Regex::new("(?ms)(#?discovery.type: [^\n]+)")
+        .expect("Static regex failed after testing");
     let elasticsearch_config =
         discovery_type_regex.replace(&elasticsearch_config, "discovery.type: single-node");
+
+    let transport_regex = regex::Regex::new("(?ms)(#?transport.port: [^\n]+)")
+        .expect("Static regex failed after testing");
     let elasticsearch_config =
         transport_regex.replace(&elasticsearch_config, "transport.port: 10300");
+
+    let elasticsearch_config = elasticsearch_config.replace(
+        "cluster.initial_master_nodes",
+        "#cluster.initial_master_nodes",
+    );
 
     let elasticsearch_config = if !port_regex.is_match(&elasticsearch_config) {
         elasticsearch_config + "\nhost.port: 10200"
@@ -635,10 +640,7 @@ fn setup_elasticsearch(
     };
 
     std::fs::write(
-        concat_paths(
-            &args.elastic_install_directory,
-            ["elasticsearch", "config", "elasticsearch.yml"],
-        ),
+        cpaths!(es_path_conf, "elasticsearch.yml"),
         &*elasticsearch_config,
     )
     .context("Could not write elasticsearch configuration")?;
@@ -677,17 +679,16 @@ fn setup_elasticsearch(
     }
 
     println!("Changing password...");
-    let elastic_password = get_elastic_password(password)?;
 
-    let mut password_change = Command::new(concat_paths(
-        &args.elastic_install_directory,
-        ["elasticsearch", "bin", "elasticsearch-reset-password"],
-    ))
-    .args(["-u", "elastic", "-i"])
-    .stdin(Stdio::piped())
-    .stderr(Stdio::inherit())
-    .stdout(Stdio::inherit())
-    .spawn()?;
+    let mut password_change = Command::new(cpaths!(es_home, "bin", "elasticsearch-reset-password"))
+        .current_dir(&es_home)
+        .env("ES_HOME", &format!("{}", es_home.display()))
+        .env("ES_PATH_CONF", &format!("{}", es_path_conf.display()))
+        .args(["-u", "elastic", "-i"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .spawn()?;
 
     if let Some(ref mut stdin) = password_change.stdin {
         writeln!(stdin, "y")?;
@@ -703,21 +704,11 @@ fn setup_elasticsearch(
     let perms: Permissions = PermissionsExt::from_mode(0o444);
 
     std::fs::copy(
-        &concat_paths(
-            &args.elastic_install_directory,
-            ["elasticsearch", "config", "certs", "http_ca.crt"],
-        ),
+        cpaths!(es_path_conf, "certs", "http_ca.crt"),
         "/etc/es_certs/http_ca.crt",
     )?;
-    let mut share_dir = args.elasticsearch_share_directory.clone();
-    share_dir.push("http_ca.crt");
-    std::fs::copy(
-        &concat_paths(
-            &args.elastic_install_directory,
-            ["elasticsearch", "config", "certs", "http_ca.crt"],
-        ),
-        &share_dir,
-    )?;
+    let share_dir = cpaths!(args.elasticsearch_share_directory, "http_ca.crt");
+    std::fs::copy(cpaths!(es_path_conf, "certs", "http_ca.crt"), &share_dir)?;
 
     std::fs::set_permissions("/etc/es_certs/http_ca.crt", perms.clone())?;
     std::fs::set_permissions(share_dir, perms)?;
@@ -727,81 +718,250 @@ fn setup_elasticsearch(
     Ok(())
 }
 
-fn setup_kibana(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
-    use reqwest::blocking::{
-        Client,
-        multipart::{Form, Part},
-    };
-    use serde::Deserialize;
-
-    #[derive(Deserialize)]
-    struct Level {
-        level: String,
-    }
-
-    #[derive(Deserialize)]
-    struct Overall {
-        overall: Level,
-    }
-
-    #[derive(Deserialize)]
-    struct KibanaStatus {
-        status: Overall,
-    }
-
+fn setup_kibana(
+    bb: &Busybox,
+    password: &mut Option<String>,
+    args: &ElkSubcommandArgs,
+) -> eyre::Result<()> {
     println!("{}", "--- Configuring Kibana".green());
+
+    let kbn_home = cpaths!(args.elastic_install_directory, "kibana");
+    let kbn_path_conf = cpaths!(kbn_home, "config");
+    let es_home = cpaths!(args.elastic_install_directory, "elasticsearch");
+    let es_path_conf = cpaths!(es_home, "config");
+
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-kibana.service",
+        KIBANA_SERVICE
+            .replace(
+                "$KBN_HOME",
+                &format!("{}/kibana", args.elastic_install_directory.display()),
+            )
+            .replace(
+                "$KBN_PATH_CONF",
+                &format!("{}/kibana/config", args.elastic_install_directory.display()),
+            ),
+    )
+    .context("Could not write systemd service for kibana")?;
+
+    println!("Creating jj-kibana group...");
+    bb.command("addgroup").args(["-S", "jj-kibana"]).output()?;
+
+    println!("Creating user...");
+    bb.command("adduser")
+        .args([
+            "-h",
+            "/nonexistent",
+            "-G",
+            "jj-kibana",
+            "-S",
+            "-H",
+            "-D",
+            "jj-kibana",
+        ])
+        .output()?;
+
+    if qx("getenforce")?.1.contains("Enforcing") {
+        println!("SELinux is enabled, configuring contexts...");
+
+        std::fs::create_dir_all(cpaths!(kbn_home, "logs"))?;
+        std::fs::create_dir_all(cpaths!(kbn_home, "data"))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t usr_t {}",
+            kbn_home.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t usr_t -R {}",
+            kbn_home.display()
+        ))?;
+        system(&format!("restorecon -R {}", kbn_home.display()))?;
+
+        let logs = cpaths!(kbn_home, "logs");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_log_t {}",
+            logs.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_log_t -R {}",
+            logs.display()
+        ))?;
+        system(&format!("restorecon -R {}", logs.display()))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t etc_t {}",
+            kbn_path_conf.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t etc_t -R {}",
+            kbn_path_conf.display()
+        ))?;
+        system(&format!("restorecon -R {}", kbn_path_conf.display()))?;
+
+        let data = cpaths!(kbn_home, "data");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_lib_t {}",
+            data.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_lib_t -R {}",
+            data.display()
+        ))?;
+        system(&format!("restorecon -R {}", data.display()))?;
+    }
+
+    let kibana_user = passwd::load_users("jj-kibana")
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .map(|v| v.uid)
+        .map(|v| v.into());
+    let kibana_group = passwd::load_groups("jj-kibana")
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .map(|v| v.gid)
+        .map(|v| v.into());
+
+    let dir_perms: Permissions = PermissionsExt::from_mode(0o700);
+    let file_perms: Permissions = PermissionsExt::from_mode(0o700);
+
+    println!("Setting permissions...");
+    for entry in WalkDir::new(&kbn_home) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+
+        if entry.file_type().is_dir() {
+            let _ = std::fs::set_permissions(entry.path(), dir_perms.clone());
+            let _ = chown(entry.path(), kibana_user, kibana_group);
+        } else {
+            let _ = std::fs::set_permissions(entry.path(), file_perms.clone());
+            let _ = chown(entry.path(), kibana_user, kibana_group);
+        }
+    }
 
     let elastic_password = get_elastic_password(password)?;
 
-    let token =
-        qx("/usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s kibana")?.1;
+    println!("Getting enrollment token...");
 
-    system(&format!(
-        "sudo -u kibana /usr/share/kibana/bin/kibana-setup -t {token}"
-    ))?;
+    let token_output = &Command::new(cpaths!(
+        &es_home,
+        "bin",
+        "elasticsearch-create-enrollment-token"
+    ))
+    .current_dir(&es_home)
+    .env("ES_HOME", format!("{}", es_home.display()))
+    .env("ES_PATH_CONF", format!("{}", es_path_conf.display()))
+    .args(["-s", "kibana"])
+    .output()?;
 
-    let kibana_yml = std::fs::read_to_string("/etc/kibana/kibana.yml")?;
-    let new_kibana_yml =
+    std::io::stderr().write_all(&token_output.stderr)?;
+
+    let token = String::from_utf8_lossy(&token_output.stdout)
+        .trim()
+        .to_owned();
+
+    Command::new("/bin/sh")
+        .args([
+            "-c",
+            &format!(
+                "sudo -E -u jj-kibana {} -t {token}",
+                cpaths!(kbn_home, "bin", "kibana-setup").display()
+            ),
+        ])
+        .current_dir(&kbn_home)
+        .env("KBN_HOME", format!("{}", kbn_home.display()))
+        .env("KBN_PATH_CONF", format!("{}", kbn_path_conf.display()))
+        .spawn()?
+        .wait()?;
+
+    println!("Applying jj customizations to Kibana...");
+
+    let keys = Command::new(cpaths!(kbn_home, "bin", "kibana-encryption-keys"))
+        .arg("generate")
+        .env("KBN_HOME", format!("{}", kbn_home.display()))
+        .env("KBN_PATH_CONF", format!("{}", kbn_path_conf.display()))
+        .output()?;
+
+    std::io::stderr().write_all(&keys.stderr)?;
+
+    let keys_regex = regex::Regex::new("(?ms)(^xpack\\.[^:]+: [^\n]+)").unwrap();
+    let keys = String::from_utf8_lossy(&keys.stdout);
+    let keys = keys_regex
+        .captures_iter(&keys)
+        .map(|c| c[1].to_string())
+        .collect::<Vec<_>>();
+
+    let kibana_yml = std::fs::read_to_string(cpaths!(kbn_path_conf, "kibana.yml"))?;
+    let mut new_kibana_yml =
         pcre!(&kibana_yml =~ s/r"^[^\n]server.host:[^\n]+"/r#"server.host: "0.0.0.0""#/xms);
-    std::fs::write("/etc/kibana/kibana.yml", new_kibana_yml)?;
+    new_kibana_yml.push('\n');
+    new_kibana_yml.push_str(&keys.join("\n"));
+    std::fs::write(cpaths!(kbn_path_conf, "kibana.yml"), new_kibana_yml)?;
 
-    system("systemctl enable kibana")?;
-    system("systemctl start kibana")?;
+    system("systemctl enable jj-kibana")?;
+    system("systemctl start jj-kibana")?;
 
     println!("{}", "--- Waiting for Kibana...".green());
 
-    let client = Client::new();
+    {
+        use reqwest::blocking::Client;
+        use serde::Deserialize;
 
-    loop {
-        println!("Waiting for Kibana...");
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        #[derive(Deserialize)]
+        struct Level {
+            level: String,
+        }
 
-        let Ok(res) = client.get("http://localhost:5601/api/status").send() else {
-            continue;
-        };
-        let Ok(json) = res.json::<KibanaStatus>() else {
-            continue;
-        };
+        #[derive(Deserialize)]
+        struct Overall {
+            overall: Level,
+        }
 
-        if json.status.overall.level == "available" {
-            break;
+        #[derive(Deserialize)]
+        struct KibanaStatus {
+            status: Overall,
+        }
+        let client = Client::new();
+
+        loop {
+            println!("Waiting for Kibana...");
+            std::thread::sleep(std::time::Duration::from_secs(1));
+
+            let Ok(res) = client.get("http://localhost:5601/api/status").send() else {
+                continue;
+            };
+            let Ok(json) = res.json::<KibanaStatus>() else {
+                continue;
+            };
+
+            if json.status.overall.level == "available" {
+                break;
+            }
         }
     }
 
     println!("{}", "--- Kibana online! Importing dashboards...".green());
 
-    for (i, dash) in KIBANA_DASHBOARDS.iter().enumerate() {
-        println!("Importing dashboard {}...", i + 1);
+    {
+        use reqwest::blocking::{
+            Client,
+            multipart::{Form, Part},
+        };
+        let client = Client::new();
 
-        let part = Part::bytes(*dash).file_name("input.ndjson");
-        let form = Form::new().part("file", part);
+        for (i, dash) in KIBANA_DASHBOARDS.iter().enumerate() {
+            println!("Importing dashboard {}...", i + 1);
 
-        client
-            .post("http://localhost:5601/api/saved_objects/_import?overwrite=true")
-            .basic_auth("elastic", Some(elastic_password.clone()))
-            .header("kbn-xsrf", "true")
-            .multipart(form)
-            .send()?;
+            let part = Part::bytes(*dash).file_name("input.ndjson");
+            let form = Form::new().part("file", part);
+
+            client
+                .post("http://localhost:5601/api/saved_objects/_import?overwrite=true")
+                .basic_auth("elastic", Some(elastic_password.clone()))
+                .header("kbn-xsrf", "true")
+                .multipart(form)
+                .send()?;
+        }
     }
 
     println!("{}", "--- Kibana configured!".green());

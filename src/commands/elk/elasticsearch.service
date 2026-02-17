@@ -18,8 +18,8 @@ EnvironmentFile=-/etc/default/elasticsearch
 
 WorkingDirectory=$ES_HOME
 
-User=elasticsearch
-Group=elasticsearch
+User=jj-elasticsearch
+Group=jj-elasticsearch
 
 ExecStart=$ES_HOME/bin/elasticsearch -p ${PID_DIR}/elasticsearch.pid --quiet
 
