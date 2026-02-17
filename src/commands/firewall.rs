@@ -62,6 +62,10 @@ struct QuickSetup {
     /// Add firewall rules to allow outbound DNS, HTTP, and HTTPS
     #[arg(short = 'o', long)]
     allow_outbound: bool,
+
+    /// Flush ruleset instead of just the `core_firewall` table.
+    #[arg(short = 'F', long)]
+    flush_ruleset: bool,
 }
 
 impl QuickSetup {
@@ -109,9 +113,14 @@ impl QuickSetup {
             .map(|p| (p.local_port, p))
             .collect::<BTreeMap<_, _>>();
 
-        writeln!(ob, "table inet core_firewall")?;
-        writeln!(ob, "flush table inet core_firewall\n")?;
-        writeln!(ob, "delete table inet core_firewall\n")?;
+        if self.flush_ruleset {
+            writeln!(ob, "flush ruleset\n")?;
+        } else {
+            writeln!(ob, "table inet core_firewall")?;
+            writeln!(ob, "flush table inet core_firewall\n")?;
+            writeln!(ob, "delete table inet core_firewall\n")?;
+        }
+
         writeln!(ob, "table inet core_firewall {{")?;
         writeln!(ob, "    chain input {{")?;
         writeln!(ob, "        type filter hook input priority 0; policy drop")?;
