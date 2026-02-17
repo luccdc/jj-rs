@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 # Install jiujitsu and friends
 set -eu
+SCRIPT_USER="${SUDO_USER:-USER}"
+HOME_DIR="$(getent passwd "${SCRIPT_USER}" | cut -d: -f6)"
 
 DEFAULT_PREFIX="/usr/local/jj"
 PREFIX=${1:-${DEFAULT_PREFIX}}
@@ -36,11 +38,12 @@ case :${PATH}:
 in *:${PREFIX}:*)  printf "Prefix found on path! Not adding prefix to path.\n";;
   *) {
       printf "Adding path to profile files...\n"
-      printf "export PATH=%s:\${PATH}\n" "${PREFIX}" | tee -a ~/.profile ~/.zprofile
+      printf "export PATH=%s:\${PATH}\n" "${PREFIX}" | tee -a "${HOME_DIR}"/.profile "${HOME_DIR}"/.zprofile
 
       [ -d /etc/sudoers.d ] && 
           printf 'Defaults   secure_path = "%s:/bin:/sbin:/usr/bin:/usr/sbin"\n' "${PREFIX}" >> /etc/sudoers.d/jj
+
+      printf "\nBe sure to run '. %s/.profile' to pick up changes\n" "${HOME_DIR}"
   }
 esac
 
-printf "\nBe sure to run '. ~/.profile' to pick up changes\n"
