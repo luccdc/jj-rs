@@ -1,3 +1,6 @@
+use std::fs::{File, Permissions};
+use std::io::BufReader;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::{
     io::{self, Write},
@@ -10,18 +13,31 @@ use std::{
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use eyre::{Context, bail};
-use nix::unistd::chdir;
+use flate2::bufread::GzDecoder;
+use nix::unistd::chown;
+use serde_yaml_ng::Value;
+use tar::Archive;
+use walkdir::WalkDir;
 
-use crate::utils::{download_file, system};
+use crate::utils::{busybox::Busybox, download_file, system};
 
 use crate::{
     pcre,
-    utils::{
-        download_container::DownloadContainer,
-        os_version::{Distro, get_distro},
-        qx,
-    },
+    utils::{download_container::DownloadContainer, os_version::Distro, passwd, qx},
 };
+
+fn concat_paths<P1: AsRef<Path>, P2: AsRef<Path>, S: IntoIterator<Item = P2>>(
+    base: P1,
+    rest: S,
+) -> PathBuf {
+    let mut base = base.as_ref().to_owned();
+
+    for c in rest.into_iter() {
+        base.push(c);
+    }
+
+    base
+}
 
 // Defines a variable called KIBANA_DASHBOARDS of type &'static [&'static str]
 // It includes all the ndjson files for kibana dashboards
@@ -31,12 +47,13 @@ const FILEBEAT_YML: &str = include_str!("elk/filebeat.yml");
 const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.yml");
 const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.yml");
 const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
+const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
 
 #[derive(Parser, Clone, Debug)]
 #[command(about)]
 pub struct ElkSubcommandArgs {
     /// Version to use for Elasticsearch, Logstash, Kibana, Auditbeat, Filebeat, and Packetbeat
-    #[arg(long, short = 'V', default_value = "9.2.0")]
+    #[arg(long, short = 'V', default_value = "9.3.0")]
     elastic_version: String,
 
     /// URL to download Elasticsearch, Logstash, and Kibana from
@@ -48,8 +65,16 @@ pub struct ElkSubcommandArgs {
     beats_download_url: String,
 
     /// Where to put files to be shared on the network
-    #[arg(long, short = 'S', default_value = "/opt/es")]
+    #[arg(long, short = 'S', default_value = "/opt/es-share")]
     elasticsearch_share_directory: PathBuf,
+
+    /// Where to install and configure everything ELK related, including beats
+    #[arg(long, short = 'e', default_value = "/opt/es")]
+    elastic_install_directory: PathBuf,
+
+    /// Disable syslog input
+    #[arg(long, short = 'D')]
+    disable_syslog: bool,
 
     /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
@@ -82,7 +107,6 @@ pub struct ElkBeatsArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ElkCommands {
-
     #[command(visible_alias = "in")]
     Install(ElkSubcommandArgs),
 
@@ -94,9 +118,9 @@ pub enum ElkCommands {
     #[command(visible_alias = "dpkg")]
     DownloadPackages(ElkSubcommandArgs),
 
-    /// Install ELK and beats on the current host
-    #[command(visible_alias = "ipkg")]
-    InstallPackages(ElkSubcommandArgs),
+    /// Extract ELK and beats to later install
+    #[command(visible_alias = "epkg")]
+    ExtractPackages(ElkSubcommandArgs),
 
     /// Start and configure elasticsearch
     #[command(visible_alias = "es")]
@@ -125,9 +149,6 @@ pub enum ElkCommands {
     /// Install beats and configure the system to send logs to the ELK stack
     #[command(visible_alias = "beats")]
     InstallBeats(ElkBeatsArgs),
-
-
-    
 }
 
 /// Install, configure, and manage ELK and beats locally and assist across the network
@@ -142,19 +163,19 @@ impl super::Command for Elk {
     fn execute(self) -> eyre::Result<()> {
         use ElkCommands as EC;
 
-        let distro = get_distro()?;
+        concat_paths("/opt/es", ["elasticsearch", "elasticsearch.yml"]);
 
-        if !distro.is_rhel_or_deb_based() {
-            eprintln!(
-                "{}",
-                "!!! ELK utilities can only be run on RHEL or Debian based distributions".red()
-            );
+        if !qx("systemctl --version")?.1.contains("systemd") {
+            eprintln!("{}", "!!! ELK utilities require systemd to run".red());
             return Ok(());
         }
 
         if let EC::InstallBeats(args) = &self.command {
-            return install_beats(&distro, args);
+            return Ok(());
+            // return install_beats(args);
         }
+
+        let busybox = Busybox::new()?;
 
         let hostname = qx("hostnamectl")?.1;
         if pcre!(&hostname =~ qr/r"Static\+hostname:\s+\(unset\)"/xms) {
@@ -175,39 +196,40 @@ impl super::Command for Elk {
         }
 
         if let EC::Install(args) | EC::DownloadPackages(args) = &self.command {
-            download_packages(&distro, args)?;
+            download_packages(args)?;
         }
 
-        if let EC::Install(args) | EC::InstallPackages(args) = &self.command {
-            install_packages(&distro, args)?;
+        if let EC::Install(args) | EC::ExtractPackages(args) = &self.command {
+            extract_packages(args)?;
         }
 
         if let EC::Install(args) | EC::SetupElastic(args) = &self.command {
-            setup_elasticsearch(&mut elastic_password, args)?;
+            setup_elasticsearch(&busybox, &mut elastic_password, args)?;
         }
 
-        if let EC::Install(_) | EC::SetupKibana(_) = &self.command {
-            setup_kibana(&mut elastic_password)?;
+        if let EC::Install(args) | EC::SetupKibana(args) = &self.command {
+            setup_kibana(&mut elastic_password, args)?;
         }
 
-        if let EC::Install(_) | EC::SetupLogstash(_) = &self.command {
-            setup_logstash(&mut elastic_password)?;
+        if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
+            setup_logstash(&mut elastic_password, args)?;
         }
 
-        if let EC::Install(_) | EC::SetupAuditbeat(_) = &self.command {
-            setup_auditbeat(&mut elastic_password)?;
+        if let EC::Install(args) | EC::SetupAuditbeat(args) = &self.command {
+            setup_auditbeat(&mut elastic_password, args)?;
         }
 
-        if let EC::Install(_) | EC::SetupFilebeat(_) = &self.command {
-            setup_filebeat(&mut elastic_password)?;
+        if let EC::Install(args) | EC::SetupFilebeat(args) = &self.command {
+            setup_filebeat(&mut elastic_password, args)?;
         }
 
-        if let EC::Install(_) | EC::SetupPacketbeat(_) = &self.command {
-            setup_packetbeat(&mut elastic_password)?;
+        if let EC::Install(args) | EC::SetupPacketbeat(args) = &self.command {
+            setup_packetbeat(&mut elastic_password, args)?;
         }
 
         if let EC::Install(_) = &self.command {
-            println!("
+            println!(
+                "
 Configuration Notes:
     When Installing and configuring ELK, the following ports should be opened up:
         - 514/udp: Syslog input. Generic from Windows and Linux systems
@@ -217,8 +239,9 @@ Configuration Notes:
         - 8080/tcp: Python web server for distributing certificate
         - 9001/udp: Palo Alto Syslog input
         - 9002/udp: Cisco FTD Syslog input
-        - 9200/tcp: Elasticsearch
-");
+        - 10200/tcp: Elasticsearch
+"
+            );
         }
 
         Ok(())
@@ -275,7 +298,7 @@ fn setup_zram() -> eyre::Result<()> {
     Ok(())
 }
 
-fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<()> {
+fn download_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
     let download_packages_internal = |download_shell: bool| -> eyre::Result<()> {
         std::fs::create_dir_all(&args.elasticsearch_share_directory)?;
 
@@ -283,51 +306,26 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
 
         println!("{}", "--- Downloading elastic packages...".green());
 
-        if distro.is_deb_based() {
-            for pkg in ["elasticsearch", "logstash", "kibana"] {
-                let args = args.clone();
-                let pkg = pkg.to_string();
-                let download_package = move || {
-                    let mut dest_path = args.elasticsearch_share_directory.clone();
-                    dest_path.push(format!("{pkg}.deb"));
-                    let res = download_file(
-                        &format!(
-                            "{}/{}/{}-{}-amd64.deb",
-                            args.download_url, pkg, pkg, args.elastic_version
-                        ),
-                        dest_path,
-                    );
-                    println!("Done downloading {pkg}!");
-                    res
-                };
-                if download_shell {
-                    download_package()?;
-                } else {
-                    download_threads.push(thread::spawn(download_package));
-                }
-            }
-        } else {
-            for pkg in ["elasticsearch", "logstash", "kibana"] {
-                let args = args.clone();
-                let pkg = pkg.to_string();
-                let download_package = move || {
-                    let mut dest_path = args.elasticsearch_share_directory.clone();
-                    dest_path.push(format!("{pkg}.rpm"));
-                    let res = download_file(
-                        &format!(
-                            "{}/{}/{}-{}-x86_64.rpm",
-                            args.download_url, pkg, pkg, args.elastic_version
-                        ),
-                        dest_path,
-                    );
-                    println!("Done downloading {pkg}!");
-                    res
-                };
-                if download_shell {
-                    download_package()?;
-                } else {
-                    download_threads.push(thread::spawn(download_package));
-                }
+        for pkg in ["elasticsearch", "logstash", "kibana"] {
+            let args = args.clone();
+            let pkg = pkg.to_string();
+            let download_package = move || {
+                let mut dest_path = args.elasticsearch_share_directory.clone();
+                dest_path.push(format!("{pkg}.tar.gz"));
+                let res = download_file(
+                    &format!(
+                        "{}/{}/{}-{}-linux-x86_64.tar.gz",
+                        args.download_url, pkg, pkg, args.elastic_version
+                    ),
+                    dest_path,
+                );
+                println!("Done downloading {pkg}!");
+                res
+            };
+            if download_shell {
+                download_package()?;
+            } else {
+                download_threads.push(thread::spawn(download_package));
             }
         }
 
@@ -338,39 +336,15 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
 
                 move || {
                     let mut dest_path = args.elasticsearch_share_directory.clone();
-                    dest_path.push(format!("{beat}.deb"));
+                    dest_path.push(format!("{beat}.tar.gz"));
                     let res = download_file(
                         &format!(
-                            "{}/{}/{}-{}-amd64.deb",
+                            "{}/{}/{}-{}-linux-x86_64.tar.gz",
                             args.beats_download_url, beat, beat, args.elastic_version
                         ),
                         dest_path,
                     );
-                    println!("Done downloading {beat} deb!");
-                    res
-                }
-            };
-            if download_shell {
-                download_package()?;
-            } else {
-                download_threads.push(thread::spawn(download_package));
-            }
-
-            let download_package = {
-                let args = args.clone();
-                let beat = beat.to_string();
-
-                move || {
-                    let mut dest_path = args.elasticsearch_share_directory.clone();
-                    dest_path.push(format!("{beat}.rpm"));
-                    let res = download_file(
-                        &format!(
-                            "{}/{}/{}-{}-x86_64.rpm",
-                            args.beats_download_url, beat, beat, args.elastic_version
-                        ),
-                        dest_path,
-                    );
-                    println!("Done downloading {beat} rpm!");
+                    println!("Done downloading {beat}!");
                     res
                 }
             };
@@ -412,58 +386,308 @@ fn download_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<
     Ok(())
 }
 
-fn install_packages(distro: &Distro, args: &ElkSubcommandArgs) -> eyre::Result<()> {
-    chdir(&args.elasticsearch_share_directory)?;
+fn untar_package(
+    src_path: impl AsRef<Path> + std::fmt::Debug,
+    sub_path: impl AsRef<Path> + std::fmt::Debug,
+    dest_path: impl AsRef<Path> + std::fmt::Debug,
+) -> eyre::Result<()> {
+    std::fs::create_dir_all(&dest_path)?;
+    let backing_file = File::open(src_path).context("Could not open file for decompression")?;
+    let buffer = BufReader::new(backing_file);
+    let decompress = GzDecoder::new(buffer);
+    let mut archive = Archive::new(decompress);
 
-    println!("{}", "--- Installing elastic packages...".green());
-
-    if distro.is_deb_based() {
-        for pkg in [
-            "elasticsearch",
-            "logstash",
-            "kibana",
-            "filebeat",
-            "auditbeat",
-            "packetbeat",
-        ] {
-            system(&format!("dpkg -i {pkg}.deb"))?;
-        }
-    } else {
-        for pkg in [
-            "elasticsearch",
-            "logstash",
-            "kibana",
-            "filebeat",
-            "auditbeat",
-            "packetbeat",
-        ] {
-            system(&format!("rpm -i {pkg}.rpm"))?;
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        if let Ok(sub_path) = entry.path()?.strip_prefix(&sub_path) {
+            if let Some(parent) = sub_path.parent() {
+                std::fs::create_dir_all(concat_paths(&dest_path, [parent]))?;
+            }
+            entry.unpack(concat_paths(&dest_path, [sub_path]))?;
         }
     }
 
-    println!("{}", "--- Installed elastic packages!".green());
+    Ok(())
+}
+
+fn extract_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
+    println!("{}", "--- Extracting elastic packages...".green());
+
+    let mut threads = Vec::new();
+
+    for pkg in [
+        "elasticsearch",
+        "logstash",
+        "kibana",
+        "filebeat",
+        "auditbeat",
+        "packetbeat",
+    ] {
+        let src_path = concat_paths(
+            &args.elasticsearch_share_directory,
+            [format!("{pkg}.tar.gz")],
+        );
+        let sub_path = format!("{pkg}-{}", args.elastic_version);
+        let dest_path = concat_paths(&args.elastic_install_directory, [pkg]);
+        threads.push(thread::spawn(move || -> eyre::Result<()> {
+            untar_package(src_path, sub_path, dest_path)?;
+            println!("Unpacked {pkg}!");
+            Ok(())
+        }));
+    }
+
+    for thread in threads {
+        match thread.join() {
+            Ok(r) => r?,
+            Err(_) => {
+                eprintln!(
+                    "{}",
+                    "!!! Could not join download thread due to panic!".red()
+                );
+            }
+        }
+    }
+
+    println!("{}", "--- Extracted elastic packages!".green());
 
     Ok(())
 }
 
 fn setup_elasticsearch(
+    bb: &Busybox,
     password: &mut Option<String>,
     args: &ElkSubcommandArgs,
 ) -> eyre::Result<()> {
     println!("{}", "--- Configuring Elasticsearch".green());
 
-    system("systemctl enable elasticsearch")?;
-    system("systemctl start elasticsearch")?;
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-elasticsearch.service",
+        ELASTICSEARCH_SERVICE
+            .replace(
+                "$ES_HOME",
+                &format!("{}/elasticsearch", args.elastic_install_directory.display()),
+            )
+            .replace(
+                "$ES_PATH_CONF",
+                &format!(
+                    "{}/elasticsearch/config",
+                    args.elastic_install_directory.display()
+                ),
+            ),
+    )
+    .context("Could not write systemd service for elasticsearch")?;
 
+    println!("Creating jj-elasticsearch group...");
+    bb.command("addgroup")
+        .args(["-s", "jj-elasticsearch"])
+        .output()?;
+
+    println!("Creating user...");
+    bb.command("adduser")
+        .args([
+            "-h",
+            "/nonexistent",
+            "-G",
+            "elasticsearch",
+            "-S",
+            "-H",
+            "-D",
+        ])
+        .output()?;
+
+    if qx("getenforce")?.1.contains("Enforcing") {
+        println!("SELinux is enabled, configuring contexts...");
+
+        std::fs::create_dir_all(concat_paths(&args.elastic_install_directory, ["logs"]))?;
+        std::fs::create_dir_all(concat_paths(&args.elastic_install_directory, ["data"]))?;
+
+        let es_home = format!("{}/elasticsearch", args.elastic_install_directory.display());
+        system(&format!(
+            "semanage fcontext -a -s system_u -t usr_t {es_home}",
+        ))?;
+        system(&format!("chcon -u system_u -t usr_t -R {es_home}"))?;
+        system(&format!("restorecon -R {es_home}"))?;
+
+        let logs = format!("{es_home}/logs");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_log_t {logs}",
+        ))?;
+        system(&format!("chcon -u system_u -t var_log_t -R {logs}"))?;
+        system(&format!("restorecon -R {logs}"))?;
+
+        let config = format!("{es_home}/config");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t etc_t {config}",
+        ))?;
+        system(&format!("chcon -u system_u -t etc_t -R {config}"))?;
+        system(&format!("restorecon -R {config}"))?;
+
+        let data = format!("{es_home}/data");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_lib_t {data}",
+        ))?;
+        system(&format!("chcon -u system_u -t var_lib_t -R {data}"))?;
+        system(&format!("restorecon -R {data}"))?;
+    }
+
+    let elasticsearch_user = passwd::load_users("elasticsearch")
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .map(|v| v.uid)
+        .map(|v| v.into());
+    let elasticsearch_group = passwd::load_groups("elasticsearch")
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .map(|v| v.gid)
+        .map(|v| v.into());
+
+    let dir_perms: Permissions = PermissionsExt::from_mode(0o700);
+    let file_perms: Permissions = PermissionsExt::from_mode(0o700);
+
+    println!("Setting permissions...");
+    for entry in WalkDir::new(&format!(
+        "{}/elasticsearch",
+        args.elastic_install_directory.display()
+    )) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+
+        if entry.file_type().is_dir() {
+            let _ = std::fs::set_permissions(entry.path(), dir_perms.clone());
+            let _ = chown(entry.path(), elasticsearch_user, elasticsearch_group);
+        } else {
+            let _ = std::fs::set_permissions(entry.path(), file_perms.clone());
+            let _ = chown(entry.path(), elasticsearch_user, elasticsearch_group);
+        }
+    }
+
+    println!("Performing auto configuration of node...");
+    Command::new(concat_paths(
+        &args.elastic_install_directory,
+        ["elasticsearch", "bin", "elasticsearch-cli"],
+    ))
+    .current_dir(concat_paths(
+        &args.elastic_install_directory,
+        ["elasticsearch"],
+    ))
+    .env(
+        "ES_HOME",
+        concat_paths(&args.elastic_install_directory, ["elasticsearch"]),
+    )
+    .env(
+        "ES_PATH_CONF",
+        concat_paths(&args.elastic_install_directory, ["elasticsearch", "config"]),
+    )
+    .env("CLI_NAME", "auto-configure-node")
+    .env(
+        "CLI_LIBS",
+        "modules/x-pack-core,modules/x-pack-security,lib/tools/security-cli",
+    )
+    .spawn()?
+    .wait()?;
+
+    let elasticsearch_config = std::fs::read_to_string(concat_paths(
+        &args.elastic_install_directory,
+        ["elasticsearch", "config", "elasticsearch.yml"],
+    ))
+    .context("Could not read elasticsearch configuration")?;
+
+    // Why don't we use serde_yaml_ng?
+    // Because it parses the entirety of the configuration file as null...
+
+    let port_regex =
+        regex::Regex::new("(?ms)(#?http.port: [^\n]+)").expect("Static regex failed after testing");
+    let seed_hosts_regex = regex::Regex::new("(?ms)(#?discovery.seed_hosts: [^\n]+)")
+        .expect("Static regex failed after testing");
+    let discovery_type_regex = regex::Regex::new("(?ms)(#?discovery.type: [^\n]+)")
+        .expect("Static regex failed after testing");
+    let transport_regex = regex::Regex::new("(?ms)(#?transport.port: [^\n]+)")
+        .expect("Static regex failed after testing");
+
+    let elasticsearch_config = port_regex.replace(&elasticsearch_config, "http.port: 10200");
+    let elasticsearch_config =
+        seed_hosts_regex.replace(&elasticsearch_config, "discovery.seed_hosts: []");
+    let elasticsearch_config =
+        discovery_type_regex.replace(&elasticsearch_config, "discovery.type: single-node");
+    let elasticsearch_config =
+        transport_regex.replace(&elasticsearch_config, "transport.port: 10300");
+
+    let elasticsearch_config = if !port_regex.is_match(&elasticsearch_config) {
+        elasticsearch_config + "\nhost.port: 10200"
+    } else {
+        elasticsearch_config
+    };
+    let elasticsearch_config = if !seed_hosts_regex.is_match(&elasticsearch_config) {
+        elasticsearch_config + "\ndiscovery.seed_hosts: []"
+    } else {
+        elasticsearch_config
+    };
+    let elasticsearch_config = if !discovery_type_regex.is_match(&elasticsearch_config) {
+        elasticsearch_config + "\ndiscovery.type: single-node"
+    } else {
+        elasticsearch_config
+    };
+    let elasticsearch_config = if !transport_regex.is_match(&elasticsearch_config) {
+        elasticsearch_config + "\ntransport.port: 10300"
+    } else {
+        elasticsearch_config
+    };
+
+    std::fs::write(
+        concat_paths(
+            &args.elastic_install_directory,
+            ["elasticsearch", "config", "elasticsearch.yml"],
+        ),
+        &*elasticsearch_config,
+    )
+    .context("Could not write elasticsearch configuration")?;
+
+    println!("Starting elasticsearch...");
+    system("systemctl enable jj-elasticsearch").context("Could not enable elasticsearch")?;
+    system("systemctl start jj-elasticsearch").context("Could not start elasticsearch")?;
+
+    let client = reqwest::blocking::ClientBuilder::new()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()?;
+
+    #[derive(serde::Deserialize, Debug)]
+    struct ElasticStatus {
+        status: u16,
+    }
+    let mut i = 0;
+    loop {
+        i += 1;
+        println!("Waiting for Elasticsearch {i}...");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let Ok(res) = dbg!(client.get("https://localhost:10200/_cluster/health").send()) else {
+            continue;
+        };
+        let Ok(json) = dbg!(res.json::<ElasticStatus>()) else {
+            continue;
+        };
+
+        // We aren't authenticating yet; we need to run elasticsearch-reset-password
+        // But, that requires a working "cluster"...
+        if json.status == 401 {
+            break;
+        }
+    }
+
+    println!("Changing password...");
     let elastic_password = get_elastic_password(password)?;
 
-    let mut password_change =
-        Command::new("/usr/share/elasticsearch/bin/elasticsearch-reset-password")
-            .args(["-u", "elastic", "-i"])
-            .stdin(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .spawn()?;
+    let mut password_change = Command::new(concat_paths(
+        &args.elastic_install_directory,
+        ["elasticsearch", "bin", "elasticsearch-reset-password"],
+    ))
+    .args(["-u", "elastic", "-i"])
+    .stdin(Stdio::piped())
+    .stderr(Stdio::inherit())
+    .stdout(Stdio::inherit())
+    .spawn()?;
 
     if let Some(ref mut stdin) = password_change.stdin {
         writeln!(stdin, "y")?;
@@ -473,18 +697,27 @@ fn setup_elasticsearch(
 
     password_change.wait()?;
 
+    println!("Copying HTTP CA certificate...");
     std::fs::create_dir_all("/etc/es_certs")?;
 
-    let mut perms = std::fs::metadata("/etc/elasticsearch/certs/http_ca.crt")?.permissions();
-    perms.set_mode(0o444);
+    let perms: Permissions = PermissionsExt::from_mode(0o444);
 
     std::fs::copy(
-        "/etc/elasticsearch/certs/http_ca.crt",
+        &concat_paths(
+            &args.elastic_install_directory,
+            ["elasticsearch", "config", "certs", "http_ca.crt"],
+        ),
         "/etc/es_certs/http_ca.crt",
     )?;
     let mut share_dir = args.elasticsearch_share_directory.clone();
     share_dir.push("http_ca.crt");
-    std::fs::copy("/etc/elasticsearch/certs/http_ca.crt", &share_dir)?;
+    std::fs::copy(
+        &concat_paths(
+            &args.elastic_install_directory,
+            ["elasticsearch", "config", "certs", "http_ca.crt"],
+        ),
+        &share_dir,
+    )?;
 
     std::fs::set_permissions("/etc/es_certs/http_ca.crt", perms.clone())?;
     std::fs::set_permissions(share_dir, perms)?;
@@ -494,7 +727,7 @@ fn setup_elasticsearch(
     Ok(())
 }
 
-fn setup_kibana(password: &mut Option<String>) -> eyre::Result<()> {
+fn setup_kibana(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     use reqwest::blocking::{
         Client,
         multipart::{Form, Part},
@@ -576,7 +809,7 @@ fn setup_kibana(password: &mut Option<String>) -> eyre::Result<()> {
     Ok(())
 }
 
-fn setup_logstash(password: &mut Option<String>) -> eyre::Result<()> {
+fn setup_logstash(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     #[derive(serde::Deserialize)]
     #[allow(dead_code)]
     struct ElasticApiKeys {
@@ -644,7 +877,7 @@ Environment="ES_API_KEY={}:{}"
     Ok(())
 }
 
-fn setup_auditbeat(password: &mut Option<String>) -> eyre::Result<()> {
+fn setup_auditbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Setting up auditbeat".green());
 
     let es_password = get_elastic_password(password)?;
@@ -689,7 +922,7 @@ output.logstash:
     Ok(())
 }
 
-fn setup_filebeat(password: &mut Option<String>) -> eyre::Result<()> {
+fn setup_filebeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Setting up filebeat".green());
 
     let es_password = get_elastic_password(password)?;
@@ -780,7 +1013,7 @@ output.logstash:
     Ok(())
 }
 
-fn setup_packetbeat(password: &mut Option<String>) -> eyre::Result<()> {
+fn setup_packetbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Setting up packetbeat".green());
 
     let es_password = get_elastic_password(password)?;
@@ -887,83 +1120,83 @@ fn download_beats(download_shell: bool, distro: &Distro, args: &ElkBeatsArgs) ->
     Ok(())
 }
 
-fn install_beats(distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
-    if args.use_download_shell {
-        let container = DownloadContainer::new(None, args.sneaky_ip)?;
+// fn install_beats(args: &ElkBeatsArgs) -> eyre::Result<()> {
+//     if args.use_download_shell {
+//         let container = DownloadContainer::new(None, args.sneaky_ip)?;
 
-        container.run(|| download_beats(true, distro, args))??;
-    } else {
-        download_beats(false, distro, args)?;
-    }
+//         container.run(|| download_beats(true, args))??;
+//     } else {
+//         download_beats(false, args)?;
+//     }
 
-    println!("--- Done downloading beats packages! Installing beats packages...");
+//     println!("--- Done downloading beats packages! Installing beats packages...");
 
-    for beat in ["auditbeat", "filebeat", "packetbeat"] {
-        if distro.is_deb_based() {
-            system(&format!("dpkg -i /tmp/{beat}.deb"))?;
-        } else {
-            system(&format!("rpm -i /tmp/{beat}.rpm"))?;
-        }
-    }
+//     for beat in ["auditbeat", "filebeat", "packetbeat"] {
+//         if distro.is_deb_based() {
+//             system(&format!("dpkg -i /tmp/{beat}.deb"))?;
+//         } else {
+//             system(&format!("rpm -i /tmp/{beat}.rpm"))?;
+//         }
+//     }
 
-    println!(
-        "{}",
-        "--- Done installing beats! Configuring now...".green()
-    );
+//     println!(
+//         "{}",
+//         "--- Done installing beats! Configuring now...".green()
+//     );
 
-    std::fs::write(
-        "/etc/auditbeat/auditbeat.yml",
-        format!(
-            r#"
-{}
+//     std::fs::write(
+//         "/etc/auditbeat/auditbeat.yml",
+//         format!(
+//             r#"
+// {}
 
-output.logstash:
-  hosts: ["{}:5044"]
-"#,
-            AUDITBEAT_YML, args.elk_ip
-        ),
-    )?;
+// output.logstash:
+//   hosts: ["{}:5044"]
+// "#,
+//             AUDITBEAT_YML, args.elk_ip
+//         ),
+//     )?;
 
-    std::fs::write(
-        "/etc/filebeat/filebeat.yml",
-        format!(
-            r#"
-{}
+//     std::fs::write(
+//         "/etc/filebeat/filebeat.yml",
+//         format!(
+//             r#"
+// {}
 
-output.logstash:
-  hosts: ["{}:5044"]
-"#,
-            FILEBEAT_YML, args.elk_ip
-        ),
-    )?;
+// output.logstash:
+//   hosts: ["{}:5044"]
+// "#,
+//             FILEBEAT_YML, args.elk_ip
+//         ),
+//     )?;
 
-    std::fs::write(
-        "/etc/packetbeat/packetbeat.yml",
-        format!(
-            r#"
-{}
+//     std::fs::write(
+//         "/etc/packetbeat/packetbeat.yml",
+//         format!(
+//             r#"
+// {}
 
-output.logstash:
-  hosts: ["{}:5044"]
-"#,
-            PACKETBEAT_YML, args.elk_ip
-        ),
-    )?;
+// output.logstash:
+//   hosts: ["{}:5044"]
+// "#,
+//             PACKETBEAT_YML, args.elk_ip
+//         ),
+//     )?;
 
-    system("systemctl enable auditbeat")?;
-    system("systemctl restart auditbeat")?;
-    system("systemctl enable filebeat")?;
-    system("systemctl restart filebeat")?;
-    system("systemctl enable packetbeat")?;
-    system("systemctl restart packetbeat")?;
+//     system("systemctl enable auditbeat")?;
+//     system("systemctl restart auditbeat")?;
+//     system("systemctl enable filebeat")?;
+//     system("systemctl restart filebeat")?;
+//     system("systemctl enable packetbeat")?;
+//     system("systemctl restart packetbeat")?;
 
-    println!("{}", "--- Done configuring beats! Verifying output".green());
+//     println!("{}", "--- Done configuring beats! Verifying output".green());
 
-    system("auditbeat test output")?;
-    system("filebeat test output")?;
-    system("packetbeat test output")?;
+//     system("auditbeat test output")?;
+//     system("filebeat test output")?;
+//     system("packetbeat test output")?;
 
-    println!("--- All set up!");
+//     println!("--- All set up!");
 
-    Ok(())
-}
+//     Ok(())
+// }
