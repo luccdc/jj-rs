@@ -35,6 +35,7 @@ const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.yml");
 const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
 const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
 const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
+const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
 
 macro_rules! cpaths {
     ($base:expr, $($others:expr),*$(,)?) => {{
@@ -211,7 +212,7 @@ impl super::Command for Elk {
         }
 
         if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
-            setup_logstash(&mut elastic_password, args)?;
+            setup_logstash(&busybox, &mut elastic_password, args)?;
         }
 
         if let EC::Install(args) | EC::SetupAuditbeat(args) = &self.command {
@@ -969,21 +970,143 @@ fn setup_kibana(
     Ok(())
 }
 
-fn setup_logstash(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
-    #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
-    struct ElasticApiKeys {
-        id: String,
-        name: String,
-        api_key: String,
-        encoded: String,
-    }
-
+fn setup_logstash(
+    bb: &Busybox,
+    password: &mut Option<String>,
+    args: &ElkSubcommandArgs,
+) -> eyre::Result<()> {
     println!("{}", "--- Configuring Logstash...".green());
 
-    std::fs::create_dir_all("/etc/systemd/system/logstash.service.d")?;
+    let ls_home = cpaths!(args.elastic_install_directory, "logstash");
+    let ls_path_conf = cpaths!(ls_home, "config");
 
-    if std::fs::metadata("/etc/systemd/system/logstash.service.d/api_key.conf").is_err() {
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-logstash.service",
+        LOGSTASH_SERVICE
+            .replace(
+                "$LS_HOME",
+                &format!("{}/logstash", args.elastic_install_directory.display()),
+            )
+            .replace(
+                "$LS_PATH_CONF",
+                &format!(
+                    "{}/logstash/config",
+                    args.elastic_install_directory.display()
+                ),
+            ),
+    )
+    .context("Could not write systemd service for logstash")?;
+
+    println!("Creating jj-logstash group...");
+    bb.command("addgroup")
+        .args(["-S", "jj-logstash"])
+        .output()?;
+
+    println!("Creating user...");
+    bb.command("adduser")
+        .args([
+            "-h",
+            "/nonexistent",
+            "-G",
+            "jj-logstash",
+            "-S",
+            "-H",
+            "-D",
+            "jj-logstash",
+        ])
+        .output()?;
+
+    if qx("getenforce")?.1.contains("Enforcing") {
+        println!("SELinux is enabled, configuring contexts...");
+
+        std::fs::create_dir_all(cpaths!(ls_home, "logs"))?;
+        std::fs::create_dir_all(cpaths!(ls_home, "data"))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t usr_t {}",
+            ls_home.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t usr_t -R {}",
+            ls_home.display()
+        ))?;
+        system(&format!("restorecon -R {}", ls_home.display()))?;
+
+        let logs = cpaths!(ls_home, "logs");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_log_t {}",
+            logs.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_log_t -R {}",
+            logs.display()
+        ))?;
+        system(&format!("restorecon -R {}", logs.display()))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t etc_t {}",
+            ls_path_conf.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t etc_t -R {}",
+            ls_path_conf.display()
+        ))?;
+        system(&format!("restorecon -R {}", ls_path_conf.display()))?;
+
+        let data = cpaths!(ls_home, "data");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_lib_t {}",
+            data.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_lib_t -R {}",
+            data.display()
+        ))?;
+        system(&format!("restorecon -R {}", data.display()))?;
+    }
+
+    let logstash_user = passwd::load_users("jj-logstash")
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .map(|v| v.uid)
+        .map(|v| v.into());
+    let logstash_group = passwd::load_groups("jj-logstash")
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .map(|v| v.gid)
+        .map(|v| v.into());
+
+    let dir_perms: Permissions = PermissionsExt::from_mode(0o700);
+    let file_perms: Permissions = PermissionsExt::from_mode(0o700);
+
+    println!("Setting permissions...");
+    for entry in WalkDir::new(&ls_home) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+
+        if entry.file_type().is_dir() {
+            let _ = std::fs::set_permissions(entry.path(), dir_perms.clone());
+            let _ = chown(entry.path(), logstash_user, logstash_group);
+        } else {
+            let _ = std::fs::set_permissions(entry.path(), file_perms.clone());
+            let _ = chown(entry.path(), logstash_user, logstash_group);
+        }
+    }
+
+    std::fs::create_dir_all("/etc/systemd/system/jj-logstash.service.d")?;
+
+    if std::fs::metadata("/etc/systemd/system/jj-logstash.service.d/api_key.conf").is_err() {
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct ElasticApiKeys {
+            id: String,
+            name: String,
+            api_key: String,
+            encoded: String,
+        }
+
+        println!("Requesting new API key for logstash...");
         let es_password = get_elastic_password(password)?;
 
         let api_key_permissions_body = r#"
@@ -1007,7 +1130,7 @@ fn setup_logstash(password: &mut Option<String>, args: &ElkSubcommandArgs) -> ey
         let api_keys = reqwest::blocking::Client::builder()
             .add_root_certificate(cert)
             .build()?
-            .post("https://localhost:9200/_security/api_key")
+            .post("https://localhost:10200/_security/api_key")
             .basic_auth("elastic", Some(es_password))
             .header("kbn-xsrf", "true")
             .header("content-type", "application/json")
@@ -1016,7 +1139,7 @@ fn setup_logstash(password: &mut Option<String>, args: &ElkSubcommandArgs) -> ey
             .json::<ElasticApiKeys>()?;
 
         std::fs::write(
-            "/etc/systemd/system/logstash.service.d/api_key.conf",
+            "/etc/systemd/system/jj-logstash.service.d/api_key.conf",
             format!(
                 r#"[Service]
 Environment="ES_API_KEY={}:{}"
@@ -1026,11 +1149,30 @@ Environment="ES_API_KEY={}:{}"
         )?;
     }
 
-    std::fs::write("/etc/logstash/conf.d/pipeline.conf", LOGSTASH_CONF)?;
+    std::fs::create_dir_all(cpaths!(ls_path_conf, "conf.d"))?;
+    std::fs::write(
+        cpaths!(ls_path_conf, "logstash.yml"),
+        format!(
+            "api.enabled: false\npath.data: {}\npath.logs: {}\n",
+            cpaths!(ls_home, "data").display(),
+            cpaths!(ls_home, "logs").display()
+        ),
+    )?;
+    std::fs::write(
+        cpaths!(ls_path_conf, "pipelines.yml"),
+        format!(
+            "- pipeline.id: main\n  path.config: {}/*.conf",
+            cpaths!(ls_path_conf, "conf.d").display()
+        ),
+    )?;
+    std::fs::write(
+        cpaths!(ls_path_conf, "conf.d", "pipeline.conf"),
+        LOGSTASH_CONF,
+    )?;
 
     system("systemctl daemon-reload")?;
-    system("systemctl enable logstash")?;
-    system("systemctl restart logstash")?;
+    system("systemctl enable jj-logstash")?;
+    system("systemctl restart jj-logstash")?;
 
     println!("{}", "--- Logstash configured!".green());
 

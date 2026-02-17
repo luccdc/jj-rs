@@ -1,0 +1,22 @@
+[Unit]
+Description=logstash
+
+[Service]
+Type=simple
+User=jj-logstash
+Group=jj-logstash
+# Load env vars from /etc/default/ and /etc/sysconfig/ if they exist.
+# Prefixing the path with '-' makes it try to load, but if the file doesn't
+# exist, it continues onward.
+EnvironmentFile=-/etc/default/logstash
+EnvironmentFile=-/etc/sysconfig/logstash
+ExecStart=$LS_HOME/bin/logstash "--path.settings" "$LS_PATH_CONF"
+Restart=always
+WorkingDirectory=/
+Nice=19
+LimitNOFILE=16384
+
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
