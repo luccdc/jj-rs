@@ -36,6 +36,7 @@ const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
 const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
 const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
 const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
+const AUDITBEAT_SERVICE: &str = include_str!("elk/auditbeat.service");
 
 macro_rules! cpaths {
     ($base:expr, $($others:expr),*$(,)?) => {{
@@ -415,17 +416,23 @@ fn extract_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
 
     let mut threads = Vec::new();
 
-    for pkg in [
-        "elasticsearch",
-        "logstash",
-        "kibana",
-        "filebeat",
-        "auditbeat",
-        "packetbeat",
-    ] {
+    for pkg in ["elasticsearch", "logstash", "kibana"] {
         let src_path = cpaths!(args.elasticsearch_share_directory, format!("{pkg}.tar.gz"));
         let sub_path = format!("{pkg}-{}", args.elastic_version);
         let dest_path = cpaths!(args.elastic_install_directory, pkg);
+
+        threads.push(thread::spawn(move || -> eyre::Result<()> {
+            untar_package(src_path, sub_path, dest_path)?;
+            println!("Unpacked {pkg}!");
+            Ok(())
+        }));
+    }
+
+    for pkg in ["filebeat", "auditbeat", "packetbeat"] {
+        let src_path = cpaths!(args.elasticsearch_share_directory, format!("{pkg}.tar.gz"));
+        let sub_path = format!("{pkg}-{}-linux-x86_64", args.elastic_version);
+        let dest_path = cpaths!(args.elastic_install_directory, pkg);
+
         threads.push(thread::spawn(move || -> eyre::Result<()> {
             untar_package(src_path, sub_path, dest_path)?;
             println!("Unpacked {pkg}!");
@@ -665,10 +672,10 @@ fn setup_elasticsearch(
         println!("Waiting for Elasticsearch {i}...");
         std::thread::sleep(std::time::Duration::from_secs(1));
 
-        let Ok(res) = dbg!(client.get("https://localhost:10200/_cluster/health").send()) else {
+        let Ok(res) = client.get("https://localhost:10200/_cluster/health").send() else {
             continue;
         };
-        let Ok(json) = dbg!(res.json::<ElasticStatus>()) else {
+        let Ok(json) = res.json::<ElasticStatus>() else {
             continue;
         };
 
@@ -700,18 +707,12 @@ fn setup_elasticsearch(
     password_change.wait()?;
 
     println!("Copying HTTP CA certificate...");
-    std::fs::create_dir_all("/etc/es_certs")?;
 
     let perms: Permissions = PermissionsExt::from_mode(0o444);
 
-    std::fs::copy(
-        cpaths!(es_path_conf, "certs", "http_ca.crt"),
-        "/etc/es_certs/http_ca.crt",
-    )?;
     let share_dir = cpaths!(args.elasticsearch_share_directory, "http_ca.crt");
     std::fs::copy(cpaths!(es_path_conf, "certs", "http_ca.crt"), &share_dir)?;
 
-    std::fs::set_permissions("/etc/es_certs/http_ca.crt", perms.clone())?;
     std::fs::set_permissions(share_dir, perms)?;
 
     println!("{}", "--- Elasticsearch configured!".green());
@@ -924,8 +925,10 @@ fn setup_kibana(
         }
         let client = Client::new();
 
+        let mut i = 0;
         loop {
-            println!("Waiting for Kibana...");
+            i += 1;
+            println!("Waiting for Kibana {i}...");
             std::thread::sleep(std::time::Duration::from_secs(1));
 
             let Ok(res) = client.get("http://localhost:5601/api/status").send() else {
@@ -1124,7 +1127,8 @@ fn setup_logstash(
 }
 "#;
 
-        let cert = std::fs::read_to_string("/etc/es_certs/http_ca.crt")?;
+        let cert =
+            std::fs::read_to_string(cpaths!(args.elasticsearch_share_directory, "http_ca.crt"))?;
         let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
 
         let api_keys = reqwest::blocking::Client::builder()
@@ -1167,7 +1171,10 @@ Environment="ES_API_KEY={}:{}"
     )?;
     std::fs::write(
         cpaths!(ls_path_conf, "conf.d", "pipeline.conf"),
-        LOGSTASH_CONF,
+        LOGSTASH_CONF.replace(
+            "$ES_SHARE",
+            &format!("{}", args.elasticsearch_share_directory.display()),
+        ),
     )?;
 
     system("systemctl daemon-reload")?;
@@ -1182,30 +1189,103 @@ Environment="ES_API_KEY={}:{}"
 fn setup_auditbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Setting up auditbeat".green());
 
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-auditbeat.service",
+        AUDITBEAT_SERVICE.replace(
+            "$AB_HOME",
+            &format!("{}/auditbeat", args.elastic_install_directory.display()),
+        ),
+    )
+    .context("Could not write systemd service for auditbeat")?;
+
     let es_password = get_elastic_password(password)?;
 
+    let ab_home = cpaths!(args.elastic_install_directory, "auditbeat");
+
+    if qx("getenforce")?.1.contains("Enforcing") {
+        println!("SELinux is enabled, configuring contexts...");
+        let ab_path_conf = cpaths!(ab_home, "auditbeat.yml");
+
+        std::fs::create_dir_all(cpaths!(ab_home, "logs"))?;
+        std::fs::create_dir_all(cpaths!(ab_home, "data"))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t usr_t {}",
+            ab_home.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t usr_t -R {}",
+            ab_home.display()
+        ))?;
+        system(&format!("restorecon -R {}", ab_home.display()))?;
+
+        let logs = cpaths!(ab_home, "logs");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_log_t {}",
+            logs.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_log_t -R {}",
+            logs.display()
+        ))?;
+        system(&format!("restorecon -R {}", logs.display()))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t etc_t {}",
+            ab_path_conf.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t etc_t -R {}",
+            ab_path_conf.display()
+        ))?;
+        system(&format!("restorecon -R {}", ab_path_conf.display()))?;
+
+        let data = cpaths!(ab_home, "data");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_lib_t {}",
+            data.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_lib_t -R {}",
+            data.display()
+        ))?;
+        system(&format!("restorecon -R {}", data.display()))?;
+
+        let bin = cpaths!(ab_home, "auditbeat");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t bin_t {}",
+            bin.display()
+        ))?;
+        system(&format!("chcon -u system_u -t bin_t -R {}", bin.display()))?;
+        system(&format!("restorecon -R {}", bin.display()))?;
+    }
+
     std::fs::write(
-        "/etc/auditbeat/auditbeat.yml",
+        cpaths!(ab_home, "auditbeat.yml"),
         format!(
             r#"
 {AUDITBEAT_YML}
 
 output.elasticsearch:
-  hosts: ["https://localhost:9200"]
+  hosts: ["https://localhost:10200"]
   transport: https
   username: elastic
   password: "{es_password}"
   ssl:
     enabled: true
-    certificate_authorities: "/etc/es_certs/http_ca.crt"
-"#
+    certificate_authorities: "{}/http_ca.crt"
+"#,
+            args.elasticsearch_share_directory.display()
         ),
     )?;
 
-    system("auditbeat setup")?;
+    system(&format!(
+        "{0}/auditbeat --path.home {0} --path.config {0} --path.data {0}/data --path.logs {0}/logs setup",
+        ab_home.display()
+    ))?;
 
     std::fs::write(
-        "/etc/auditbeat/auditbeat.yml",
+        cpaths!(ab_home, "auditbeat.yml"),
         format!(
             r#"
 {AUDITBEAT_YML}
@@ -1216,8 +1296,8 @@ output.logstash:
         ),
     )?;
 
-    system("systemctl enable auditbeat")?;
-    system("systemctl restart auditbeat")?;
+    system("systemctl enable jj-auditbeat")?;
+    system("systemctl restart jj-auditbeat")?;
 
     println!("{}", "--- Auditbeat is set up".green());
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=Audit the activities of users and processes on your system.
+Documentation=https://www.elastic.co/beats/auditbeat
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+
+UMask=0027
+Environment="GODEBUG='madvdontneed=1'"
+Environment="BEAT_LOG_OPTS="
+Environment="BEAT_CONFIG_OPTS=-c $AB_HOME/auditbeat.yml"
+Environment="BEAT_PATH_OPTS=--path.home $AB_HOME --path.config $AB_HOME --path.data $AB_HOME/data --path.logs $AB_HOME/logs"
+ExecStart=$AB_HOME/auditbeat --environment systemd $BEAT_LOG_OPTS $BEAT_CONFIG_OPTS $BEAT_PATH_OPTS
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
