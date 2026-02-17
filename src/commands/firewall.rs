@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs::OpenOptions,
     io::{Write, stdout},
     net::{IpAddr, Ipv4Addr},
@@ -10,11 +11,9 @@ use clap::{Parser, Subcommand};
 
 use crate::utils::{
     busybox::Busybox,
+    logs::ellipsize,
     nft::Nft,
-    ports::{
-        SocketType,
-        linux::{SocketState, parse_ports},
-    },
+    ports::linux::{SocketState, parse_net_tcp, parse_net_udp},
 };
 
 #[derive(Subcommand, Debug)]
@@ -67,8 +66,6 @@ struct QuickSetup {
 
 impl QuickSetup {
     fn execute(self) -> eyre::Result<()> {
-        let sockets = parse_ports()?;
-
         let mut ob: Box<dyn Write> = match self.output_file {
             None => Box::new(stdout()),
             Some(p) if *p == *"-" => Box::new(stdout()),
@@ -81,21 +78,36 @@ impl QuickSetup {
             ),
         };
 
-        let tcp_listen_ports = sockets
+        let tcp_sockets = parse_net_tcp()?;
+        let tcp_listen_ports = tcp_sockets
             .iter()
-            .filter(|p| p.socket_type == SocketType::Tcp && p.state == SocketState::LISTEN)
-            .collect::<Vec<_>>();
+            .filter(|p| p.state == SocketState::LISTEN)
+            .map(|p| (p.local_port, p))
+            .collect::<BTreeMap<_, _>>();
+
+        let estab_tcp_listen_ports = tcp_sockets
+            .iter()
+            .filter(|p| p.state == SocketState::ESTABLISHED)
+            .map(|p| {
+                (
+                    (
+                        p.local_port,
+                        p.remote_port,
+                        p.local_address,
+                        p.remote_address,
+                    ),
+                    p,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
         // shows as UNCONN in `ss`
         // https://github.com/iproute2/iproute2/blob/ca756f36a0c6d24ab60657f8d14312c17443e5f0/misc/ss.c#L1413
-        let udp_listen_ports = sockets
-            .iter()
-            .filter(|p| p.socket_type == SocketType::Udp && p.state == SocketState::CLOSE)
-            .collect::<Vec<_>>();
-
-        let estab_tcp_listen_ports = sockets
-            .iter()
-            .filter(|p| p.socket_type == SocketType::Tcp && p.state == SocketState::ESTABLISHED)
-            .collect::<Vec<_>>();
+        let udp_listen_ports = parse_net_udp()?
+            .into_iter()
+            .filter(|p| p.state == SocketState::CLOSE)
+            .map(|p| (p.local_port, p))
+            .collect::<BTreeMap<_, _>>();
 
         writeln!(ob, "table inet core_firewall")?;
         writeln!(ob, "flush table inet core_firewall\n")?;
@@ -106,21 +118,23 @@ impl QuickSetup {
         writeln!(ob, "        iifname lo accept\n")?;
 
         writeln!(ob, "        #### TCP ####")?;
-        for port in tcp_listen_ports {
+        for (local_port, port) in tcp_listen_ports {
             writeln!(
                 ob,
-                "        tcp dport {} ct state new accept",
-                port.local_port
+                "        tcp dport {:<5} ct state new accept   # {}",
+                local_port,
+                ellipsize(37, &port.cmdline.clone().unwrap_or(String::new()))
             )?;
         }
         writeln!(ob)?;
 
         writeln!(ob, "        #### UDP ####")?;
-        for port in udp_listen_ports {
+        for (local_port, port) in udp_listen_ports {
             writeln!(
                 ob,
-                "        udp dport {} ct state new accept",
-                port.local_port
+                "        udp dport {:<5} ct state new accept # {}",
+                local_port,
+                ellipsize(37, &port.cmdline.clone().unwrap_or(String::new()))
             )?;
         }
         writeln!(ob)?;
@@ -141,11 +155,13 @@ impl QuickSetup {
 
         if self.allow_established_connections {
             writeln!(ob, "\n        #### ESTABLISHED ####")?;
-            for conn in estab_tcp_listen_ports {
+            for conn in estab_tcp_listen_ports.values() {
                 writeln!(
                     ob,
-                    "        ip daddr {} tcp dport {} ct state new accept",
-                    conn.remote_address, conn.remote_port
+                    "        ip daddr {} tcp dport {} ct state new accept # {}",
+                    conn.remote_address,
+                    conn.remote_port,
+                    ellipsize(22, &conn.cmdline.clone().unwrap_or(String::new()))
                 )?;
             }
             writeln!(ob)?;
