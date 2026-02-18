@@ -66,17 +66,15 @@ impl Troubleshooter for Dns {
 
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         Ok(vec![
-            #[cfg(unix)]
             filter_check(
-                systemd_services_check(vec!["named", "bind9", "unbound", "dnsmasq"]),
+                service_check(
+                    #[cfg(unix)]
+                    ["named", "bind9", "unbound", "dnsmasq"],
+                    #[cfg(windows)]
+                    ["DNS"],
+                ),
                 self.host.is_loopback() || self.local,
                 "Cannot check systemd service on remote host",
-            ),
-            #[cfg(unix)]
-            filter_check(
-                openrc_services_check(vec!["named", "bind9", "unbound", "dnsmasq"]),
-                self.host.is_loopback() || self.local,
-                "Cannot check openrc service on remote host",
             ),
             binary_ports_check(
                 #[cfg(unix)]

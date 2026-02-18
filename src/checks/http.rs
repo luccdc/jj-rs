@@ -137,15 +137,8 @@ impl Troubleshooter for HttpTroubleshooter {
 
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         Ok(vec![
-            #[cfg(unix)]
             filter_check(
-                systemd_services_check(self.services.clone()),
-                self.host.is_loopback() || self.local,
-                "Cannot check systemd service on remote host",
-            ),
-            #[cfg(unix)]
-            filter_check(
-                openrc_services_check(self.services.clone()),
+                service_check(self.services.clone()),
                 self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),

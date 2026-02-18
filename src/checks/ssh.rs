@@ -66,15 +66,8 @@ impl Troubleshooter for SshTroubleshooter {
 
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
         Ok(vec![
-            #[cfg(unix)]
             filter_check(
-                systemd_services_check(["ssh", "sshd"]),
-                self.host.is_loopback() || self.local,
-                "Cannot check systemd service on remote host",
-            ),
-            #[cfg(unix)]
-            filter_check(
-                openrc_services_check(["sshd"]),
+                service_check(["sshd", "ssh"]),
                 self.host.is_loopback() || self.local,
                 "Cannot check openrc service on remote host",
             ),
