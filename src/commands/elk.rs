@@ -18,11 +18,11 @@ use nix::unistd::chown;
 use tar::Archive;
 use walkdir::WalkDir;
 
-use crate::utils::{busybox::Busybox, download_file, system};
-
 use crate::{
     pcre,
-    utils::{download_container::DownloadContainer, os_version::Distro, passwd, qx},
+    utils::{
+        busybox::Busybox, download_container::DownloadContainer, download_file, passwd, qx, system,
+    },
 };
 
 // Defines a variable called KIBANA_DASHBOARDS of type &'static [&'static str]
@@ -108,6 +108,10 @@ pub struct ElkBeatsArgs {
     /// Use a specific IP address for source NAT when downloading through the container
     #[arg(long, short = 'I')]
     sneaky_ip: Option<Ipv4Addr>,
+
+    /// Where to install and configure all the beats
+    #[arg(long, short = 'e', default_value = "/opt/jj-es")]
+    elastic_install_directory: PathBuf,
 }
 
 #[derive(Subcommand, Debug)]
@@ -174,8 +178,7 @@ impl super::Command for Elk {
         }
 
         if let EC::InstallBeats(args) = &self.command {
-            return Ok(());
-            // return install_beats(args);
+            return install_beats(args);
         }
 
         let busybox = Busybox::new()?;
@@ -459,6 +462,66 @@ fn extract_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
     Ok(())
 }
 
+fn apply_selinux_labels(home: &Path, path_conf: &Path, path_bin: &Path) -> eyre::Result<()> {
+    if qx("getenforce")?.1.contains("Enforcing") {
+        println!("SELinux is enabled, configuring contexts...");
+
+        std::fs::create_dir_all(cpaths!(home, "logs"))?;
+        std::fs::create_dir_all(cpaths!(home, "data"))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t usr_t {}",
+            home.display()
+        ))?;
+        system(&format!("chcon -u system_u -t usr_t -R {}", home.display()))?;
+        system(&format!("restorecon -R {}", home.display()))?;
+
+        let logs = cpaths!(home, "logs");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_log_t {}",
+            logs.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_log_t -R {}",
+            logs.display()
+        ))?;
+        system(&format!("restorecon -R {}", logs.display()))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t etc_t {}",
+            path_conf.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t etc_t -R {}",
+            path_conf.display()
+        ))?;
+        system(&format!("restorecon -R {}", path_conf.display()))?;
+
+        system(&format!(
+            "semanage fcontext -a -s system_u -t bin_t {}",
+            path_bin.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t bin_t -R {}",
+            path_bin.display()
+        ))?;
+        system(&format!("restorecon -R {}", path_bin.display()))?;
+
+        let data = cpaths!(home, "data");
+        system(&format!(
+            "semanage fcontext -a -s system_u -t var_lib_t {}",
+            data.display()
+        ))?;
+        system(&format!(
+            "chcon -u system_u -t var_lib_t -R {}",
+            data.display()
+        ))?;
+        system(&format!("restorecon -R {}", data.display()))?;
+    }
+
+    Ok(())
+}
+
 fn setup_elasticsearch(
     bb: &Busybox,
     password: &mut Option<String>,
@@ -489,7 +552,7 @@ fn setup_elasticsearch(
             "-h",
             "/nonexistent",
             "-G",
-            "elasticsearch",
+            "jj-elasticsearch",
             "-S",
             "-H",
             "-D",
@@ -497,54 +560,7 @@ fn setup_elasticsearch(
         ])
         .output()?;
 
-    if qx("getenforce")?.1.contains("Enforcing") {
-        println!("SELinux is enabled, configuring contexts...");
-
-        std::fs::create_dir_all(cpaths!(&es_home, "logs"))?;
-        std::fs::create_dir_all(cpaths!(&es_home, "data"))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t usr_t {}",
-            es_home.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t usr_t -R {}",
-            es_home.display()
-        ))?;
-        system(&format!("restorecon -R {}", es_home.display()))?;
-
-        let logs = cpaths!(es_home, "logs");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_log_t {}",
-            logs.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_log_t -R {}",
-            logs.display()
-        ))?;
-        system(&format!("restorecon -R {}", logs.display()))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t etc_t {}",
-            es_path_conf.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t etc_t -R {}",
-            es_path_conf.display()
-        ))?;
-        system(&format!("restorecon -R {}", es_path_conf.display()))?;
-
-        let data = cpaths!(es_home, "data");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_lib_t {}",
-            data.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_lib_t -R {}",
-            data.display()
-        ))?;
-        system(&format!("restorecon -R {}", data.display()))?;
-    }
+    apply_selinux_labels(&es_home, &es_path_conf, &cpaths!(es_home, "bin"))?;
 
     let elasticsearch_user = passwd::load_users("jj-elasticsearch")
         .ok()
@@ -765,54 +781,7 @@ fn setup_kibana(
         ])
         .output()?;
 
-    if qx("getenforce")?.1.contains("Enforcing") {
-        println!("SELinux is enabled, configuring contexts...");
-
-        std::fs::create_dir_all(cpaths!(kbn_home, "logs"))?;
-        std::fs::create_dir_all(cpaths!(kbn_home, "data"))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t usr_t {}",
-            kbn_home.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t usr_t -R {}",
-            kbn_home.display()
-        ))?;
-        system(&format!("restorecon -R {}", kbn_home.display()))?;
-
-        let logs = cpaths!(kbn_home, "logs");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_log_t {}",
-            logs.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_log_t -R {}",
-            logs.display()
-        ))?;
-        system(&format!("restorecon -R {}", logs.display()))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t etc_t {}",
-            kbn_path_conf.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t etc_t -R {}",
-            kbn_path_conf.display()
-        ))?;
-        system(&format!("restorecon -R {}", kbn_path_conf.display()))?;
-
-        let data = cpaths!(kbn_home, "data");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_lib_t {}",
-            data.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_lib_t -R {}",
-            data.display()
-        ))?;
-        system(&format!("restorecon -R {}", data.display()))?;
-    }
+    apply_selinux_labels(&kbn_home, &kbn_path_conf, &cpaths!(kbn_home, "bin"))?;
 
     let kibana_user = passwd::load_users("jj-kibana")
         .ok()
@@ -888,7 +857,8 @@ fn setup_kibana(
 
     std::io::stderr().write_all(&keys.stderr)?;
 
-    let keys_regex = regex::Regex::new("(?ms)(^xpack\\.[^:]+: [^\n]+)").unwrap();
+    let keys_regex =
+        regex::Regex::new("(?ms)(^xpack\\.[^:]+: [^\n]+)").expect("Statically tested regex failed");
     let keys = String::from_utf8_lossy(&keys.stdout);
     let keys = keys_regex
         .captures_iter(&keys)
@@ -1021,54 +991,7 @@ fn setup_logstash(
         ])
         .output()?;
 
-    if qx("getenforce")?.1.contains("Enforcing") {
-        println!("SELinux is enabled, configuring contexts...");
-
-        std::fs::create_dir_all(cpaths!(ls_home, "logs"))?;
-        std::fs::create_dir_all(cpaths!(ls_home, "data"))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t usr_t {}",
-            ls_home.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t usr_t -R {}",
-            ls_home.display()
-        ))?;
-        system(&format!("restorecon -R {}", ls_home.display()))?;
-
-        let logs = cpaths!(ls_home, "logs");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_log_t {}",
-            logs.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_log_t -R {}",
-            logs.display()
-        ))?;
-        system(&format!("restorecon -R {}", logs.display()))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t etc_t {}",
-            ls_path_conf.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t etc_t -R {}",
-            ls_path_conf.display()
-        ))?;
-        system(&format!("restorecon -R {}", ls_path_conf.display()))?;
-
-        let data = cpaths!(ls_home, "data");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_lib_t {}",
-            data.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_lib_t -R {}",
-            data.display()
-        ))?;
-        system(&format!("restorecon -R {}", data.display()))?;
-    }
+    apply_selinux_labels(&ls_home, &ls_path_conf, &cpaths!(ls_home, "bin"))?;
 
     let logstash_user = passwd::load_users("jj-logstash")
         .ok()
@@ -1204,63 +1127,11 @@ fn setup_auditbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> e
 
     let ab_home = cpaths!(args.elastic_install_directory, "auditbeat");
 
-    if qx("getenforce")?.1.contains("Enforcing") {
-        println!("SELinux is enabled, configuring contexts...");
-        let ab_path_conf = cpaths!(ab_home, "auditbeat.yml");
-
-        std::fs::create_dir_all(cpaths!(ab_home, "logs"))?;
-        std::fs::create_dir_all(cpaths!(ab_home, "data"))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t usr_t {}",
-            ab_home.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t usr_t -R {}",
-            ab_home.display()
-        ))?;
-        system(&format!("restorecon -R {}", ab_home.display()))?;
-
-        let logs = cpaths!(ab_home, "logs");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_log_t {}",
-            logs.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_log_t -R {}",
-            logs.display()
-        ))?;
-        system(&format!("restorecon -R {}", logs.display()))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t etc_t {}",
-            ab_path_conf.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t etc_t -R {}",
-            ab_path_conf.display()
-        ))?;
-        system(&format!("restorecon -R {}", ab_path_conf.display()))?;
-
-        let data = cpaths!(ab_home, "data");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_lib_t {}",
-            data.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_lib_t -R {}",
-            data.display()
-        ))?;
-        system(&format!("restorecon -R {}", data.display()))?;
-
-        let bin = cpaths!(ab_home, "auditbeat");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t bin_t {}",
-            bin.display()
-        ))?;
-        system(&format!("chcon -u system_u -t bin_t -R {}", bin.display()))?;
-        system(&format!("restorecon -R {}", bin.display()))?;
-    }
+    apply_selinux_labels(
+        &ab_home,
+        &cpaths!(ab_home, "auditbeat.yml"),
+        &cpaths!(ab_home, "auditbeat"),
+    )?;
 
     std::fs::write(
         cpaths!(ab_home, "auditbeat.yml"),
@@ -1322,63 +1193,11 @@ fn setup_filebeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> ey
 
     let fb_home = cpaths!(args.elastic_install_directory, "filebeat");
 
-    if qx("getenforce")?.1.contains("Enforcing") {
-        println!("SELinux is enabled, configuring contexts...");
-        let fb_path_conf = cpaths!(fb_home, "filebeat.yml");
-
-        std::fs::create_dir_all(cpaths!(fb_home, "logs"))?;
-        std::fs::create_dir_all(cpaths!(fb_home, "data"))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t usr_t {}",
-            fb_home.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t usr_t -R {}",
-            fb_home.display()
-        ))?;
-        system(&format!("restorecon -R {}", fb_home.display()))?;
-
-        let logs = cpaths!(fb_home, "logs");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_log_t {}",
-            logs.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_log_t -R {}",
-            logs.display()
-        ))?;
-        system(&format!("restorecon -R {}", logs.display()))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t etc_t {}",
-            fb_path_conf.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t etc_t -R {}",
-            fb_path_conf.display()
-        ))?;
-        system(&format!("restorecon -R {}", fb_path_conf.display()))?;
-
-        let data = cpaths!(fb_home, "data");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_lib_t {}",
-            data.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_lib_t -R {}",
-            data.display()
-        ))?;
-        system(&format!("restorecon -R {}", data.display()))?;
-
-        let bin = cpaths!(fb_home, "filebeat");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t bin_t {}",
-            bin.display()
-        ))?;
-        system(&format!("chcon -u system_u -t bin_t -R {}", bin.display()))?;
-        system(&format!("restorecon -R {}", bin.display()))?;
-    }
+    apply_selinux_labels(
+        &fb_home,
+        &cpaths!(fb_home, "filebeat.yml"),
+        &cpaths!(fb_home, "filebeat"),
+    )?;
 
     std::fs::write(
         cpaths!(fb_home, "filebeat.yml"),
@@ -1486,63 +1305,11 @@ fn setup_packetbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> 
 
     let pb_home = cpaths!(args.elastic_install_directory, "packetbeat");
 
-    if qx("getenforce")?.1.contains("Enforcing") {
-        println!("SELinux is enabled, configuring contexts...");
-        let pb_path_conf = cpaths!(pb_home, "packetbeat.yml");
-
-        std::fs::create_dir_all(cpaths!(pb_home, "logs"))?;
-        std::fs::create_dir_all(cpaths!(pb_home, "data"))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t usr_t {}",
-            pb_home.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t usr_t -R {}",
-            pb_home.display()
-        ))?;
-        system(&format!("restorecon -R {}", pb_home.display()))?;
-
-        let logs = cpaths!(pb_home, "logs");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_log_t {}",
-            logs.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_log_t -R {}",
-            logs.display()
-        ))?;
-        system(&format!("restorecon -R {}", logs.display()))?;
-
-        system(&format!(
-            "semanage fcontext -a -s system_u -t etc_t {}",
-            pb_path_conf.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t etc_t -R {}",
-            pb_path_conf.display()
-        ))?;
-        system(&format!("restorecon -R {}", pb_path_conf.display()))?;
-
-        let data = cpaths!(pb_home, "data");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t var_lib_t {}",
-            data.display()
-        ))?;
-        system(&format!(
-            "chcon -u system_u -t var_lib_t -R {}",
-            data.display()
-        ))?;
-        system(&format!("restorecon -R {}", data.display()))?;
-
-        let bin = cpaths!(pb_home, "packetbeat");
-        system(&format!(
-            "semanage fcontext -a -s system_u -t bin_t {}",
-            bin.display()
-        ))?;
-        system(&format!("chcon -u system_u -t bin_t -R {}", bin.display()))?;
-        system(&format!("restorecon -R {}", bin.display()))?;
-    }
+    apply_selinux_labels(
+        &pb_home,
+        &cpaths!(pb_home, "packetbeat.yml"),
+        &cpaths!(pb_home, "packetbeat"),
+    )?;
 
     std::fs::write(
         cpaths!(pb_home, "packetbeat.yml"),
@@ -1588,50 +1355,53 @@ output.logstash:
     Ok(())
 }
 
-fn download_beats(download_shell: bool, distro: &Distro, args: &ElkBeatsArgs) -> eyre::Result<()> {
+fn untar_beat(
+    src_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
+    dest_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
+) -> eyre::Result<()> {
+    std::fs::create_dir_all(&dest_path)?;
+    let backing_file = File::open(src_path).context("Could not open file for decompression")?;
+    let buffer = BufReader::new(backing_file);
+    let decompress = GzDecoder::new(buffer);
+    let mut archive = Archive::new(decompress);
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        if let Some(parent) = entry.path()?.components().next()
+            && let Ok(sub_path) = entry.path()?.strip_prefix(parent)
+        {
+            if let Some(parent) = sub_path.parent() {
+                std::fs::create_dir_all(cpaths!(dest_path, parent))?;
+            }
+            entry.unpack(cpaths!(dest_path, sub_path))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn download_beats(download_shell: bool, args: &ElkBeatsArgs) -> eyre::Result<()> {
     println!("{}", "--- Downloading beats...".green());
 
     let mut download_threads = vec![];
 
-    if distro.is_deb_based() {
-        for beat in ["auditbeat", "filebeat", "packetbeat"] {
-            let args = args.clone();
-            let download_package = move || {
-                let res = download_file(
-                    &format!(
-                        "http://{}:{}/{}.deb",
-                        args.elk_ip, args.elk_share_port, beat
-                    ),
-                    format!("/tmp/{beat}.deb"),
-                );
-                println!("Done downloading {beat}!");
-                res
-            };
-            if download_shell {
-                download_package()?;
-            } else {
-                download_threads.push(thread::spawn(download_package));
-            }
-        }
-    } else {
-        for beat in ["auditbeat", "filebeat", "packetbeat"] {
-            let args = args.clone();
-            let download_package = move || {
-                let res = download_file(
-                    &format!(
-                        "http://{}:{}/{}.rpm",
-                        args.elk_ip, args.elk_share_port, beat
-                    ),
-                    format!("/tmp/{beat}.rpm"),
-                );
-                println!("Done downloading {beat}!");
-                res
-            };
-            if download_shell {
-                download_package()?;
-            } else {
-                download_threads.push(thread::spawn(download_package));
-            }
+    for beat in ["auditbeat", "filebeat", "packetbeat"] {
+        let args = args.clone();
+        let download_package = move || {
+            let res = download_file(
+                &format!(
+                    "http://{}:{}/{}.tar.gz",
+                    args.elk_ip, args.elk_share_port, beat
+                ),
+                format!("/tmp/{beat}.tar.gz"),
+            );
+            println!("Done downloading {beat}!");
+            res
+        };
+        if download_shell {
+            download_package()?;
+        } else {
+            download_threads.push(thread::spawn(download_package));
         }
     }
 
@@ -1650,83 +1420,141 @@ fn download_beats(download_shell: bool, distro: &Distro, args: &ElkBeatsArgs) ->
     Ok(())
 }
 
-// fn install_beats(args: &ElkBeatsArgs) -> eyre::Result<()> {
-//     if args.use_download_shell {
-//         let container = DownloadContainer::new(None, args.sneaky_ip)?;
+fn install_beats(args: &ElkBeatsArgs) -> eyre::Result<()> {
+    if args.use_download_shell {
+        let container = DownloadContainer::new(None, args.sneaky_ip)?;
 
-//         container.run(|| download_beats(true, args))??;
-//     } else {
-//         download_beats(false, args)?;
-//     }
+        container.run(|| download_beats(true, args))??;
+    } else {
+        download_beats(false, args)?;
+    }
 
-//     println!("--- Done downloading beats packages! Installing beats packages...");
+    println!("--- Done downloading beats packages! Installing beats packages...");
 
-//     for beat in ["auditbeat", "filebeat", "packetbeat"] {
-//         if distro.is_deb_based() {
-//             system(&format!("dpkg -i /tmp/{beat}.deb"))?;
-//         } else {
-//             system(&format!("rpm -i /tmp/{beat}.rpm"))?;
-//         }
-//     }
+    let mut threads = Vec::new();
 
-//     println!(
-//         "{}",
-//         "--- Done installing beats! Configuring now...".green()
-//     );
+    for pkg in ["filebeat", "auditbeat", "packetbeat"] {
+        let src_path = cpaths!("/tmp", format!("{pkg}.tar.gz"));
+        let dest_path = cpaths!(args.elastic_install_directory, pkg);
 
-//     std::fs::write(
-//         "/etc/auditbeat/auditbeat.yml",
-//         format!(
-//             r#"
-// {}
+        threads.push(thread::spawn(move || -> eyre::Result<()> {
+            untar_beat(src_path, dest_path)?;
+            println!("Unpacked {pkg}!");
 
-// output.logstash:
-//   hosts: ["{}:5044"]
-// "#,
-//             AUDITBEAT_YML, args.elk_ip
-//         ),
-//     )?;
+            Ok(())
+        }));
+    }
 
-//     std::fs::write(
-//         "/etc/filebeat/filebeat.yml",
-//         format!(
-//             r#"
-// {}
+    for thread in threads {
+        match thread.join() {
+            Ok(r) => r?,
+            Err(_) => {
+                eprintln!(
+                    "{}",
+                    "!!! Could not join download thread due to panic!".red()
+                );
+            }
+        }
+    }
 
-// output.logstash:
-//   hosts: ["{}:5044"]
-// "#,
-//             FILEBEAT_YML, args.elk_ip
-//         ),
-//     )?;
+    for pkg in ["filebeat", "auditbeat", "packetbeat"] {
+        let dest_path = cpaths!(args.elastic_install_directory, pkg);
 
-//     std::fs::write(
-//         "/etc/packetbeat/packetbeat.yml",
-//         format!(
-//             r#"
-// {}
+        apply_selinux_labels(
+            &dest_path,
+            &cpaths!(dest_path, &format!("{pkg}.yml")),
+            &cpaths!(dest_path, pkg),
+        )?;
+    }
 
-// output.logstash:
-//   hosts: ["{}:5044"]
-// "#,
-//             PACKETBEAT_YML, args.elk_ip
-//         ),
-//     )?;
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-auditbeat.service",
+        AUDITBEAT_SERVICE.replace(
+            "$AB_HOME",
+            &format!("{}/auditbeat", args.elastic_install_directory.display()),
+        ),
+    )
+    .context("Could not write systemd service for auditbeat")?;
 
-//     system("systemctl enable auditbeat")?;
-//     system("systemctl restart auditbeat")?;
-//     system("systemctl enable filebeat")?;
-//     system("systemctl restart filebeat")?;
-//     system("systemctl enable packetbeat")?;
-//     system("systemctl restart packetbeat")?;
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-filebeat.service",
+        FILEBEAT_SERVICE.replace(
+            "$FB_HOME",
+            &format!("{}/filebeat", args.elastic_install_directory.display()),
+        ),
+    )
+    .context("Could not write systemd service for filebeat")?;
 
-//     println!("{}", "--- Done configuring beats! Verifying output".green());
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-packetbeat.service",
+        PACKETBEAT_SERVICE.replace(
+            "$PB_HOME",
+            &format!("{}/packetbeat", args.elastic_install_directory.display()),
+        ),
+    )
+    .context("Could not write systemd service for packetbeat")?;
 
-//     system("auditbeat test output")?;
-//     system("filebeat test output")?;
-//     system("packetbeat test output")?;
+    println!(
+        "{}",
+        "--- Done installing beats! Configuring now...".green()
+    );
 
-//     println!("--- All set up!");
+    std::fs::write(
+        cpaths!(args.elastic_install_directory, "auditbeat", "auditbeat.yml"),
+        format!(
+            r#"
+{}
 
-//     Ok(())
-// }
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+            AUDITBEAT_YML, args.elk_ip
+        ),
+    )?;
+
+    std::fs::write(
+        cpaths!(args.elastic_install_directory, "filebeat", "filebeat.yml"),
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+            FILEBEAT_YML, args.elk_ip
+        ),
+    )?;
+
+    std::fs::write(
+        cpaths!(
+            args.elastic_install_directory,
+            "packetbeat",
+            "packetbeat.yml"
+        ),
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+            PACKETBEAT_YML, args.elk_ip
+        ),
+    )?;
+
+    println!("{}", "--- Done configuring beats! Verifying output".green());
+
+    for beat in ["auditbeat", "packetbeat", "filebeat"] {
+        Command::new(cpaths!(args.elastic_install_directory, beat, beat))
+            .current_dir(cpaths!(args.elastic_install_directory, beat))
+            .args(["test", "output"])
+            .spawn()?
+            .wait()?;
+        system(&format!("systemctl enable jj-{beat}"))?;
+        system(&format!("systemctl restart jj-{beat}"))?;
+    }
+
+    println!("--- All set up!");
+
+    Ok(())
+}
