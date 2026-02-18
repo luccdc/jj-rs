@@ -741,74 +741,73 @@ fn handle_wizard<'scope, 'env: 'scope>(
                         return true;
                     };
 
-                    let uri = uri.input().to_owned();
+                    if *auto_setup {
+                        tui.check_setup_task = {
+                            let host = host.clone();
+                            let port = port.clone();
+                            let uri = uri.input().to_owned();
+                            Some(Box::pin(async move {
+                                let client = reqwest::Client::new();
 
-                    tui.check_setup_task = {
-                        let host = host.clone();
-                        let port = port.clone();
-                        let uri = uri.clone();
-                        Some(Box::pin(async move {
-                            let client = reqwest::Client::new();
+                                let copy1 = client
+                                    .get(format!(
+                                        "http://{host}:{port}{}{uri}",
+                                        if uri.starts_with('/') { "" } else { "/" }
+                                    ))
+                                    .send()
+                                    .await?;
 
-                            let copy1 = client
-                                .get(format!(
-                                    "http://{host}:{port}{}{uri}",
-                                    if uri.starts_with('/') { "" } else { "/" }
-                                ))
-                                .send()
-                                .await?;
+                                let status = copy1.status();
+                                let copy1 = copy1.text().await?;
 
-                            let status = copy1.status();
-                            let copy1 = copy1.text().await?;
+                                let file_name = format!("check-{host}-{port}-reference.html");
 
-                            let file_name = format!("check-{host}-{port}-reference.html");
+                                std::fs::write(&file_name, &copy1)?;
 
-                            std::fs::write(&file_name, &copy1)?;
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                                let copy2 = client
+                                    .get(format!(
+                                        "http://{host}:{port}{}{uri}",
+                                        if uri.starts_with('/') { "" } else { "/" }
+                                    ))
+                                    .send()
+                                    .await?
+                                    .text()
+                                    .await?;
 
-                            let copy2 = client
-                                .get(format!(
-                                    "http://{host}:{port}{}{uri}",
-                                    if uri.starts_with('/') { "" } else { "/" }
-                                ))
-                                .send()
-                                .await?
-                                .text()
-                                .await?;
+                                let difference_count: u32 = {
+                                    use imara_diff::{Algorithm, Diff, InternedInput};
 
-                            let difference_count: u32 = {
-                                use imara_diff::{Algorithm, Diff, InternedInput};
+                                    let input = InternedInput::new(&*copy1, &*copy2);
+                                    let diff = Diff::compute(Algorithm::Histogram, &input);
 
-                                let input = InternedInput::new(&*copy1, &*copy2);
-                                let diff = Diff::compute(Algorithm::Histogram, &input);
+                                    diff.hunks()
+                                        .map(|hunk| {
+                                            (hunk.before.end - hunk.before.start)
+                                                + (hunk.after.end - hunk.after.start)
+                                        })
+                                        .sum()
+                                };
 
-                                diff.hunks()
-                                    .map(|hunk| {
-                                        (hunk.before.end - hunk.before.start)
-                                            + (hunk.after.end - hunk.after.start)
-                                    })
-                                    .sum()
-                            };
+                                let pwd = std::env::current_dir()?;
+                                check_type.insert(
+                                    "reference_file".into(),
+                                    format!("{}/{file_name}", pwd.display()).into(),
+                                );
+                                check_type.insert(
+                                    "reference_difference_count".into(),
+                                    difference_count.into(),
+                                );
+                                check_type.insert("valid_status".into(), status.as_u16().into());
 
-                            let pwd = std::env::current_dir()?;
-                            check_type.insert(
-                                "reference_file".into(),
-                                format!("{}/{file_name}", pwd.display()).into(),
-                            );
-                            check_type.insert(
-                                "reference_difference_count".into(),
-                                difference_count.into(),
-                            );
-                            check_type.insert("valid_status".into(), status.as_u16().into());
-
-                            let check_fields = (&check_type)
-                                .into_iter()
-                                .map(|(key, value)| {
-                                    let check_type = check_type.clone();
-                                    let key = key.to_owned();
-                                    let is_str = value.is_string();
-                                    (
+                                let check_fields = (&check_type)
+                                    .into_iter()
+                                    .map(|(key, value)| {
+                                        let check_type = check_type.clone();
+                                        let key = key.to_owned();
+                                        let is_str = value.is_string();
+                                        (
                                         key.clone(),
                                         ErrorTextInputState::new(Box::new(
                                             move |inp: &str| -> Result<serde_json::Value, String> {
@@ -845,16 +844,66 @@ fn handle_wizard<'scope, 'env: 'scope>(
                                             },
                                         ),
                                     )
-                                })
-                                .collect();
+                                    })
+                                    .collect();
 
-                            Ok(Box::new(|tui: &mut Tui<'_>| {
-                                tui.add_check_tab.wizard_state = Some(
-                                    AddCheckWizardState::Generalize(0, 0, "http", check_fields),
-                                );
-                            }) as Box<_>)
-                        }))
-                    };
+                                Ok(Box::new(|tui: &mut Tui<'_>| {
+                                    tui.add_check_tab.wizard_state = Some(
+                                        AddCheckWizardState::Generalize(0, 0, "http", check_fields),
+                                    );
+                                }) as Box<_>)
+                            }))
+                        };
+                    } else {
+                        let check_fields = (&check_type)
+                            .into_iter()
+                            .map(|(key, value)| {
+                                let check_type = check_type.clone();
+                                let key = key.to_owned();
+                                let is_str = value.is_string();
+                                (
+                                    key.clone(),
+                                    ErrorTextInputState::new(Box::new(
+                                        move |inp: &str| -> Result<serde_json::Value, String> {
+                                            let parsed: serde_json::Value = if is_str {
+                                                serde_json::Value::String(inp.to_owned())
+                                            } else {
+                                                serde_json::from_str(&inp)
+                                                    .map_err(|e| format!("{e}"))?
+                                            };
+
+                                            let mut check_type = check_type.clone();
+                                            check_type.insert(key.clone(), parsed.clone());
+
+                                            serde_json::from_value::<
+                                                crate::checks::http::HttpTroubleshooter,
+                                            >(
+                                                serde_json::Value::Object(check_type)
+                                            )
+                                            .map(|_| parsed)
+                                            .map_err(|e| format!("{e}"))
+                                        },
+                                    )
+                                        as Box<
+                                            dyn for<'a> Fn(
+                                                &'a str,
+                                            )
+                                                -> Result<serde_json::Value, String>,
+                                        >)
+                                    .set_input(
+                                        if let serde_json::Value::String(v) = value {
+                                            v.clone()
+                                        } else {
+                                            serde_json::to_string(&value).unwrap_or_default()
+                                        },
+                                    ),
+                                )
+                            })
+                            .collect();
+
+                        tui.add_check_tab.wizard_state =
+                            Some(AddCheckWizardState::Generalize(0, 0, "http", check_fields));
+                    }
 
                     tui.buffer.clear();
                     return true;
