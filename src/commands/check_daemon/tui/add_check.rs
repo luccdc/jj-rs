@@ -538,17 +538,15 @@ fn handle_wizard<'scope, 'env: 'scope>(
             }
 
             if *s == 1 {
-                if host.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                host.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 2 {
-                if name.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                name.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 0 {
@@ -688,24 +686,21 @@ fn handle_wizard<'scope, 'env: 'scope>(
             }
 
             if *s == 1 {
-                if host.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                host.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 2 {
-                if port.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                port.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 3 {
-                if uri.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                uri.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 4
@@ -979,17 +974,15 @@ fn handle_wizard<'scope, 'env: 'scope>(
             }
 
             if *s == 1 {
-                if host.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                host.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 2 {
-                if user.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                user.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 0 {
@@ -1176,10 +1169,9 @@ fn handle_wizard<'scope, 'env: 'scope>(
                 tui.buffer.clear();
                 return true;
             } else if let Some((_, fields)) = fields.get_mut(*s - 1) {
-                if fields.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                fields.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if is_generic_up(key) {
@@ -1249,17 +1241,15 @@ fn handle_wizard<'scope, 'env: 'scope>(
             }
 
             if *s == 1 {
-                if host.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                host.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 2 {
-                if name.handle_keybind(*key) {
-                    tui.buffer.clear();
-                    return true;
-                }
+                name.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
             }
 
             if *s == 0 {
