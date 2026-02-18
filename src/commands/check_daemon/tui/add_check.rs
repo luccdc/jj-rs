@@ -37,7 +37,7 @@ type ETIS<T> = ErrorTextInputState<T, Box<dyn for<'a> Fn(&'a str) -> Result<T, S
 enum AddCheckWizardState {
     DnsStage1(usize, ETIS<Ipv4Addr>, TextInputState),
     SshStage1(usize, ETIS<Ipv4Addr>, TextInputState),
-    HttpStage1(usize, ETIS<Ipv4Addr>, ETIS<u16>, TextInputState),
+    HttpStage1(usize, ETIS<Ipv4Addr>, ETIS<u16>, TextInputState, bool),
     Generalize(
         usize,
         usize,
@@ -152,14 +152,15 @@ pub fn render(tui: &mut Tui<'_>, frame: &mut Frame, area: Rect, selected: bool) 
                 TextInput::default().set_cursor_position(query_block, frame, name);
             }
         }
-        Some(AddCheckWizardState::HttpStage1(s, host, port, uri)) => {
+        Some(AddCheckWizardState::HttpStage1(s, host, port, uri, auto_setup)) => {
             frame.render_widget(Block::bordered().title("HTTP Check Setup Wizard"), area);
 
-            let [submit, host_block, port_block, uri_block] = Layout::vertical([
+            let [submit, host_block, port_block, uri_block, auto_setup_block] = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(3),
+                Constraint::Length(1),
             ])
             .areas(area.inner(Margin {
                 vertical: 1,
@@ -220,6 +221,19 @@ pub fn render(tui: &mut Tui<'_>, frame: &mut Frame, area: Rect, selected: bool) 
             if *s == 3 && selected {
                 TextInput::default().set_cursor_position(uri_block, frame, uri);
             }
+
+            frame.render_widget(
+                Line::raw(&format!(
+                    "[{}] Auto setup",
+                    if *auto_setup { "X" } else { " " }
+                ))
+                .style(if *s == 4 {
+                    Style::new().fg(Color::Yellow)
+                } else {
+                    Style::new()
+                }),
+                auto_setup_block,
+            );
         }
         Some(AddCheckWizardState::SshStage1(s, host, username)) => {
             frame.render_widget(Block::bordered().title("SSH Check Setup Wizard"), area);
@@ -431,6 +445,7 @@ pub async fn handle_keypress<'scope, 'env: 'scope>(
                     .set_input("127.0.0.1".to_string()),
                 ErrorTextInputState::new(port_parser.clone() as Box<_>).set_input("80".to_string()),
                 TextInputState::default().set_input("/".to_string()),
+                true,
             )),
             _ => None,
         };
@@ -618,22 +633,22 @@ fn handle_wizard<'scope, 'env: 'scope>(
             tui.buffer.clear();
             false
         }
-        Some(AddCheckWizardState::HttpStage1(s, host, port, uri)) => {
+        Some(AddCheckWizardState::HttpStage1(s, host, port, uri, auto_setup)) => {
             if let KeyCode::Char('n') = key.code
                 && key.modifiers == KeyModifiers::CONTROL
             {
-                *s = (*s + 1).min(3);
+                *s = (*s + 1).min(5);
                 tui.buffer.clear();
                 return true;
             } else if let KeyCode::Down = key.code {
-                *s = (*s + 1).min(3);
+                *s = (*s + 1).min(5);
                 tui.buffer.clear();
                 return true;
             }
 
             if let KeyCode::BackTab = key.code {
                 if *s == 0 {
-                    *s = 3;
+                    *s = 5;
                 } else {
                     *s = *s - 1;
                 }
@@ -641,7 +656,7 @@ fn handle_wizard<'scope, 'env: 'scope>(
                 return true;
             } else if let KeyCode::Tab = key.code {
                 *s = *s + 1;
-                if *s == 4 {
+                if *s == 6 {
                     *s = 0;
                 }
                 tui.buffer.clear();
@@ -693,8 +708,18 @@ fn handle_wizard<'scope, 'env: 'scope>(
                 }
             }
 
+            if *s == 4
+                && let KeyCode::Char(' ') | KeyCode::Enter = key.code
+            {
+                *auto_setup = !*auto_setup;
+                tui.buffer.clear();
+                return true;
+            }
+
             if *s == 0 {
-                if let KeyCode::Char(' ') | KeyCode::Enter = key.code {
+                if let KeyCode::Char(' ') | KeyCode::Enter = key.code
+                    && tui.check_setup_task.is_none()
+                {
                     let Ok(host) = host.parse() else {
                         tui.buffer.clear();
                         return true;
@@ -704,7 +729,7 @@ fn handle_wizard<'scope, 'env: 'scope>(
                         return true;
                     };
 
-                    let Ok(serde_json::Value::Object(check_type)) =
+                    let Ok(serde_json::Value::Object(mut check_type)) =
                         serde_json::to_value(&crate::checks::http::HttpTroubleshooter {
                             host,
                             port,
@@ -716,57 +741,125 @@ fn handle_wizard<'scope, 'env: 'scope>(
                         return true;
                     };
 
-                    let check_fields = (&check_type)
-                        .into_iter()
-                        .map(|(key, value)| {
-                            let check_type = check_type.clone();
-                            let key = key.to_owned();
-                            let is_str = value.is_string();
-                            (
-                                key.clone(),
-                                ErrorTextInputState::new(Box::new(
-                                    move |inp: &str| -> Result<serde_json::Value, String> {
-                                        let parsed: serde_json::Value = if is_str {
-                                            serde_json::Value::String(inp.to_owned())
-                                        } else {
-                                            serde_json::from_str(&inp)
-                                                .map_err(|e| format!("{e}"))?
-                                        };
+                    let uri = uri.input().to_owned();
 
-                                        let mut check_type = check_type.clone();
-                                        check_type.insert(key.clone(), parsed.clone());
+                    tui.check_setup_task = {
+                        let host = host.clone();
+                        let port = port.clone();
+                        let uri = uri.clone();
+                        Some(Box::pin(async move {
+                            let client = reqwest::Client::new();
 
-                                        serde_json::from_value::<
-                                            crate::checks::http::HttpTroubleshooter,
-                                        >(
-                                            serde_json::Value::Object(check_type)
+                            let copy1 = client
+                                .get(format!(
+                                    "http://{host}:{port}{}{uri}",
+                                    if uri.starts_with('/') { "" } else { "/" }
+                                ))
+                                .send()
+                                .await?;
+
+                            let status = copy1.status();
+                            let copy1 = copy1.text().await?;
+
+                            let file_name = format!("check-{host}-{port}-reference.html");
+
+                            std::fs::write(&file_name, &copy1)?;
+
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                            let copy2 = client
+                                .get(format!(
+                                    "http://{host}:{port}{}{uri}",
+                                    if uri.starts_with('/') { "" } else { "/" }
+                                ))
+                                .send()
+                                .await?
+                                .text()
+                                .await?;
+
+                            let difference_count: u32 = {
+                                use imara_diff::{Algorithm, Diff, InternedInput};
+
+                                let input = InternedInput::new(&*copy1, &*copy2);
+                                let diff = Diff::compute(Algorithm::Histogram, &input);
+
+                                diff.hunks()
+                                    .map(|hunk| {
+                                        (hunk.before.end - hunk.before.start)
+                                            + (hunk.after.end - hunk.after.start)
+                                    })
+                                    .sum()
+                            };
+
+                            let pwd = std::env::current_dir()?;
+                            check_type.insert(
+                                "reference_file".into(),
+                                format!("{}/{file_name}", pwd.display()).into(),
+                            );
+                            check_type.insert(
+                                "reference_difference_count".into(),
+                                difference_count.into(),
+                            );
+                            check_type.insert("valid_status".into(), status.as_u16().into());
+
+                            let check_fields = (&check_type)
+                                .into_iter()
+                                .map(|(key, value)| {
+                                    let check_type = check_type.clone();
+                                    let key = key.to_owned();
+                                    let is_str = value.is_string();
+                                    (
+                                        key.clone(),
+                                        ErrorTextInputState::new(Box::new(
+                                            move |inp: &str| -> Result<serde_json::Value, String> {
+                                                let parsed: serde_json::Value = if is_str {
+                                                    serde_json::Value::String(inp.to_owned())
+                                                } else {
+                                                    serde_json::from_str(&inp)
+                                                        .map_err(|e| format!("{e}"))?
+                                                };
+
+                                                let mut check_type = check_type.clone();
+                                                check_type.insert(key.clone(), parsed.clone());
+
+                                                serde_json::from_value::<
+                                                    crate::checks::http::HttpTroubleshooter,
+                                                >(
+                                                    serde_json::Value::Object(check_type)
+                                                )
+                                                .map(|_| parsed)
+                                                .map_err(|e| format!("{e}"))
+                                            },
                                         )
-                                        .map(|_| parsed)
-                                        .map_err(|e| format!("{e}"))
-                                    },
-                                )
-                                    as Box<
-                                        dyn for<'a> Fn(
-                                            &'a str,
-                                        )
-                                            -> Result<serde_json::Value, String>,
-                                    >)
-                                .set_input(
-                                    if let serde_json::Value::String(v) = value {
-                                        v.clone()
-                                    } else {
-                                        serde_json::to_string(&value).unwrap_or_default()
-                                    },
-                                ),
-                            )
-                        })
-                        .collect();
+                                            as Box<
+                                                dyn for<'a> Fn(
+                                                    &'a str,
+                                                )
+                                                    -> Result<serde_json::Value, String>,
+                                            >)
+                                        .set_input(
+                                            if let serde_json::Value::String(v) = value {
+                                                v.clone()
+                                            } else {
+                                                serde_json::to_string(&value).unwrap_or_default()
+                                            },
+                                        ),
+                                    )
+                                })
+                                .collect();
 
-                    tui.add_check_tab.wizard_state =
-                        Some(AddCheckWizardState::Generalize(0, 0, "http", check_fields));
+                            Ok(Box::new(|tui: &mut Tui<'_>| {
+                                tui.add_check_tab.wizard_state = Some(
+                                    AddCheckWizardState::Generalize(0, 0, "http", check_fields),
+                                );
+                            }) as Box<_>)
+                        }))
+                    };
 
                     tui.buffer.clear();
                     return true;
+                } else if let KeyCode::Char(' ') | KeyCode::Enter = key.code {
+                    tui.check_setup_task = None;
                 }
             }
 

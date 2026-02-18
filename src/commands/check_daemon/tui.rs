@@ -89,7 +89,13 @@ pub async fn main<'scope, 'env: 'scope>(
     };
 
     let mut empty_setup_task = Box::pin(futures::future::pending())
-        as Pin<Box<dyn Future<Output = Box<dyn for<'a, 'b> FnOnce(&'a mut Tui<'b>) -> ()>>>>;
+        as Pin<
+            Box<
+                dyn Future<
+                    Output = eyre::Result<Box<dyn for<'a, 'b> FnOnce(&'a mut Tui<'b>) -> ()>>,
+                >,
+            >,
+        >;
 
     loop {
         let start = Utc::now();
@@ -125,7 +131,9 @@ pub async fn main<'scope, 'env: 'scope>(
             }
             callback = tui_state.check_setup_task.as_mut().unwrap_or(&mut empty_setup_task) => {
                 tui_state.check_setup_task = None;
-                (callback)(&mut tui_state);
+                if let Ok(callback) = callback {
+                    (callback)(&mut tui_state);
+                }
             }
             _ = &mut ctrl_c => {
                 break;
@@ -552,6 +560,13 @@ struct Tui<'parent> {
     add_check_tab: add_check::AddCheckState,
     previous_render_time: usize,
     buffer: String,
-    check_setup_task:
-        Option<Pin<Box<dyn Future<Output = Box<dyn for<'a, 'b> FnOnce(&'a mut Tui<'b>) -> ()>>>>>,
+    check_setup_task: Option<
+        Pin<
+            Box<
+                dyn Future<
+                    Output = eyre::Result<Box<dyn for<'a, 'b> FnOnce(&'a mut Tui<'b>) -> ()>>,
+                >,
+            >,
+        >,
+    >,
 }
