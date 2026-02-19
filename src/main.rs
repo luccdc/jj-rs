@@ -61,6 +61,7 @@ define_checks! {
         Ssh, "ssh" => ssh::SshTroubleshooter,
         Dns, "dns" => dns::Dns,
         Http, "http" => http::HttpTroubleshooter,
+        Ftp, "ftp" => ftp::FtpTroubleshooter,
     }
 }
 
