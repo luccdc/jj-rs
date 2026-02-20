@@ -1,7 +1,5 @@
 use std::{net::Ipv4Addr};
-
 use chrono::Utc;
-
 use super::*;
 
 /// Troubleshoot a FTP server connection
@@ -24,14 +22,11 @@ pub struct FtpTroubleshooter {
     #[arg(long, short = 'P', default_value_t = Default::default())]
     pub password: CheckValue,
 
-    /// If the remote host is specified, indicate that the traffic sent to the remote host will be sent
-    /// back to this server via NAT reflection (e.g., debug firewall on another machine, network firewall
-    /// WAN IP for this machine)
+    /// If the remote host is specified, indicate NAT reflection
     #[arg(long, short)]
     pub local: bool,
 
-    /// Listen for an external connection attempt, and diagnose what appears to
-    /// be going wrong with such a check. All other steps attempt to initiate connections
+    /// Listen for an external connection attempt
     #[arg(long, short)]
     pub external: bool,
 
@@ -43,15 +38,21 @@ pub struct FtpTroubleshooter {
     #[arg(long, short = 'I')]
     pub sneaky_ip: Option<Ipv4Addr>,
 
+    /// Additional service names to check
+    #[arg(long, short = 's')]
+    pub additional_services: Vec<String>,
+
     /// Compare a local hashfile with the remote file's hash
     #[arg(short = 'X', long)]
-    pub compare_hash: Option<String>, // path to local hashfile
+    pub compare_hash: Option<String>,
 
     /// Test write permissions by uploading and deleting a temporary file
     #[arg(short = 'w', long)]
     pub write_test: bool,
 
-
+    /// Timeout in seconds for FTP operations
+    #[arg(long, short = 't', default_value_t = 15)]
+    pub timeout: u64,
 }
 
 impl Default for FtpTroubleshooter {
@@ -67,6 +68,8 @@ impl Default for FtpTroubleshooter {
             sneaky_ip: None,
             compare_hash: None,
             write_test: false,
+            timeout: 15,
+            additional_services: Vec::new(),
         }
     }
 }
@@ -77,35 +80,39 @@ impl Troubleshooter for FtpTroubleshooter {
     }
 
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
+        #[cfg(unix)]
+        let mut services = vec!["vsftpd", "ftpd", "proftpd"];
+        #[cfg(windows)]
+        let mut services = vec!["ftpsvc", "FileZilla Server"];
+
+        // Add user-specified services
+        services.extend(self.additional_services.iter().map(|s| s.as_str()));
+
         Ok(vec![
-            #[cfg(unix)]
             filter_check(
-                systemd_services_check(["vsftpd", "ftpd", "proftpd"]),
+                service_check(services.clone()),
                 self.host.is_loopback() || self.local,
-                "Cannot check systemd service on remote host",
+                "Cannot check service on remote host",
             ),
-            #[cfg(unix)]
-            filter_check(
-                openrc_services_check(["vsftpd"]),
-                self.host.is_loopback() || self.local,
-                "Cannot check openrc service on remote host",
-            ),
+
+            // Binary / port check
             #[cfg(unix)]
             binary_ports_check(
-                #[cfg(unix)]
-                Some(["ftp"]),
-                #[cfg(windows)]
-                Some(["ftp.exe"]),
+                Some(services.clone()),
                 self.port,
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,
             ),
+
+            // TCP connection check
             tcp_connect_check(
                 self.host,
                 self.port,
                 self.disable_download_shell,
                 self.sneaky_ip,
             ),
+
+            // Optional Unix tcpdump
             #[cfg(unix)]
             immediate_tcpdump_check(
                 self.port,
@@ -113,7 +120,11 @@ impl Troubleshooter for FtpTroubleshooter {
                 b"openssh".to_vec(),
                 self.host.is_loopback() || self.local,
             ),
+
+            // Remote login
             check_fn("Try remote login", |tr| self.try_remote_login(tr)),
+
+            // PAM check for Unix
             #[cfg(unix)]
             pam_check(
                 Some("vsftpd"),
@@ -121,6 +132,8 @@ impl Troubleshooter for FtpTroubleshooter {
                 self.password.clone(),
                 self.host.is_loopback() || self.local,
             ),
+
+            // Passive tcpdump for Unix
             #[cfg(unix)]
             passive_tcpdump_check(
                 self.port,
@@ -137,10 +150,13 @@ impl FtpTroubleshooter {
         let host = self.host;
         let port = self.port;
         let user = self.user.clone();
-        let pass = self
-            .password
-            .clone()
-            .resolve_prompt(tr, "Enter a password to sign into the FTP server with: ")?;
+        let pass = if self.user.eq_ignore_ascii_case("anonymous") {
+            String::new()
+        } else {
+            self.password
+                .clone()
+                .resolve_prompt(tr, "Enter a password to sign into the FTP server with: ")?
+        };
 
         let (check_result, start) = crate::utils::checks::optionally_run_in_container(
             host.is_loopback() || self.local,
@@ -160,220 +176,241 @@ impl FtpTroubleshooter {
 
         let end = Utc::now();
 
-        let logs = (self.local || host.is_loopback()).then(|| get_system_logs(start, end));
+        let system_logs = (self.local || host.is_loopback()).then(|| get_system_logs(start, end));
 
-        Ok(check_result
-            .into_check_result("Could not contact remote server")
-            .merge_overwrite_details(serde_json::json!({
+        let mut result = check_result.into_check_result("Could not contact remote server");
+
+        if let Some(logs) = system_logs {
+            result = result.merge_overwrite_details(serde_json::json!({
                 "system_logs": logs,
-            })))
+            }));
+        }
+
+        Ok(result)
     }
 
     async fn try_connection(
-    &self,
-    host: Ipv4Addr,
-    port: u16,
-    user: &str,
-    password: &str,
-) -> eyre::Result<CheckResult> {
-    use ::ftp::FtpStream;
-    use tokio::time::{self, Duration};
-    use sha2::{Sha256, Digest};
-    //use std::fs;
+        &self,
+        host: Ipv4Addr,
+        port: u16,
+        user: &str,
+        password: &str,
+    ) -> eyre::Result<CheckResult> {
+        use ::ftp::FtpStream;
+        use tokio::time::{self, Duration};
+        use sha2::{Sha256, Digest};
 
-    let user = user.to_string();
-    let password = password.to_string();
-    let compare_hash_file = self.compare_hash.clone();
-    let write_test_enabled = self.write_test;
+        let user = user.to_string();
+        let password = password.to_string();
+        let compare_hash_file = self.compare_hash.clone();
+        let write_test_enabled = self.write_test;
+        let timeout_seconds = self.timeout;
 
+        let operation = time::timeout(
+            Duration::from_secs(timeout_seconds),
+            tokio::task::spawn_blocking(move || {
+                let mut ftp = FtpStream::connect((host, port))?;
 
-let operation = time::timeout(
-    Duration::from_secs(15),
-    tokio::task::spawn_blocking(move || {
-        let mut ftp = FtpStream::connect((host, port))?;
-        ftp.login(&user, &password)?;
+                let login_result = ftp.login(&user, &password);
 
-        let mut result_json = serde_json::json!({});
-
-
-
-// Compare hashes (-X)
-if let Some(raw_manifest_path) = compare_hash_file {
-    use std::path::PathBuf;
-
-    // Expand ~ to home directory if present
-    let expanded_path = if raw_manifest_path.starts_with("~/") {
-        if let Some(home) = dirs::home_dir() {
-            home.join(raw_manifest_path.trim_start_matches("~/"))
-        } else {
-            PathBuf::from(&raw_manifest_path)
-        }
-    } else {
-        PathBuf::from(&raw_manifest_path)
-    };
-
-    // Resolve relative paths against current working directory
-    let manifest_path = if expanded_path.is_absolute() {
-        expanded_path
-    } else {
-        std::env::current_dir()?.join(expanded_path)
-    };
-
-    println!("\nUsing hash manifest: {}", manifest_path.display());
-
-    let manifest_contents = std::fs::read_to_string(&manifest_path)?;
-
-    let mut comparisons = Vec::new();
-
-    for (line_number, line) in manifest_contents.lines().enumerate() {
-        let line = line.trim();
-
-        // Skip empty lines and comments
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        let mut parts = line.split_whitespace();
-
-        let remote_path = parts.next().ok_or_else(|| {
-            eyre::eyre!(
-                "Invalid format in {} at line {}: missing file path",
-                manifest_path.display(),
-                line_number + 1
-            )
-        })?;
-
-        let expected_hash = parts.next().ok_or_else(|| {
-            eyre::eyre!(
-                "Invalid format in {} at line {}: missing hash",
-                manifest_path.display(),
-                line_number + 1
-            )
-        })?;
-
-        // Retrieve remote file
-        let data = ftp.simple_retr(remote_path)?;
-        let bytes = data.into_inner();
-
-        // Compute SHA256
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        let remote_hash = format!("{:x}", hasher.finalize());
-
-        let matches = remote_hash.eq_ignore_ascii_case(expected_hash);
-
-        println!(
-            "File: {} | Match: {}",
-            remote_path,
-            if matches { "YES" } else { "NO" }
-        );
-
-        comparisons.push(serde_json::json!({
-            "file": remote_path,
-            "expected_hash": expected_hash,
-            "remote_hash": remote_hash,
-            "match": matches,
-        }));
-    }
-
-    result_json["compare_hash"] = serde_json::json!({
-        "manifest_file": manifest_path.display().to_string(),
-        "results": comparisons,
-    });
-}
-    //write test (-w)
-    if write_test_enabled {
-        use chrono::Utc;
-        use std::io::Cursor;
-
-        let test_filename = format!(
-            "jj_write_test_{}.tmp",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-
-        let test_contents = format!(
-            "jj-rs FTP write test\nTimestamp: {}\n",
-            Utc::now().to_rfc3339()
-        );
-
-        println!("\nAttempting write test with temporary file: {}", test_filename);
-
-        let write_result = (|| -> eyre::Result<serde_json::Value> {
-            // Upload file
-            ftp.put(
-                &test_filename,
-                &mut Cursor::new(test_contents.as_bytes()),
-            )?;
-
-            println!("Upload successful.");
-
-            // Verify file exists
-            let files = ftp.list(None)?;
-            let exists = files.iter().any(|f| f.contains(&test_filename));
-
-            if !exists {
-                eyre::bail!("Uploaded file not found in directory listing");
-            }
-
-            println!("File verified in listing.");
-
-            // Delete file
-            ftp.rm(&test_filename)?;
-            println!("Temporary file deleted successfully.");
-
-            Ok(serde_json::json!({
-                "temporary_file": test_filename,
-                "upload_success": true,
-                "verified_in_listing": true,
-                "deleted_successfully": true
-            }))
-        })();
-
-        match write_result {
-            Ok(details) => {
-                result_json["write_test"] = details;
-            }
-            Err(e) => {
-                // Attempt cleanup if something failed
-                let _ = ftp.rm(&test_filename);
-
-                result_json["write_test"] = serde_json::json!({
-                    "temporary_file": test_filename,
-                    "error": format!("{e:?}"),
-                    "upload_success": false
+                let mut result_json = serde_json::json!({
+                    "login": {
+                        "username": user,
+                        "success": login_result.is_ok()
+                    }
                 });
+
+                if login_result.is_err() {
+                    return Ok::<_, eyre::Report>(serde_json::json!({
+                        "login": {
+                            "success": false,
+                            "error": format!("{:?}", login_result.err())
+                        }
+                    }));
+                }
+
+                let mut overall_success = true;
+
+                // HASH CHECK (-X)
+                if let Some(manifest_path) = compare_hash_file {
+                    let manifest_contents = std::fs::read_to_string(&manifest_path)?;
+                    let mut comparisons = Vec::new();
+                    let mut hash_failed = false;
+
+                    for line in manifest_contents.lines() {
+                        let line = line.trim();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
+
+                        let mut parts = line.split_whitespace();
+                        let remote_path = match parts.next() {
+                            Some(p) => p,
+                            None => continue,
+                        };
+                        let expected_hash = match parts.next() {
+                            Some(h) => h,
+                            None => continue,
+                        };
+
+                        let retrieve_result = ftp.simple_retr(remote_path);
+
+                        match retrieve_result {
+                            Ok(data) => {
+                                let bytes = data.into_inner();
+                                let mut hasher = Sha256::new();
+                                hasher.update(&bytes);
+                                let remote_hash = format!("{:x}", hasher.finalize());
+                                let matches = remote_hash.eq_ignore_ascii_case(expected_hash);
+
+                                if matches {
+                                    comparisons.push(serde_json::json!({
+                                        "file": remote_path,
+                                        "remote_hash": remote_hash,
+                                        "match": true
+                                    }));
+                                } else {
+                                    hash_failed = true;
+                                    comparisons.push(serde_json::json!({
+                                        "file": remote_path,
+                                        "expected_hash": expected_hash,
+                                        "remote_hash": remote_hash,
+                                        "match": false
+                                    }));
+                                }
+                            }
+                            Err(e) => {
+                                hash_failed = true;
+                                comparisons.push(serde_json::json!({
+                                    "file": remote_path,
+                                    "match": false,
+                                    "error": format!("{e:?}")
+                                }));
+                            }
+                        }
+                    }
+
+                    result_json["compare_hash"] = serde_json::json!({
+                        "results": comparisons,
+                        "all_match": !hash_failed
+                    });
+
+                    if hash_failed {
+                        overall_success = false;
+                    }
+                }
+
+                // write test
+                if write_test_enabled {
+                    use std::io::Cursor;
+
+                    let test_filename = format!(
+                        "jj_write_test_{}.tmp",
+                        Utc::now().timestamp_nanos_opt().unwrap_or_default()
+                    );
+                    let test_contents = b"jj-rs FTP write test";
+
+                    let write_result = (|| -> eyre::Result<()> {
+                        ftp.put(&test_filename, &mut Cursor::new(test_contents))?;
+                        let files = ftp.list(None)?;
+                        let exists = files.iter().any(|f| f.contains(&test_filename));
+                        if !exists {
+                            eyre::bail!("File not found after upload");
+                        }
+                        ftp.rm(&test_filename)?;
+                        Ok(())
+                    })();
+
+                    match write_result {
+                        Ok(_) => {
+                            result_json["write_test"] = serde_json::json!({
+                                "success": true,
+                                "temporary_file": test_filename
+                            });
+                        }
+                        Err(e) => {
+                            overall_success = false;
+                            let _ = ftp.rm(&test_filename);
+                            result_json["write_test"] = serde_json::json!({
+                                "success": false,
+                                "temporary_file": test_filename,
+                                "error": format!("{e:?}")
+                            });
+                        }
+                    }
+                }
+
+                ftp.quit().ok();
+                result_json["overall_success"] = serde_json::json!(overall_success);
+
+                Ok::<_, eyre::Report>(result_json)
+            }),
+        )
+        .await;
+
+        match operation {
+            Ok(Ok(Ok(mut details))) => {
+                let success = details["overall_success"].as_bool().unwrap_or(false);
+                details["status"] = serde_json::json!(if success { "success" } else { "failure" });
+                details["timeout_seconds"] = serde_json::json!(timeout_seconds);
+
+                // force json printing
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&details)
+                        .unwrap_or_else(|_| "{}".to_string())
+                );
+
+                if success {
+                    Ok(CheckResult::succeed("", serde_json::json!({})))
+                } else {
+                    Ok(CheckResult::fail("", serde_json::json!({})))
+                }
+            }
+
+            Ok(Ok(Err(e))) => {
+                let json = serde_json::json!({
+                    "status": "failure",
+                    "stage": "ftp_operation",
+                    "error": format!("{e:?}"),
+                    "timeout_seconds": timeout_seconds
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json)
+                        .unwrap_or_else(|_| "{}".to_string())
+                );
+                Ok(CheckResult::fail("", serde_json::json!({})))
+            }
+
+            Ok(Err(e)) => {
+                let json = serde_json::json!({
+                    "status": "failure",
+                    "stage": "internal_task",
+                    "error": format!("{e:?}"),
+                    "timeout_seconds": timeout_seconds
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json)
+                        .unwrap_or_else(|_| "{}".to_string())
+                );
+                Ok(CheckResult::fail("", serde_json::json!({})))
+            }
+
+            Err(_) => {
+                let json = serde_json::json!({
+                    "status": "failure",
+                    "stage": "timeout",
+                    "timeout_seconds": timeout_seconds
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json)
+                        .unwrap_or_else(|_| "{}".to_string())
+                );
+                Ok(CheckResult::fail("", serde_json::json!({})))
             }
         }
     }
-
-        ftp.quit().ok();
-        Ok::<_, eyre::Report>(result_json)
-    }),
-)
-
-    .await;
-
-    match operation {
-        Ok(Ok(Ok(details))) => Ok(CheckResult::succeed(
-            "FTP operation succeeded",
-            details,
-        )),
-        Ok(Ok(Err(e))) => Ok(CheckResult::fail(
-            "FTP operation failed",
-            serde_json::json!({
-                "ftp_error": format!("{e:?}")
-            }),
-        )),
-        Ok(Err(e)) => Ok(CheckResult::fail(
-            "Internal blocking task failure",
-            serde_json::json!({
-                "task_error": format!("{e:?}")
-            }),
-        )),
-        Err(_) => Ok(CheckResult::fail(
-            "FTP operation timeout",
-            serde_json::json!({}),
-        )),
-    }
-}
 }
