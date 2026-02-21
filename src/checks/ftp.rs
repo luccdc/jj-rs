@@ -284,7 +284,7 @@ impl FtpTroubleshooter {
                                 comparisons.push(serde_json::json!({
                                     "file": remote_path,
                                     "match": false,
-                                    "error": format!("{e:?}")
+                                    "error": format!("{e:}")
                                 }));
                             }
                         }
@@ -334,7 +334,7 @@ impl FtpTroubleshooter {
                             result_json["write_test"] = serde_json::json!({
                                 "success": false,
                                 "temporary_file": test_filename,
-                                "error": format!("{e:?}")
+                                "error": format!("{e:}")
                             });
                         }
                     }
@@ -354,17 +354,10 @@ impl FtpTroubleshooter {
                 details["status"] = serde_json::json!(if success { "success" } else { "failure" });
                 details["timeout_seconds"] = serde_json::json!(timeout_seconds);
 
-                // force json printing
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&details)
-                        .unwrap_or_else(|_| "{}".to_string())
-                );
-
                 if success {
-                    Ok(CheckResult::succeed("", serde_json::json!({})))
+                    Ok(CheckResult::succeed("", details))
                 } else {
-                    Ok(CheckResult::fail("", serde_json::json!({})))
+                    Ok(CheckResult::fail("", details))
                 }
             }
 
@@ -372,30 +365,21 @@ impl FtpTroubleshooter {
                 let json = serde_json::json!({
                     "status": "failure",
                     "stage": "ftp_operation",
-                    "error": format!("{e:?}"),
+                    "error": format!("{e:}"),
                     "timeout_seconds": timeout_seconds
                 });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json)
-                        .unwrap_or_else(|_| "{}".to_string())
-                );
-                Ok(CheckResult::fail("", serde_json::json!({})))
+                
+                Ok(CheckResult::fail("", json))
             }
 
             Ok(Err(e)) => {
                 let json = serde_json::json!({
                     "status": "failure",
                     "stage": "internal_task",
-                    "error": format!("{e:?}"),
+                    "error": format!("{e:}"),
                     "timeout_seconds": timeout_seconds
                 });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json)
-                        .unwrap_or_else(|_| "{}".to_string())
-                );
-                Ok(CheckResult::fail("", serde_json::json!({})))
+                Ok(CheckResult::fail("Failed to perform FTP operation", json))
             }
 
             Err(_) => {
@@ -404,12 +388,7 @@ impl FtpTroubleshooter {
                     "stage": "timeout",
                     "timeout_seconds": timeout_seconds
                 });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json)
-                        .unwrap_or_else(|_| "{}".to_string())
-                );
-                Ok(CheckResult::fail("", serde_json::json!({})))
+                Ok(CheckResult::fail("Failed to perform FTP operation", json))
             }
         }
     }
