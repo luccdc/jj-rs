@@ -88,7 +88,7 @@ pub async fn main<'scope, 'env: 'scope>(
         check_setup_task: None,
     };
 
-    let mut empty_setup_task = Box::pin(futures::future::pending())
+    let empty_setup_task = Box::pin(futures::future::pending())
         as Pin<
             Box<
                 dyn Future<
@@ -96,12 +96,20 @@ pub async fn main<'scope, 'env: 'scope>(
                 >,
             >,
         >;
+    let empty_err_callback: Box<dyn for<'a, 'b> FnOnce(&'a mut Tui<'b>, eyre::Report) -> ()> =
+        Box::new(|_, _| {});
+    let mut empty_check_setup_task = (empty_setup_task, empty_err_callback);
 
     loop {
         let start = Utc::now();
         terminal.draw(|frame| render(&mut tui_state, frame))?;
         let end = Utc::now();
         tui_state.previous_render_time = ((end - start).as_seconds_f64() * 1_000.0) as usize;
+
+        let (check_setup_task, _) = tui_state
+            .check_setup_task
+            .as_mut()
+            .unwrap_or(&mut empty_check_setup_task);
 
         tokio::select! {
             Some(Ok(event)) = reader.next() => {
@@ -129,10 +137,14 @@ pub async fn main<'scope, 'env: 'scope>(
                 let check_logs = tui_state.logs.entry(res.check_id.clone()).or_default();
                 check_logs.push(res);
             }
-            callback = tui_state.check_setup_task.as_mut().unwrap_or(&mut empty_setup_task) => {
+            callback = check_setup_task => {
+                let Some((_, err_callback)) = tui_state.check_setup_task.take() else {
+                    continue;
+                };
                 tui_state.check_setup_task = None;
-                if let Ok(callback) = callback {
-                    (callback)(&mut tui_state);
+                match callback {
+                    Ok(c) => (c)(&mut tui_state),
+                    Err(e) => err_callback(&mut tui_state, e)
                 }
             }
             _ = &mut ctrl_c => {
@@ -560,7 +572,7 @@ struct Tui<'parent> {
     add_check_tab: add_check::AddCheckState,
     previous_render_time: usize,
     buffer: String,
-    check_setup_task: Option<
+    check_setup_task: Option<(
         Pin<
             Box<
                 dyn Future<
@@ -568,5 +580,6 @@ struct Tui<'parent> {
                 >,
             >,
         >,
-    >,
+        Box<dyn for<'a, 'b> FnOnce(&'a mut Tui<'b>, eyre::Report) -> ()>,
+    )>,
 }
