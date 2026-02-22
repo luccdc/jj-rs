@@ -46,7 +46,7 @@ enum ChildrenState {
     NotLoaded,
 }
 
-#[derive(Clone, Ord, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct RemoteFileListing {
     name: String,
     selected: bool,
@@ -54,32 +54,6 @@ struct RemoteFileListing {
     children_state: ChildrenState,
     children: Option<Vec<RemoteFileListing>>,
     open: bool,
-}
-
-impl PartialEq for RemoteFileListing {
-    fn eq(&self, other: &Self) -> bool {
-        self.name.eq(&other.name)
-    }
-}
-
-impl PartialOrd for RemoteFileListing {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        let mut self_parts = self.name.split('/');
-        let mut other_parts = other.name.split('/');
-
-        loop {
-            let self_part = self_parts.next();
-            let other_part = other_parts.next();
-
-            match (self_part, other_part) {
-                (None, None) => break Some(std::cmp::Ordering::Equal),
-                (Some(_), None) => break Some(std::cmp::Ordering::Greater),
-                (None, Some(_)) => break Some(std::cmp::Ordering::Less),
-                (Some(left), Some(right)) if left != right => break Some(left.cmp(right)),
-                (_, _) => {}
-            }
-        }
-    }
 }
 
 enum AddCheckWizardState {
@@ -1771,11 +1745,11 @@ fn handle_wizard<'scope, 'env: 'scope>(
                                 dbg!(&hashes);
 
                                 for line in hashes {
-                                    file.write(line.as_bytes()).await?;
-                                    file.write("\n".as_bytes()).await?;
+                                    let _ = file.write(line.as_bytes()).await?;
+                                    let _ = file.write("\n".as_bytes()).await?;
                                 }
 
-                                file.flush().await?;
+                                let _ = file.flush().await?;
 
                                 drop(file);
 
