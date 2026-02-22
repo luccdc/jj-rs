@@ -70,11 +70,11 @@ ftp = "3.0.1"
 dirs = "6.0.0"
 
 lettre = { version = "0.11.19", features = [
-"builder",
-"smtp-transport",
-"ring",
-"rustls",
-"rustls-platform-verifier",
+  "builder",
+  "smtp-transport",
+  "ring",
+  "rustls",
+  "rustls-platform-verifier",
 ], default-features = false }
 
 [target.'cfg(unix)'.dependencies]
