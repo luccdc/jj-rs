@@ -12,6 +12,7 @@ use std::{fs::OpenOptions, path::Path, process::ExitStatus};
 #[cfg(unix)]
 pub mod busybox;
 pub mod checks;
+pub mod clap;
 #[cfg(unix)]
 pub mod containers;
 #[cfg(unix)]
