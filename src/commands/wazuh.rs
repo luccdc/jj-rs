@@ -269,13 +269,17 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
             PermissionsExt::from_mode(0o755),
         )?;
 
+        let (pkg_type, arch_type) = if os.is_deb_based() {
+            ("deb", "amd64")
+        } else {
+            ("rpm", "x86_64")
+        };
+
         Command::new("/bin/sh")
             .args([
                 "-c",
                 &format!(
-                    "./wazuh-install.sh -dw {} -da x86_64",
-                    if os.is_deb_based() { "deb" } else { "rpm" }
-                ),
+                    "./wazuh-install.sh -dw {pkg_type} -da {arch_type}"),
             ])
             .current_dir(&args.working_dir)
             .spawn()
