@@ -43,6 +43,7 @@ define_commands! {
         [unix] AptInstall, ai => apt::AptInstall,
         [unix] DnfInstall, di => dnf::DnfInstall,
         [unix] Ssh => ssh::Ssh,
+        Smtp => smtp::Smtp,
 
         // Embedded binaries
         [unix] Nft => nft::Nft,
@@ -62,6 +63,7 @@ define_checks! {
         Dns, "dns" => dns::Dns,
         Http, "http" => http::HttpTroubleshooter,
         Ftp, "ftp" => ftp::FtpTroubleshooter,
+        Smtp, "smtp" => smtp::SmtpTroubleshooter,
     }
 }
 

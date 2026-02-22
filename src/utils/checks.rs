@@ -526,8 +526,39 @@ impl CliTroubleshooter {
     }
 
     /// Actually runs the troubleshooter specified on the CLI
-    pub fn run_cli(&mut self, t: &dyn Troubleshooter) -> eyre::Result<CheckResultType> {
+    pub fn run_cli<'a>(&mut self, t: &'a dyn Troubleshooter) -> eyre::Result<CheckResultType> {
         let checks = t.checks()?;
+
+        let start = self.run_checks(&checks)?;
+
+        if !self.has_rendered_newline_for_step {
+            print!("\r\x1B[2K");
+        }
+
+        match start {
+            CheckResultType::Failure => {
+                println!("{}", "Some troubleshoot steps failed".red());
+            }
+            CheckResultType::NotRun => {
+                println!("{}", "No troubleshooting steps were run".cyan());
+            }
+            CheckResultType::Success => {
+                println!("{}", "Service appears to be up!".green());
+
+                if t.is_local() {
+                    #[cfg(windows)]
+                    println!("{}", "WARNING: you are using localhost for testing, you will not be able to identify if firewall is the problem".yellow());
+                }
+            }
+        }
+
+        Ok(start)
+    }
+
+    pub fn run_checks<'a, 'b: 'a>(
+        &mut self,
+        checks: &'a Vec<Box<dyn CheckStep<'b> + 'b>>,
+    ) -> Result<CheckResultType, eyre::Error> {
         let mut start = CheckResultType::NotRun;
 
         for check in checks {
@@ -601,27 +632,6 @@ impl CliTroubleshooter {
                 print!("    ");
                 render_extra_details(4, &value.extra_details);
                 println!("\n");
-            }
-        }
-
-        if !self.has_rendered_newline_for_step {
-            print!("\r\x1B[2K");
-        }
-
-        match start {
-            CheckResultType::Failure => {
-                println!("{}", "Some troubleshoot steps failed".red());
-            }
-            CheckResultType::NotRun => {
-                println!("{}", "No troubleshooting steps were run".cyan());
-            }
-            CheckResultType::Success => {
-                println!("{}", "Service appears to be up!".green());
-
-                if t.is_local() {
-                    #[cfg(windows)]
-                    println!("{}", "WARNING: you are using localhost for testing, you will not be able to identify if firewall is the problem".yellow());
-                }
             }
         }
 
