@@ -77,22 +77,15 @@ impl CheckStep<'_> for SystemdServiceCheck {
     }
 }
 
-/// A simple check that makes sure a systemd service is up. Provides
-/// as context when the server went up or down as well as the PID if it
+/// A simple check that makes sure a vector of systemd services are up. Provides
+/// an iterator of contexts when the server went up or down as well as the PID if it
 /// is running
 ///
 /// ```
-/// # use jj_rs::utils::checks::systemd_service_check;
-/// systemd_service_check("ssh");
+/// # use jj_rs::utils::checks::systemd_services_check;
+/// systemd_services_check([ "ssh" ]);
 /// ```
 #[allow(dead_code)]
-#[cfg(unix)]
-pub fn systemd_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
-    Box::new(SystemdServiceCheck {
-        service_names: vec![name.into()],
-    })
-}
-
 #[cfg(unix)]
 pub fn systemd_services_check<'a, S: Into<String>, I: IntoIterator<Item = S>>(
     names: I,
@@ -153,20 +146,13 @@ impl CheckStep<'_> for OpenrcServiceCheck {
     }
 }
 
-/// A simple check that makes sure an `OpenRC` service is up
+/// A simple check that makes sure a vector of `OpenRC` services are up
 ///
 /// ```
-/// # use jj_rs::utils::checks::openrc_service_check;
-/// openrc_service_check("ssh");
+/// # use jj_rs::utils::checks::openrc_services_check;
+/// openrc_services_check(["ssh"]);
 /// ```
 #[allow(dead_code)]
-#[cfg(unix)]
-pub fn openrc_service_check<'a, I: Into<String>>(name: I) -> Box<dyn CheckStep<'a> + 'a> {
-    Box::new(OpenrcServiceCheck {
-        service_names: vec![name.into()],
-    })
-}
-
 #[cfg(unix)]
 pub fn openrc_services_check<'a, S: Into<String>, I: IntoIterator<Item = S>>(
     names: I,
