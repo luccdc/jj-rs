@@ -106,7 +106,7 @@
 
           pkgsStatic = pkgs.pkgsStatic;
 
-          libraries = [ libpcap-static pkgs.mold pkgs.perl ];
+          libraries = [ libpcap-static pkgs.mold pkgs.perl pkgsStatic.curl pkgsStatic.aws-lc ];
 
           windowsLibraries = (with pkgs; [
             pkgsCross.mingwW64.buildPackages.clang

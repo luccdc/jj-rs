@@ -64,6 +64,7 @@ define_checks! {
         Http, "http" => http::HttpTroubleshooter,
         Ftp, "ftp" => ftp::FtpTroubleshooter,
         Smtp, "smtp" => smtp::SmtpTroubleshooter,
+        Pop3, "pop3" => pop3::Pop3Troubleshooter,
     }
 }
 
