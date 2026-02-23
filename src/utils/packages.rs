@@ -3,24 +3,15 @@
 //! Utilities are built using the download container and package manager to download
 //! packages, and then use the package manager to further install packages
 
-use std::{
-    net::Ipv4Addr,
-    ops::Not,
-    os::unix::fs::PermissionsExt,
-};
+use std::{net::Ipv4Addr, ops::Not, os::unix::fs::PermissionsExt};
 
 use eyre::Context;
 use nix::{
-    mount::{mount, MsFlags},
-    sched::{unshare, CloneFlags},
+    mount::{MsFlags, mount},
+    sched::{CloneFlags, unshare},
 };
 
-use crate::utils::{
-    busybox::Busybox,
-    download_container::DownloadContainer,
-    qx,
-    system,
-};
+use crate::utils::{busybox::Busybox, download_container::DownloadContainer, qx, system};
 
 #[derive(Debug)]
 pub enum DownloadSettings {
@@ -31,19 +22,12 @@ pub enum DownloadSettings {
     },
 }
 
-//
-// ============================
-// APT INSTALLER
-// ============================
-//
-
+/// Download and install apt packages
 pub fn install_apt_packages<S: AsRef<str>>(
     settings: DownloadSettings,
     packages: &[S],
 ) -> eyre::Result<()> {
-    // Create new mount namespace (requires root)
-    unshare(CloneFlags::CLONE_NEWNS)
-        .context("Could not unshare to get mount namespace")?;
+    unshare(CloneFlags::CLONE_NEWNS).context("Could not unshare to get mount namespace")?;
 
     let package_list = qx("dpkg -l")?.1;
 
@@ -64,13 +48,8 @@ pub fn install_apt_packages<S: AsRef<str>>(
     }
 
     let bb = Busybox::new()?;
-
-    //
-    // DNS override (isolated namespace)
-    //
     let file_raw = bb.execute(&["mktemp"])?;
     let file = file_raw.trim();
-
     std::fs::write(file, "nameserver 1.1.1.1")?;
     std::fs::set_permissions(file, PermissionsExt::from_mode(0o555))?;
 
@@ -90,24 +69,11 @@ pub fn install_apt_packages<S: AsRef<str>>(
         None::<&str>,
     )?;
 
-    //
-    // Ensure mount targets exist
-    //
-    std::fs::create_dir_all("/var/lib/apt/lists")?;
-    std::fs::create_dir_all("/var/cache/apt/archives")?;
-
-    //
-    // Create temp dirs
-    //
     let lists_raw = bb.execute(&["mktemp", "-d"])?;
     let lists = lists_raw.trim();
-
     let archives_raw = bb.execute(&["mktemp", "-d"])?;
     let archives = archives_raw.trim();
 
-    //
-    // Bind mount apt state dirs
-    //
     mount(
         Some(lists),
         "/var/lib/apt/lists",
@@ -118,30 +84,30 @@ pub fn install_apt_packages<S: AsRef<str>>(
 
     mount(
         Some(archives),
-        "/var/cache/apt/archives",
+        "/var/cache/apt/",
         None::<&str>,
         MsFlags::MS_BIND,
         None::<&str>,
     )?;
 
-    //
-    // Download packages
-    //
     match settings {
         DownloadSettings::Container { name, sneaky_ip } => {
             let container = DownloadContainer::new(name, sneaky_ip)?;
 
             container.run(|| -> eyre::Result<()> {
                 system("apt update")?;
+
                 system(&format!(
                     "apt install --download-only -y {}",
                     packages.join(" ")
                 ))?;
+
                 Ok(())
             })??;
         }
         DownloadSettings::NoContainer => {
             system("apt update")?;
+
             system(&format!(
                 "apt install --download-only -y {}",
                 packages.join(" ")
@@ -149,9 +115,6 @@ pub fn install_apt_packages<S: AsRef<str>>(
         }
     }
 
-    //
-    // Collect downloaded .deb files
-    //
     let downloaded_package_paths = std::fs::read_dir("/var/cache/apt/archives")?
         .flat_map(|entry| entry)
         .flat_map(|entry| entry.file_name().into_string())
@@ -159,13 +122,6 @@ pub fn install_apt_packages<S: AsRef<str>>(
         .map(|entry| format!("/var/cache/apt/archives/{entry}"))
         .collect::<Vec<_>>();
 
-    if downloaded_package_paths.is_empty() {
-        eyre::bail!("No .deb packages were downloaded.");
-    }
-
-    //
-    // Install downloaded packages
-    //
     system(&format!(
         "apt install -y {}",
         downloaded_package_paths.join(" ")
@@ -177,23 +133,16 @@ pub fn install_apt_packages<S: AsRef<str>>(
     Ok(())
 }
 
-//
-// ============================
-// DNF INSTALLER
-// ============================
-//
-
+/// Download and install DNF packages
 pub fn install_dnf_packages<S: AsRef<str>>(
     settings: DownloadSettings,
     packages: &[S],
 ) -> eyre::Result<()> {
     let bb = Busybox::new()?;
-
     let packages_dir_raw = bb.execute(&["mktemp", "-d"])?;
     let packages_dir = packages_dir_raw.trim();
 
     let package_list = qx("rpm -qa")?.1;
-
     let packages = packages
         .iter()
         .flat_map(|p| {
@@ -249,10 +198,6 @@ pub fn install_dnf_packages<S: AsRef<str>>(
         .filter(|entry| entry.ends_with(".rpm"))
         .map(|entry| format!("{packages_dir}/{entry}"))
         .collect::<Vec<_>>();
-
-    if downloaded_package_paths.is_empty() {
-        eyre::bail!("No .rpm packages were downloaded.");
-    }
 
     system(&format!(
         "dnf install -y {}",
