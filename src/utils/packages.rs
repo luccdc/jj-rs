@@ -13,7 +13,7 @@ use nix::{
 
 use crate::utils::{busybox::Busybox, download_container::DownloadContainer, qx, system};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DownloadSettings {
     NoContainer,
     Container {
