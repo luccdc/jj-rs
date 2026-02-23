@@ -139,6 +139,10 @@ pub enum ElkCommands {
     #[command(visible_alias = "ki")]
     SetupKibana(ElkSubcommandArgs),
 
+    /// Extra step to load Kibana dashboards if such setup fails in the previous step
+    #[command(visible_alias = "kd")]
+    LoadKibanaDashboards,
+
     /// Configure Logstash to be able to store to Elasticsearch and configure a pipeline for beats
     #[command(visible_alias = "lo")]
     SetupLogstash(ElkSubcommandArgs),
@@ -158,6 +162,10 @@ pub enum ElkCommands {
     /// Install beats and configure the system to send logs to the ELK stack
     #[command(visible_alias = "beats")]
     InstallBeats(ElkBeatsArgs),
+
+    /// Export dashboards to allow for a manual import
+    #[command(visible_alias = "exp-db")]
+    ExportDashboards,
 }
 
 /// Install, configure, and manage ELK and beats locally and assist across the network
@@ -171,6 +179,14 @@ pub struct Elk {
 impl super::Command for Elk {
     fn execute(self) -> eyre::Result<()> {
         use ElkCommands as EC;
+
+        if let EC::ExportDashboards = self.command {
+            let mut out = std::io::stdout().lock();
+            for dash in KIBANA_DASHBOARDS {
+                out.write_all(dash)?;
+            }
+            return Ok(());
+        }
 
         if !qx("systemctl --version")?.1.contains("systemd") {
             eprintln!("{}", "!!! ELK utilities require systemd to run".red());
@@ -214,7 +230,11 @@ impl super::Command for Elk {
         }
 
         if let EC::Install(args) | EC::SetupKibana(args) = &self.command {
-            setup_kibana(&busybox, &mut elastic_password, args)?;
+            setup_kibana(&busybox, args)?;
+        }
+
+        if let EC::Install(_) | EC::LoadKibanaDashboards = &self.command {
+            load_kibana_dashboards(&mut elastic_password)?;
         }
 
         if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
@@ -738,11 +758,7 @@ fn setup_elasticsearch(
     Ok(())
 }
 
-fn setup_kibana(
-    bb: &Busybox,
-    password: &mut Option<String>,
-    args: &ElkSubcommandArgs,
-) -> eyre::Result<()> {
+fn setup_kibana(bb: &Busybox, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Configuring Kibana".green());
 
     let kbn_home = cpaths!(args.elastic_install_directory, "kibana");
@@ -811,8 +827,6 @@ fn setup_kibana(
             let _ = chown(entry.path(), kibana_user, kibana_group);
         }
     }
-
-    let elastic_password = get_elastic_password(password)?;
 
     println!("Getting enrollment token...");
 
@@ -916,31 +930,37 @@ fn setup_kibana(
         }
     }
 
-    println!("{}", "--- Kibana online! Importing dashboards...".green());
+    println!("{}", "--- Kibana configured!".green());
 
-    {
-        use reqwest::blocking::{
-            Client,
-            multipart::{Form, Part},
-        };
-        let client = Client::new();
+    Ok(())
+}
 
-        for (i, dash) in KIBANA_DASHBOARDS.iter().enumerate() {
-            println!("Importing dashboard {}...", i + 1);
+fn load_kibana_dashboards(password: &mut Option<String>) -> eyre::Result<()> {
+    let elastic_password = get_elastic_password(password)?;
 
-            let part = Part::bytes(*dash).file_name("input.ndjson");
-            let form = Form::new().part("file", part);
+    println!("{}", "--- Importing Kibana dashboards...".green());
 
-            client
-                .post("http://localhost:5601/api/saved_objects/_import?overwrite=true")
-                .basic_auth("elastic", Some(elastic_password.clone()))
-                .header("kbn-xsrf", "true")
-                .multipart(form)
-                .send()?;
-        }
+    use reqwest::blocking::{
+        Client,
+        multipart::{Form, Part},
+    };
+    let client = Client::new();
+
+    for (i, dash) in KIBANA_DASHBOARDS.iter().enumerate() {
+        println!("Importing dashboard {}...", i + 1);
+
+        let part = Part::bytes(*dash).file_name("input.ndjson");
+        let form = Form::new().part("file", part);
+
+        client
+            .post("http://localhost:5601/api/saved_objects/_import?overwrite=true")
+            .basic_auth("elastic", Some(elastic_password.clone()))
+            .header("kbn-xsrf", "true")
+            .multipart(form)
+            .send()?;
     }
 
-    println!("{}", "--- Kibana configured!".green());
+    println!("{}", "--- Kibana dashboards loaded!".green());
 
     Ok(())
 }
