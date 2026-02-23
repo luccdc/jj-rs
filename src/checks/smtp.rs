@@ -127,14 +127,39 @@ impl SmtpTroubleshooter {
             .resolve_prompt(tr, "SMTP Password: ")?;
 
         std::thread::sleep(std::time::Duration::from_secs(1));
-
         let start = Utc::now();
 
-        let check_result = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(self.try_connection(&host, port, &user, &pass))
-            .into_check_result("Could not attempt the connection to the server");
+        let mailer = SmtpTransport::builder_dangerous(host.to_string().as_str())
+            .port(port)
+            .credentials(Credentials::new(user.clone(), pass.clone()))
+            .authentication(vec![Mechanism::Plain, Mechanism::Login])
+            .timeout(Some(std::time::Duration::from_secs(5)))
+            .build();
+
+        let check_result = match mailer.test_connection() {
+            Ok(true) => CheckResult::succeed(
+                format!("Successfully connected to {host}, {port}"),
+                serde_json::json!({}),
+            ),
+            Ok(false) => CheckResult::fail(
+                format!("Unable to connect to {host}, {port}"),
+                serde_json::json!({
+                    "local_connection_error": format!("could not connect"),
+                    "target_host": format!("{host}"),
+                    "target_port": format!("{port}"),
+                }
+                ),
+            ),
+
+            Err(e) => CheckResult::fail(
+                format!("Unable to connect to {host}, {port}"),
+                serde_json::json!({
+                    "local_connection_error": format!("{e}"),
+                    "target_host": format!("{host}"),
+                    "target_port": format!("{port}"),
+                }),
+            ),
+        };
 
         let end = Utc::now();
 
@@ -143,46 +168,5 @@ impl SmtpTroubleshooter {
         Ok(check_result.merge_overwrite_details(serde_json::json!({
             "system_logs": logs,
         })))
-    }
-
-    async fn try_connection(
-        &self,
-        host: &Host,
-        port: u16,
-        user: &str,
-        password: &str,
-    ) -> eyre::Result<CheckResult> {
-        let mailer = SmtpTransport::builder_dangerous(host.to_string().as_str())
-            .port(port)
-            .credentials(Credentials::new(user.to_owned(), password.to_owned()))
-            .authentication(vec![Mechanism::Plain, Mechanism::Login])
-            .timeout(Some(std::time::Duration::from_secs(5)))
-            .build();
-
-        Ok(match mailer.test_connection() {
-            Ok(true) => CheckResult::succeed(
-                format!("Successfully connected to {host}, {port}"),
-                serde_json::json!({}),
-            ),
-            Ok(false) => CheckResult::fail(
-                format!("Unable to connect to {host}, {port}"),
-                serde_json::json!({
-                                       "local_connection_error": format!("could not connect"),
-                                        "target_host": format!("{host}"),
-                                        "target_port": format!("{port}"),
-                            }
-                ),
-            ),
-
-            Err(e) => CheckResult::fail(
-                format!("Unable to connect to {host}, {port}"),
-                serde_json::json!({
-                                       "local_connection_error": format!("{e}"),
-                                        "target_host": format!("{host}"),
-                                        "target_port": format!("{port}"),
-                            }
-                ),
-            ),
-        })
     }
 }
