@@ -1,5 +1,5 @@
 use std::{
-    fs::{File, copy, exists, create_dir_all, rename},
+    fs::{File, copy, create_dir_all, exists, rename},
     path::{Path, PathBuf},
 };
 
@@ -36,7 +36,6 @@ impl std::str::FromStr for ArchiveFormat {
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct Backup {
-
     /// Paths to save data to
     #[cfg_attr(unix, arg(short, long, default_values_t = strvec!["/var/games/.luanti.tgz"]))]
     #[cfg_attr(windows, arg(short, long, default_values_t = strvec![r"C:\Windows\minecraft.zip"]))]
@@ -51,6 +50,11 @@ pub struct Backup {
     /// /usr/lib/systemd, and /opt on Linux
     #[arg(short, long)]
     paths: Vec<String>,
+
+    /// Directories to exclude from backup
+    #[cfg_attr(unix, arg(short, long, default_values_t = strvec!["/opt/jj-es"]))]
+    #[cfg_attr(windows, arg(short, long))]
+    exclude: Vec<String>,
 }
 
 impl super::Command for Backup {
@@ -64,10 +68,10 @@ impl super::Command for Backup {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        
+
         println!("{} Pre-flight checks...", "---".blue());
         create_dir_all(primary_parent).context("Could not create destination directory")?;
-        
+
         let estimated_size = self.get_total_source_size();
         #[cfg(unix)]
         Self::check_disk_space(&primary_target, estimated_size)?;
@@ -75,8 +79,11 @@ impl super::Command for Backup {
         // Staging: Write to a .part file in the final destination directory
         let mut staging_path = primary_target.clone();
         staging_path.set_extension(format!(
-            "{}.part", 
-            primary_target.extension().and_then(|e| e.to_str()).unwrap_or("tmp")
+            "{}.part",
+            primary_target
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("tmp")
         ));
 
         match self.archive_format {
@@ -108,10 +115,25 @@ impl Backup {
         let mut total = 0;
         let mut paths = self.paths.clone();
         #[cfg(unix)]
-        paths.extend(vec!["/etc", "/var/lib", "/var/www", "/lib/systemd", "/usr/lib/systemd", "/opt"].into_iter().map(String::from));
+        paths.extend(
+            vec![
+                "/etc",
+                "/var/lib",
+                "/var/www",
+                "/lib/systemd",
+                "/usr/lib/systemd",
+                "/opt",
+            ]
+            .into_iter()
+            .map(String::from),
+        );
 
         for path in paths {
             for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+                if self.exclude.iter().any(|e| entry.path().starts_with(e)) {
+                    continue;
+                }
+
                 #[allow(clippy::collapsible_if)]
                 if let Ok(meta) = entry.metadata() {
                     if meta.is_file() {
@@ -132,13 +154,13 @@ impl Backup {
             .unwrap_or(Path::new("."));
         let stats = statvfs(parent).context("Failed to check disk space")?;
         let available = stats.blocks_available() * stats.fragment_size();
-        
+
         // Safety margin of 5% to avoid pinning the disk at 100%
         if available < (required_bytes + (required_bytes / 20)) {
             eyre::bail!(
-                "Insufficient space on {}: need ~{}MB, have {}MB", 
-                parent.display(), 
-                required_bytes / 1024 / 1024, 
+                "Insufficient space on {}: need ~{}MB, have {}MB",
+                parent.display(),
+                required_bytes / 1024 / 1024,
                 available / 1024 / 1024
             );
         }
@@ -180,6 +202,9 @@ impl Backup {
                 let Some(str_path) = entry.path().to_str().map(str::to_owned) else {
                     continue;
                 };
+                if self.exclude.iter().any(|e| str_path.starts_with(e)) {
+                    continue;
+                }
                 if entry.path().is_file() {
                     print!("{}...", entry.path().display());
                     let Ok(mut file) = File::open(entry.path()) else {
@@ -240,6 +265,9 @@ impl Backup {
 
             for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
                 if !entry.path().is_file() {
+                    continue;
+                }
+                if self.exclude.iter().any(|e| entry.path().starts_with(e)) {
                     continue;
                 }
                 let Ok(mut file) = File::open(entry.path()) else {
