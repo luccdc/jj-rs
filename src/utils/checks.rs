@@ -831,7 +831,7 @@ pub fn optionally_run_in_container<F, T, E>(
 ) -> (Result<T, String>, DateTime<Utc>)
 where
     E: std::fmt::Debug,
-    F: FnOnce() -> Result<T, E>,
+    F: FnOnce(Option<Ipv4Addr>) -> Result<T, E>,
 {
     let backup_time = Utc::now();
 
@@ -839,13 +839,14 @@ where
     return if !avoid_download_container
         && let Ok(container) = DownloadContainer::new(None, sneaky_ip)
     {
+        let wan_ip = container.wan_ip();
         let check_result = container
-            .run(|| {
+            .run(move || {
                 if wait_1s {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                 }
                 let start = Utc::now();
-                ((f)().map_err(|e| format!("{e:?}")), start)
+                ((f)(Some(wan_ip)).map_err(|e| format!("{e:?}")), start)
             })
             .map_err(|e| format!("{e:?}"));
 
@@ -865,7 +866,7 @@ where
         if wait_1s {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
-        return ((f)().map_err(|e| format!("{e:?}")), backup_time);
+        return ((f)(None).map_err(|e| format!("{e:?}")), backup_time);
     };
 
     #[cfg(windows)]
@@ -873,6 +874,6 @@ where
         if wait_1s {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
-        return ((f)().map_err(|e| format!("{e:?}")), backup_time);
+        return ((f)(None).map_err(|e| format!("{e:?}")), backup_time);
     };
 }

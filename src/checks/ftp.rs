@@ -164,14 +164,14 @@ impl FtpTroubleshooter {
             host.is_loopback() || self.local,
             self.disable_download_shell,
             self.sneaky_ip,
-            || {
+            |ip| {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| format!("{e}"))
                     .and_then(|rt| {
                         rt.block_on(self.try_compare_hashes_internal(
-                            host,
+                            ip.unwrap_or(host),
                             port,
                             &user,
                             &pass,
@@ -220,14 +220,20 @@ impl FtpTroubleshooter {
             host.is_loopback() || self.local,
             self.disable_download_shell,
             self.sneaky_ip,
-            || {
+            |ip| {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| format!("{e}"))
                     .and_then(|rt| {
-                        rt.block_on(self.try_write_internal(host, port, &user, &pass, write_path))
-                            .map_err(|e| format!("{e}"))
+                        rt.block_on(self.try_write_internal(
+                            ip.unwrap_or(host),
+                            port,
+                            &user,
+                            &pass,
+                            write_path,
+                        ))
+                        .map_err(|e| format!("{e}"))
                     })
             },
         );

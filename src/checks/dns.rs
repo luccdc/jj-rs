@@ -125,7 +125,12 @@ impl Dns {
             host.is_loopback() || self.local,
             self.disable_download_shell,
             self.sneaky_ip,
-            || crate::utils::qx(&cmd),
+            |ip| {
+                crate::utils::qx(&format!(
+                    "nslookup -port={port} -q={qtype} {domain} {}",
+                    ip.unwrap_or(host)
+                ))
+            },
         );
 
         let end = Utc::now();

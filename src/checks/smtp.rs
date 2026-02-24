@@ -1,11 +1,10 @@
-use crate::utils::{clap::Host, os_version::get_distro};
+use crate::utils::clap::Host;
 use chrono::Utc;
-use eyre::Context;
 use lettre::{
     SmtpTransport,
     transport::smtp::authentication::{Credentials, Mechanism},
 };
-use std::net::Ipv4Addr;
+use std::{convert::Infallible, net::Ipv4Addr};
 
 use super::*;
 
@@ -69,8 +68,6 @@ impl Troubleshooter for SmtpTroubleshooter {
     }
 
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
-        let _distro = get_distro().context("could not load distribution for smtp check")?;
-
         Ok(vec![
             #[cfg(unix)]
             filter_check(
@@ -126,47 +123,60 @@ impl SmtpTroubleshooter {
             .clone()
             .resolve_prompt(tr, "SMTP Password: ")?;
 
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        let start = Utc::now();
+        let (check_result, start) = crate::utils::checks::optionally_run_in_container(
+            host.is_loopback() || self.local,
+            self.disable_download_shell,
+            self.sneaky_ip,
+            |ip| {
+                let host = if host.is_loopback()
+                    && let Some(ip) = ip
+                {
+                    format!("{ip}")
+                } else {
+                    host.to_string()
+                };
 
-        let mailer = SmtpTransport::builder_dangerous(host.to_string().as_str())
-            .port(port)
-            .credentials(Credentials::new(user.clone(), pass.clone()))
-            .authentication(vec![Mechanism::Plain, Mechanism::Login])
-            .timeout(Some(std::time::Duration::from_secs(5)))
-            .build();
+                let mailer = SmtpTransport::builder_dangerous(&host)
+                    .port(port)
+                    .credentials(Credentials::new(user.clone(), pass.clone()))
+                    .authentication(vec![Mechanism::Plain, Mechanism::Login])
+                    .timeout(Some(std::time::Duration::from_secs(5)))
+                    .build();
 
-        let check_result = match mailer.test_connection() {
-            Ok(true) => CheckResult::succeed(
-                format!("Successfully connected to {host}, {port}"),
-                serde_json::json!({}),
-            ),
-            Ok(false) => CheckResult::fail(
-                format!("Unable to connect to {host}, {port}"),
-                serde_json::json!({
-                    "local_connection_error": format!("could not connect"),
-                    "target_host": format!("{host}"),
-                    "target_port": format!("{port}"),
+                match mailer.test_connection() {
+                    Ok(true) => Ok::<_, Infallible>(CheckResult::succeed(
+                        format!("Successfully connected to {host}, {port}"),
+                        serde_json::json!({}),
+                    )),
+                    Ok(false) => Ok(CheckResult::fail(
+                        format!("Unable to connect to {host}, {port}"),
+                        serde_json::json!({
+                            "local_connection_error": format!("could not connect"),
+                            "target_host": format!("{host}"),
+                            "target_port": format!("{port}"),
+                        }
+                        ),
+                    )),
+                    Err(e) => Ok(CheckResult::fail(
+                        format!("Unable to connect to {host}, {port}"),
+                        serde_json::json!({
+                            "local_connection_error": format!("{e}"),
+                            "target_host": format!("{host}"),
+                            "target_port": format!("{port}"),
+                        }),
+                    )),
                 }
-                ),
-            ),
-
-            Err(e) => CheckResult::fail(
-                format!("Unable to connect to {host}, {port}"),
-                serde_json::json!({
-                    "local_connection_error": format!("{e}"),
-                    "target_host": format!("{host}"),
-                    "target_port": format!("{port}"),
-                }),
-            ),
-        };
+            },
+        );
 
         let end = Utc::now();
 
         let logs = (self.local || host.is_loopback()).then(|| get_system_logs(start, end));
 
-        Ok(check_result.merge_overwrite_details(serde_json::json!({
-            "system_logs": logs,
-        })))
+        Ok(check_result
+            .map_err(|e| eyre::eyre!("Error with download container: {e}"))?
+            .merge_overwrite_details(serde_json::json!({
+                "system_logs": logs,
+            })))
     }
 }
