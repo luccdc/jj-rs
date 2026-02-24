@@ -377,6 +377,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
     if tui.buffer.starts_with(":")
         && let Event::Key(key) = event
         && let KeyCode::Char(c) = key.code
+        && let KeyEventKind::Press = key.kind
     {
         handle_cmd_buffer(tui, c).await;
 
@@ -386,6 +387,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
     if tui.buffer.starts_with(":")
         && let Event::Key(key) = event
         && let KeyCode::Enter = key.code
+        && let KeyEventKind::Press = key.kind
     {
         handle_cmd_buffer(tui, '\n').await;
 
