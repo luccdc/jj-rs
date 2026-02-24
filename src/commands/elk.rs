@@ -1169,8 +1169,39 @@ Environment="ES_API_KEY={}:{}"
     Ok(())
 }
 
+// auditbeat gracefully degrades if it can't hook into the audit socket, but we can
+// explicitly disable auditd
+fn disable_auditd() -> eyre::Result<()> {
+    println!("--- Disabling auditd");
+
+    let auditd_service = crate::utils::systemd::get_service_info("auditd")
+        .context("Could not find auditd service")?;
+
+    let Some(path) = auditd_service.get("FragmentPath") else {
+        eyre::bail!("Could not find systemd service configuration file for auditd");
+    };
+
+    std::fs::write(
+        &path,
+        std::fs::read_to_string(&path)
+            .context("Could not read current auditd systemd configuration")?
+            .replace("RefuseManualStop=yes", ""),
+    )
+    .context("Could not save modified auditd systemd settings")?;
+
+    system("systemctl daemon-reload")?;
+    system("systemctl stop auditd")?;
+    system("systemctl disable auditd")?;
+
+    Ok(())
+}
+
 fn setup_auditbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Setting up auditbeat".green());
+
+    if let Err(e) = disable_auditd() {
+        eprintln!("Could not disable auditd: {e}");
+    }
 
     std::fs::write(
         "/usr/lib/systemd/system/jj-auditbeat.service",
@@ -1600,7 +1631,13 @@ output.logstash:
         ),
     )?;
 
-    println!("{}", "--- Done configuring beats! Verifying output".green());
+    println!("{}", "--- Done configuring beats!".green());
+
+    if let Err(e) = disable_auditd() {
+        eprintln!("Could not disable auditd: {e}");
+    }
+
+    println!("{}", "--- Verifying output".green());
 
     for beat in ["auditbeat", "packetbeat", "filebeat"] {
         Command::new(cpaths!(args.elastic_install_directory, beat, beat))
