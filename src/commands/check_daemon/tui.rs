@@ -295,7 +295,7 @@ fn is_generic_right(key: &KeyEvent) -> bool {
     (matches!(key.code, KeyCode::Char('l') | KeyCode::Right) && key.modifiers.is_empty())
 }
 
-async fn handle_cmd_buffer<'scope, 'env: 'scope>(tui: &mut Tui<'_>, c: char) {
+async fn handle_cmd_buffer<'scope, 'env: 'scope>(tui: &mut Tui<'_>, c: char) -> ControlFlow<()> {
     if c != '\n' {
         tui.buffer.push(c);
 
@@ -305,11 +305,11 @@ async fn handle_cmd_buffer<'scope, 'env: 'scope>(tui: &mut Tui<'_>, c: char) {
             tui.buffer.clear();
         }
 
-        return;
+        return ControlFlow::Continue(());
     }
 
     if !tui.buffer.starts_with(":") {
-        return;
+        return ControlFlow::Continue(());
     }
 
     let cmd = tui.buffer[1..].split(' ').collect::<Vec<_>>();
@@ -317,7 +317,7 @@ async fn handle_cmd_buffer<'scope, 'env: 'scope>(tui: &mut Tui<'_>, c: char) {
     match cmd[..] {
         [action @ ("start" | "stop" | "trigger"), "all"] => {
             let Ok(lock) = tui.checks.read() else {
-                return;
+                return ControlFlow::Continue(());
             };
 
             let action = match action {
@@ -335,7 +335,7 @@ async fn handle_cmd_buffer<'scope, 'env: 'scope>(tui: &mut Tui<'_>, c: char) {
         }
         [action @ ("start" | "stop" | "trigger"), id] => {
             let Ok(lock) = tui.checks.read() else {
-                return;
+                return ControlFlow::Continue(());
             };
 
             let action = match action {
@@ -359,10 +359,15 @@ async fn handle_cmd_buffer<'scope, 'env: 'scope>(tui: &mut Tui<'_>, c: char) {
                 }
             }
         }
+        ["quit"] => {
+            return ControlFlow::Break(());
+        }
         _ => {}
     }
 
     tui.buffer.clear();
+
+    return ControlFlow::Continue(());
 }
 
 async fn handle_key_event<'scope, 'env: 'scope>(
@@ -379,9 +384,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         && let KeyCode::Char(c) = key.code
         && let KeyEventKind::Press = key.kind
     {
-        handle_cmd_buffer(tui, c).await;
-
-        return Ok(ControlFlow::Continue(()));
+        return Ok(handle_cmd_buffer(tui, c).await);
     }
 
     if tui.buffer.starts_with(":")
@@ -389,9 +392,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         && let KeyCode::Enter = key.code
         && let KeyEventKind::Press = key.kind
     {
-        handle_cmd_buffer(tui, '\n').await;
-
-        return Ok(ControlFlow::Continue(()));
+        return Ok(handle_cmd_buffer(tui, '\n').await);
     }
 
     if tui.buffer.starts_with(":")
@@ -482,7 +483,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
                         return Ok(ControlFlow::Break(()));
                     }
                     KeyCode::Char(c) => {
-                        handle_cmd_buffer(tui, c).await;
+                        return Ok(handle_cmd_buffer(tui, c).await);
                     }
                     _ => {}
                 }
@@ -518,7 +519,7 @@ async fn handle_key_event<'scope, 'env: 'scope>(
         };
 
         if !handled && let KeyCode::Char(c) = key.code {
-            handle_cmd_buffer(tui, c).await;
+            return Ok(handle_cmd_buffer(tui, c).await);
         }
     }
 
