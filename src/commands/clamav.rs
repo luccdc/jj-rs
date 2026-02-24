@@ -178,7 +178,7 @@ fn install_clamav(settings: DownloadSettings, enable_epel: bool) -> eyre::Result
 
 fn update_defs(settings: DownloadSettings) -> eyre::Result<()> {
     if !has_cmd("freshclam") {
-        eyre::bail!("freshclam not found. Install first: jj clam-av install");
+        install_clamav(settings.clone(), true)?;
     }
 
     run_in_settings(&settings, || -> eyre::Result<()> {
