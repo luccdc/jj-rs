@@ -70,7 +70,7 @@ pub async fn log_handler_thread(
 
     let mut log_file = match config.file.as_deref() {
         Some(f) => get_log_file(f).await,
-        None => None,
+        None => get_log_file(&PathBuf::from("/var/log/jj-check-daemon.json")).await,
     };
     let mut log_socket = match config.ip {
         Some(f) => get_log_socket(f).await,
