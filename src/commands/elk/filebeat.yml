@@ -19,3 +19,9 @@ filebeat.modules:
       enabled: true
     auth:
       enabled: true
+
+  - module: suricata
+    eve:
+      enabled: true
+      paths: ["/var/log/suricata/eve.json"]
+
