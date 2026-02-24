@@ -137,7 +137,8 @@
           winDevShellTools = with pkgs;
             [ wineWow64Packages.minimal ] ++ windowsLibraries;
 
-          devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant shellcheck ]);
+          devShellTools = wslDevShellTools
+            ++ (with pkgs; [ vagrant shellcheck ]);
 
           gzip-binary = name: binary:
             pkgs.runCommand "${name}-gzipped" { } ''
@@ -177,7 +178,9 @@
           commonArgs = {
             inherit src;
 
-            CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+            RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+            CARGO_BUILD_RUSTFLAGS =
+              "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
 
             BUSYBOX_GZIPPED = busybox-gzipped;
             NFT_GZIPPED = nft-gzipped;
@@ -245,9 +248,11 @@
             tar -czvf $out/jj.tgz --mode=755      \
               -C ${install-script}/bin install.sh \
               -C ${jiujitsu-linux} bin            \
-              ${lib.concatMapStringsSep "\\\n"
-                (p:
-                  ''-C ${p} bin '') staticTools}  \
+              ${
+                lib.concatMapStringsSep ''
+                  \
+                '' (p: "-C ${p} bin ") staticTools
+              }  \
               --transform='s,jj-rs,jj,'        \
               --transform='s,^bin,jj-bin,'        \
               --show-transformed-names            \
@@ -278,9 +283,7 @@
 
             shellcheck = pkgs.runCommandNoCC "shellcheck" {
               src = ./.;
-              nativeBuildInputs = with pkgs; [
-                shellcheck
-              ];
+              nativeBuildInputs = with pkgs; [ shellcheck ];
             } ''
               touch $out
               shellcheck --rcfile $src/.shellcheckrc \
@@ -301,7 +304,9 @@
               packages = devShellTools ++ libraries ++ staticTools;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-              CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+              CARGO_BUILD_RUSTFLAGS =
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -317,7 +322,9 @@
               buildInputs = windowsLibraries;
 
               CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
-              CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+              CARGO_BUILD_RUSTFLAGS =
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -331,7 +338,9 @@
               packages = wslDevShellTools ++ libraries;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-              CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+              CARGO_BUILD_RUSTFLAGS =
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;

@@ -11,6 +11,10 @@ pub struct Get {
     /// Filepath to store to. Defaults to filename in URL
     /// If passed `-`, output is printed to standard out
     path: Option<PathBuf>,
+
+    /// Force the use of QUIC to download files
+    #[arg(short, long)]
+    force_quic: bool,
 }
 
 impl super::Command for Get {
@@ -57,7 +61,13 @@ impl super::Command for Get {
             )
         };
 
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::blocking::Client::builder();
+        let client = if self.force_quic {
+            client.http3_prior_knowledge()
+        } else {
+            client
+        };
+        let client = client.build()?;
         let request = client.get(self.url.clone());
 
         let request = if path.extension().is_some_and(|e| e == "zip") {
