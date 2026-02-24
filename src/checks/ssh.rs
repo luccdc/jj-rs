@@ -127,13 +127,13 @@ impl SshTroubleshooter {
             host.is_loopback() || self.local,
             self.disable_download_shell,
             self.sneaky_ip,
-            || {
+            |ip| {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| format!("{e}"))
                     .and_then(|rt| {
-                        rt.block_on(self.try_connection(host, port, &user, &pass))
+                        rt.block_on(self.try_connection(ip.unwrap_or(host), port, &user, &pass))
                             .map_err(|e| format!("{e}"))
                     })
             },

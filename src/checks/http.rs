@@ -183,7 +183,7 @@ impl HttpTroubleshooter {
             self.host.is_loopback() || self.local,
             self.disable_download_shell,
             self.sneaky_ip,
-            || self.try_connection(),
+            |ip| self.try_connection(ip),
         );
 
         let end = Utc::now();
@@ -206,7 +206,7 @@ impl HttpTroubleshooter {
             }))
     }
 
-    fn try_connection(&self) -> eyre::Result<CheckResult> {
+    fn try_connection(&self, ip: Option<Ipv4Addr>) -> eyre::Result<CheckResult> {
         let reference_file = &self
             .reference_file
             .as_ref()
@@ -216,7 +216,7 @@ impl HttpTroubleshooter {
         let client = reqwest::blocking::Client::new();
         let request = client.get(format!(
             "http://{}:{}{}{}",
-            self.host,
+            ip.unwrap_or(self.host),
             self.port,
             if self.uri.starts_with('/') { "" } else { "/" },
             self.uri
