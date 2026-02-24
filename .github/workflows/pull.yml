@@ -18,6 +18,6 @@ jobs:
           name: judah-sotomayor
       - name: Run `nix flake check`
         run: nix flake check
-      - name: Run `cargo clippy`
+      - name: Show clippy logs
         run: |
-          nix develop --command cargo clippy
+          nix log $(nix eval --raw .#checks.x86_64-linux.jj-clippy) | cat
