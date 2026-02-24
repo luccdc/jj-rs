@@ -143,7 +143,21 @@ async fn respond(
     let mut path = root_path.clone();
     let uri = req.uri();
 
-    let uri = uri.path();
+    let Ok(uri) = urlencoding::decode(uri.path()) else {
+        tracing::warn!(
+            client = client.to_string(),
+            code = 400,
+            uri = uri.to_string(),
+            "Decoding URL components failed"
+        );
+        let body = Full::new(Bytes::from("400"))
+            .map_err(std::io::Error::other)
+            .boxed();
+        return Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(body)?);
+    };
+    let uri = uri.to_string();
     path.push(&uri[1..]);
 
     let Ok(path) = path.canonicalize() else {
