@@ -214,6 +214,7 @@ fn render_result_config(
             CheckResultType::Success => "PASS".bg(Color::Green),
             CheckResultType::Failure => "FAIL".bg(Color::Red),
             CheckResultType::NotRun => "NOT RUN".cyan(),
+            CheckResultType::Warning => "WARN".yellow(),
         },
     ])];
 
@@ -233,6 +234,7 @@ fn render_result_config(
                     CheckResultType::Success => "PASS".set_style(style.bg(Color::Green)),
                     CheckResultType::Failure => "FAIL".set_style(style.bg(Color::Red)),
                     CheckResultType::NotRun => "!RUN".set_style(style.cyan()),
+                    CheckResultType::Warning => "WARN".set_style(style.yellow()),
                 },
                 ": ".set_style(style),
                 step.0.clone().set_style(style),
@@ -296,6 +298,7 @@ fn render_step_report(
                     CheckResultType::Success => "PASS".bg(Color::Green),
                     CheckResultType::Failure => "FAIL".bg(Color::Red),
                     CheckResultType::NotRun => "NOT RUN".cyan(),
+                    CheckResultType::Warning => "WARNING".yellow(),
                 },
                 " ".into(),
                 name.into(),
@@ -440,6 +443,9 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                         Some(CheckResultType::Failure) => {
                             "FAIL".set_style(check_line_style.bg(Color::Red))
                         }
+                        Some(CheckResultType::Warning) => {
+                            "WARN".set_style(check_line_style.fg(Color::Yellow))
+                        }
                     },
                     ", ".set_style(check_line_style),
                     if started {
@@ -566,6 +572,9 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                         CheckResultType::NotRun => {
                                             "NOT RUN".set_style(style.fg(Color::Indexed(244)))
                                         }
+                                        CheckResultType::Warning => {
+                                            "WARNING".set_style(style.fg(Color::Yellow))
+                                        }
                                     },
                                     format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
                                         .set_style(style),
@@ -623,6 +632,9 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                         CheckResultType::NotRun => {
                                             "NOT RUN".set_style(style.fg(Color::Indexed(244)))
                                         }
+                                        CheckResultType::Warning => {
+                                            "WARNING".set_style(style.fg(Color::Yellow))
+                                        }
                                     },
                                     format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))
                                         .set_style(style),
@@ -669,6 +681,9 @@ pub fn render(tui: &mut super::Tui<'_>, frame: &mut Frame, inner_area: Rect, tab
                                         }
                                         CheckResultType::NotRun => {
                                             "NOT RUN".set_style(style.fg(Color::Indexed(244)))
+                                        }
+                                        CheckResultType::Warning => {
+                                            "WARNING".set_style(style.fg(Color::Yellow))
                                         }
                                     },
                                     format!(" {}", log.timestamp.format("%Y-%m-%d %H:%M:%S %Z"))

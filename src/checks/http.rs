@@ -222,7 +222,17 @@ impl HttpTroubleshooter {
             self.uri
         ));
 
-        let response = request.send()?;
+        let response = match request.send() {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CheckResult::fail(
+                    "Server failed to respond properly",
+                    serde_json::json!({
+                        "send_error": format!("{e}")
+                    }),
+                ));
+            }
+        };
 
         if response.status().as_u16() != self.valid_status {
             return Ok(CheckResult::fail(

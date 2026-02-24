@@ -89,7 +89,7 @@ impl CheckStep<'_> for PamCheck {
                 }),
             ))
         } else {
-            Ok(CheckResult::fail(
+            Ok(CheckResult::warn(
                 "Failed to sign in as user",
                 serde_json::json!({
                     "pam_test_output": stdout.split('\n').collect::<serde_json::Value>(),

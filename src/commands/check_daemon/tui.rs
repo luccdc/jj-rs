@@ -386,6 +386,17 @@ async fn handle_key_event<'scope, 'env: 'scope>(
     checks_scope: &'scope std::thread::Scope<'scope, 'env>,
     send_shutdown: &tokio::sync::broadcast::Sender<()>,
 ) -> eyre::Result<ControlFlow<()>> {
+    if let Event::Key(key) = event
+        && let KeyCode::Char('l') = key.code
+        && let KeyEventKind::Press = key.kind
+        && !(key.modifiers & KeyModifiers::CONTROL).is_empty()
+    {
+        let _ = std::io::stdout().execute(crossterm::terminal::Clear(
+            crossterm::terminal::ClearType::Purge,
+        ));
+        return Ok(ControlFlow::Continue(()));
+    }
+
     if tui.buffer.starts_with(":")
         && let Event::Key(key) = event
         && let KeyCode::Char(c) = key.code

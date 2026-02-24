@@ -43,6 +43,9 @@ impl super::Command for Smtp {
                     CheckResultType::Success => {
                         println!("{}", "Login successful!".green());
                     }
+                    CheckResultType::Warning => {
+                        println!("{}", "Login responded with a warning".yellow());
+                    }
                 }
 
                 Ok(())
