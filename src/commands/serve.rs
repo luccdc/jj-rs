@@ -380,6 +380,20 @@ async fn respond_dir_html(
         .collect::<Result<Vec<_>, _>>()
         .await?;
 
+    if entries
+        .iter()
+        .find(|entry| entry.path().ends_with("index.html"))
+        .is_some()
+    {
+        let mut path = path.clone();
+        path.push("index.html");
+        let index = tokio::fs::read_to_string(path).await?;
+
+        return Ok(Full::new(Bytes::from(index))
+            .map_err(std::io::Error::other)
+            .boxed());
+    }
+
     let mut string_entries = entries
         .iter()
         .map(|e| {
