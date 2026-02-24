@@ -187,7 +187,7 @@ impl CheckStep<'_> for PassiveTcpdumpCheck {
                     "system_logs": logs
                 }),
             ),
-            Ok(Err(e)) => CheckResult::fail(
+            Ok(Err(e)) => CheckResult::warn(
                 "System error occurred when attempting to do a passive tcpdump check",
                 json!({
                     "debug_route": route,
@@ -195,7 +195,7 @@ impl CheckStep<'_> for PassiveTcpdumpCheck {
                     "sytem_error": format!("{e:?}"),
                 }),
             ),
-            Err(_) => CheckResult::fail(
+            Err(_) => CheckResult::warn(
                 "System did not respond in an appropriate amount of time when doing a tcpdump check",
                 json!({
                     "debug_route": route,

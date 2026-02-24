@@ -53,63 +53,97 @@ impl CheckStep<'_> for TcpConnectCheck {
                 ))
             }
         } else if self.addr.ip().is_loopback() {
+            use crate::utils::checks::CheckResultType as CRT;
+
             let cont = DownloadContainer::new(None, self.download_container_ip)
-                .context("Could not create download container for TCP check")?;
-            let client1 = cont
-                .run(|| {
+                .context("Could not create download container for TCP check");
+            let client1 = cont.and_then(|cont| {
+                cont.run(|| {
                     let addr = SocketAddr::new(IpAddr::V4(cont.wan_ip()), self.addr.port());
                     TcpStream::connect_timeout(&addr, timeout).map(|_| ())
                 })
-                .context("Could not run TCP connection test in download container")?;
+                .context("Could not run TCP connection test in download container")
+            });
             let client2 = TcpStream::connect_timeout(&self.addr, timeout).map(|_| ());
 
-            Ok(match (client1, client2) {
-                (Ok(()), Ok(())) => CheckResult::succeed(
+            let timestamp = chrono::Utc::now();
+
+            let (result1, message1, json1) = match client1 {
+                Ok(Ok(())) => (
+                    CRT::Success,
                     format!(
-                        "Successfully connected to {}:{} and successfully connected to {} from download container",
+                        "Successfully connected to {}:{} from download container",
                         self.addr.ip(),
-                        self.addr.port(),
                         self.addr.port()
                     ),
-                    serde_json::json!(null),
+                    serde_json::json!({}),
                 ),
-                (Ok(()), Err(e)) => CheckResult::fail(
+                Ok(Err(e)) => (
+                    CRT::Failure,
                     format!(
-                        "Failed to connect to {}:{}, but successfully connected to port {} from the download shell",
-                        self.addr.ip(),
-                        self.addr.port(),
-                        self.addr.port()
-                    ),
-                    serde_json::json!({
-                        "local_connection_error": format!("{e:?}")
-                    }),
-                ),
-                (Err(e), Ok(())) => CheckResult::fail(
-                    format!(
-                        "Successfully connected to {}:{}, but failed to connect to port {} from the download container",
-                        self.addr.ip(),
-                        self.addr.port(),
-                        self.addr.port()
-                    ),
-                    serde_json::json!({
-                        "container_connection_error": format!("{e:?}")
-                    }),
-                ),
-                (Err(e1), Err(e2)) => CheckResult::fail(
-                    format!(
-                        "Failed to connect to {}:{} and failed from the download container",
+                        "Failed to connect to {}:{} from download container",
                         self.addr.ip(),
                         self.addr.port()
                     ),
                     serde_json::json!({
-                        "container_connection_error": format!("{e1:?}"),
-                        "local_connection_error": format!("{e2:?}"),
+                        "container_error": format!("{e}")
                     }),
                 ),
+                Err(e) => (
+                    CRT::Warning,
+                    format!(
+                        "Failed to create download container to connect to {}:{}",
+                        self.addr.ip(),
+                        self.addr.port()
+                    ),
+                    serde_json::json!({
+                        "container_create_error": format!("{e}")
+                    }),
+                ),
+            };
+
+            let (result2, message2, json2) = match client2 {
+                Ok(()) => (
+                    CRT::Success,
+                    format!("successfully connected directly"),
+                    serde_json::json!({}),
+                ),
+                Err(e) => (
+                    CRT::Failure,
+                    format!("failed to connect directly"),
+                    serde_json::json!({
+                        "direct_error": format!("{e}")
+                    }),
+                ),
+            };
+
+            let extra_details = match (json1, json2) {
+                (serde_json::Value::Object(mut m1), serde_json::Value::Object(m2)) => {
+                    m1.extend(m2);
+                    serde_json::Value::Object(m1)
+                }
+                (_, json2) => json2,
+            };
+
+            Ok(CheckResult {
+                log_item: format!(
+                    "{message1} {} {message2}",
+                    if result1 == result2 { "and" } else { "but" }
+                ),
+                timestamp,
+                extra_details,
+                result_type: result1 | result2,
             })
         } else {
-            let cont = DownloadContainer::new(None, self.download_container_ip)
-                .context("Could not create download container for TCP check")?;
+            let cont = match DownloadContainer::new(None, self.download_container_ip) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(CheckResult::warn(
+                        "Could not create download container",
+                        serde_json::json!({"download_container_error": format!("{e}")}),
+                    ));
+                }
+            };
             let addr = SocketAddr::new(self.addr.ip(), self.addr.port());
             let client = cont
                 .run(|| TcpStream::connect_timeout(&addr, timeout).map(|_| ()))

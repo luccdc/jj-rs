@@ -319,6 +319,7 @@ async fn basic_log_runner<'scope, 'env: 'scope>(
                         CheckResultType::Failure => "Failure".red(),
                         CheckResultType::NotRun => "NotRun".cyan(),
                         CheckResultType::Success => "Success".green(),
+                        CheckResultType::Warning => "Warning".yellow(),
                     },
                 )?;
 
@@ -334,6 +335,7 @@ async fn basic_log_runner<'scope, 'env: 'scope>(
                                 CheckResultType::Failure => "Failure".red(),
                                 CheckResultType::NotRun => "NotRun".cyan(),
                                 CheckResultType::Success => "Success".green(),
+                                CheckResultType::Warning => "Warning".yellow(),
                             },
                             check.1.log_item,
                             details_str.unwrap_or("<serialization error>".to_string())
@@ -348,6 +350,7 @@ async fn basic_log_runner<'scope, 'env: 'scope>(
                                 CheckResultType::Failure => "Failure".red(),
                                 CheckResultType::NotRun => "NotRun".cyan(),
                                 CheckResultType::Success => "Success".green(),
+                                CheckResultType::Warning => "Warning".yellow(),
                             },
                             check.1.log_item,
                         )?;

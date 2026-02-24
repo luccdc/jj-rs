@@ -249,9 +249,11 @@ impl ImmediateTcpdumpCheck {
         // shared memory and a shared semaphore
         use libc::sem_t;
 
+        const ERR_MSG_LEN: usize = 1024;
         struct Sync {
             semaphore: sem_t,
-            err: Result<u16, ()>,
+            err: Result<u16, usize>,
+            err_msg: [u8; ERR_MSG_LEN],
         }
 
         const SYNC_SIZE: usize = std::mem::size_of::<Sync>();
@@ -288,12 +290,16 @@ impl ImmediateTcpdumpCheck {
                     libc::sem_wait(semaphore);
                     libc::sem_destroy(semaphore);
 
-                    (*sync).err = self
-                        .make_connection(&container)
-                        .inspect_err(|e| {
-                            eprintln!("Could not make connection from download container: {e:?}");
-                        })
-                        .map_err(|_| {});
+                    match self.make_connection(&container) {
+                        Ok(v) => (*sync).err = Ok(v),
+                        Err(e) => {
+                            let err_msg = format!("{e}");
+                            let err_msg = err_msg.as_bytes();
+                            let len = err_msg.len().min(ERR_MSG_LEN);
+                            (&mut (*sync).err_msg)[..len].clone_from_slice(err_msg);
+                            (*sync).err = Err(len);
+                        }
+                    }
 
                     // The container will be cleaned by the parent process
                     // Without this call, the child process will attempt to
@@ -332,14 +338,20 @@ impl ImmediateTcpdumpCheck {
         }
 
         let actual_source_port = unsafe {
-            (*sync).err.map_err(|()| {
-                eyre::eyre!("Could not perform net connection and specify source port")
+            (*sync).err.map_err(|err_len| {
+                eyre::eyre!(
+                    "Could not perform net connection and specify source port: {}",
+                    String::from_utf8_lossy(&(&(*sync).err_msg)[..err_len])
+                )
             })
         };
 
         unsafe {
             libc::munmap(sync.cast(), SYNC_SIZE);
         }
+
+        // wait to drop the container until *everything* is done
+        drop(container);
 
         match (guess_source_port, actual_source_port) {
             (Ok(Ok(gsp)), Ok(asp)) if gsp == asp => Ok(CheckResult::succeed(
@@ -354,7 +366,7 @@ impl ImmediateTcpdumpCheck {
             // verify that the connection made and the connection analyzed were
             // the same without storing all the packets
             (Ok(Ok(_)), Ok(_)) => Box::pin(self.run_check()).await,
-            (Ok(Ok(_)), Err(e)) => Ok(CheckResult::succeed(
+            (Ok(Ok(_)), Err(e)) => Ok(CheckResult::warn(
                 "Successfully sent packets out and received a result, but encountered an error when checking the source port",
                 json!({
                     "inbound_packet_count": inbound_packet_count,
@@ -362,7 +374,7 @@ impl ImmediateTcpdumpCheck {
                     "system_error": format!("{e:?}"),
                 }),
             )),
-            (Ok(Err(e)), _) => Ok(CheckResult::fail(
+            (Ok(Err(e)), _) => Ok(CheckResult::warn(
                 "System error when performing a tcpdump check",
                 json!({
                     "inbound_packet_count": inbound_packet_count,
@@ -370,7 +382,7 @@ impl ImmediateTcpdumpCheck {
                     "system_error": format!("{e:?}")
                 }),
             )),
-            (Err(_), _) => Ok(CheckResult::fail(
+            (Err(_), _) => Ok(CheckResult::warn(
                 "Timeout when performing tcpdump check",
                 json!({
                     "inbound_packet_count": inbound_packet_count,

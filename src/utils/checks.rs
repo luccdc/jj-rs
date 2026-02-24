@@ -83,7 +83,7 @@ use std::{
     fmt,
     io::{BufRead, Write},
     net::Ipv4Addr,
-    ops::{BitAndAssign, Deref},
+    ops::{BitAndAssign, BitOr, Deref},
     path::PathBuf,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -340,6 +340,7 @@ impl Serialize for CheckValue {
 pub enum CheckResultType {
     Success,
     Failure,
+    Warning,
     NotRun,
 }
 
@@ -356,7 +357,26 @@ impl BitAndAssign for CheckResultType {
             (CRT::NotRun, rhs) => {
                 *self = rhs;
             }
+            (CRT::Warning, CRT::NotRun) => {}
+            (CRT::Warning, rhs) => {
+                *self = rhs;
+            }
             (_, CRT::NotRun) => {}
+            (_, CRT::Warning) => {}
+        }
+    }
+}
+
+impl BitOr for CheckResultType {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        use CheckResultType as CRT;
+        match (self, rhs) {
+            (CRT::Success, _) | (_, CRT::Success) => CRT::Success,
+            (CRT::Failure, _) | (_, CRT::Failure) => CRT::Failure,
+            (CRT::Warning, _) | (_, CRT::Warning) => CRT::Warning,
+            _ => CRT::NotRun,
         }
     }
 }
@@ -387,6 +407,16 @@ impl CheckResult {
         Self {
             timestamp: Utc::now(),
             result_type: CheckResultType::NotRun,
+            log_item: log_item.into(),
+            extra_details,
+        }
+    }
+
+    /// Utility function to quickly mark a check as warning of something weird happening
+    pub fn warn<I: Into<String>>(log_item: I, extra_details: serde_json::Value) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            result_type: CheckResultType::Warning,
             log_item: log_item.into(),
             extra_details,
         }
@@ -542,6 +572,12 @@ impl CliTroubleshooter {
             CheckResultType::NotRun => {
                 println!("{}", "No troubleshooting steps were run".cyan());
             }
+            CheckResultType::Warning => {
+                println!(
+                    "{}",
+                    "Troubleshoot steps were run and only resulted in warnings".cyan()
+                );
+            }
             CheckResultType::Success => {
                 println!("{}", "Service appears to be up!".green());
 
@@ -607,6 +643,20 @@ impl CliTroubleshooter {
                         },
                         check.name().cyan(),
                         "Check not run: ".cyan(),
+                        &value.log_item
+                    );
+                    self.has_rendered_newline_for_step = true;
+                }
+                CheckResultType::Warning => {
+                    println!(
+                        "{}[{}] {} {}{has_extra_nl}",
+                        if self.has_rendered_newline_for_step {
+                            ""
+                        } else {
+                            "\n"
+                        },
+                        check.name().yellow(),
+                        "Check produced warning: ".yellow(),
                         &value.log_item
                     );
                     self.has_rendered_newline_for_step = true;
@@ -712,7 +762,7 @@ pub trait IntoCheckResult {
 
 impl<E> IntoCheckResult for Result<CheckResult, E>
 where
-    E: std::fmt::Debug,
+    E: std::fmt::Debug + std::fmt::Display,
 {
     fn into_check_result<I: Into<String>>(self, a: I) -> CheckResult {
         match self {
@@ -720,7 +770,7 @@ where
             Err(e) => CheckResult::fail(
                 a,
                 serde_json::json!({
-                    "error": format!("{e:?}")
+                    "error": format!("{e}")
                 }),
             ),
         }
