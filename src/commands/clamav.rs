@@ -49,7 +49,10 @@ pub enum ClamAvCmd {
     },
 }
 
-fn make_download_settings(use_download_shell: bool, sneaky_ip: Option<Ipv4Addr>) -> DownloadSettings {
+fn make_download_settings(
+    use_download_shell: bool,
+    sneaky_ip: Option<Ipv4Addr>,
+) -> DownloadSettings {
     if use_download_shell {
         DownloadSettings::Container { name: None, sneaky_ip }
     } else {
@@ -64,6 +67,7 @@ fn has_cmd(cmd: &str) -> bool {
 }
 
 /// Run a closure either inside the download container (if enabled) or directly.
+/// Use this only when you *need* the download-container routing.
 fn run_in_settings<F>(settings: &DownloadSettings, f: F) -> eyre::Result<()>
 where
     F: FnOnce() -> eyre::Result<()>,
@@ -79,15 +83,17 @@ where
 }
 
 fn dnf_makecache(settings: &DownloadSettings) -> eyre::Result<()> {
+    // This can require network access, so preserve container behavior if enabled.
     run_in_settings(settings, || -> eyre::Result<()> {
         // Non-destructive; refreshes metadata so package availability is current.
-        // If repos are unreachable, this may fail; thats cool cuz we still try install afterwards.
+        // If repos are unreachable, this may fail; we still attempt install afterwards.
         let _ = system("dnf -y makecache --refresh");
         Ok(())
     })
 }
 
 /// Diagnostic helper for Rocky/RHEL-family when clamav isn't found.
+/// NOTE: do NOT run inside download container; it's debug-only and should reflect the host repo config.
 fn print_rhel_repo_diag() {
     eprintln!("\n--- dnf enabled repos (for debugging) ---");
     let _ = system("dnf -q repolist --enabled || true");
@@ -97,7 +103,9 @@ fn print_rhel_repo_diag() {
 }
 
 /// Enable EPEL by installing epel-release using the shared package installer.
+/// This preserves `-d` container behavior and avoids raw `system("dnf install ...")` in command code.
 fn maybe_enable_epel(settings: &DownloadSettings) -> eyre::Result<()> {
+    // Installing epel-release should be idempotent (already installed => ok).
     install_dnf_packages(settings.clone(), &["epel-release"])
         .context("Failed to install epel-release (EPEL enable)")?;
 
@@ -130,30 +138,30 @@ fn install_clamav(settings: DownloadSettings, enable_epel: bool) -> eyre::Result
             Err(e1) => {
                 // 2) Optional: attempt EPEL and retry once
                 if enable_epel {
-                    eprintln!("ClamAV install failed; attempting to enable EPEL then retry...");
+                    eprintln!("clamav not found in enabled repos; attempting to enable EPEL...");
                     let _ = maybe_enable_epel(&settings);
 
                     match install_clamav_dnf(&settings) {
                         Ok(()) => return Ok(()),
                         Err(e2) => {
-                            // 3) Still failing -> print diagnostics and return a useful error (hopefully fingers crossed)
+                            // 3) Still failing -> print diagnostics and return useful error
                             print_rhel_repo_diag();
+
                             return Err(e2).wrap_err_with(|| {
-                                format!(
-                                    "ClamAV install still failed after EPEL attempt.\n\
-                                     - If this is Rocky/RHEL-family, ClamAV is often provided by EPEL, \
-                                     but it may not exist for your OS major version yet.\n\
-                                     - Verify EPEL is enabled: dnf repolist --enabled | grep -i epel\n\
-                                     - Try: dnf search clamav (and confirm which repos provide it)\n\
-                                     - If the repo set truly doesn’t provide clamav, you’ll need an \
-                                     alternate source (different repos or OS version)."
-                                )
+                                "clamav package not found in enabled dnf repositories.\n\
+                                 - If this is Rocky/RHEL-family, ClamAV is often provided by EPEL, \
+                                 but it may not exist for your OS major version yet.\n\
+                                 - Verify EPEL is enabled: dnf repolist --enabled | grep -i epel\n\
+                                 - If 'dnf search clamav' shows results but install fails, check for \
+                                 dnf excludes or repo restrictions on the host.\n\
+                                 - If the repo set truly doesn’t provide clamav, you’ll need an \
+                                 alternate source (different repos or OS version)."
+                                    .to_string()
                             });
                         }
                     }
                 }
 
-                // No EPEL attempt requested; return the original error.
                 return Err(e1);
             }
         }
@@ -198,6 +206,7 @@ impl super::Command for ClamAv {
                 update_defs(ds)?;
             }
         }
+
         Ok(())
     }
 }
