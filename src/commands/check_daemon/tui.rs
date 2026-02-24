@@ -17,7 +17,10 @@ use std::{
 };
 
 use chrono::Utc;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::{
+    ExecutableCommand,
+    event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+};
 use futures::StreamExt;
 use ratatui::{
     Frame,
@@ -59,6 +62,10 @@ pub async fn main<'scope, 'env: 'scope>(
 ) -> eyre::Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
+
+    let _ = std::io::stdout().execute(crossterm::terminal::Clear(
+        crossterm::terminal::ClearType::Purge,
+    ));
 
     let mut terminal = ratatui::init();
     let mut reader = crossterm::event::EventStream::new();
