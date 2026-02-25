@@ -43,8 +43,12 @@ define_commands! {
         [unix] AptInstall, ai => apt::AptInstall,
         [unix] DnfInstall, di => dnf::DnfInstall,
         [unix] Ssh => ssh::Ssh,
+<<<<<<< HEAD
         Smtp => smtp::Smtp,
 
+=======
+        [unix] ClamAv, cav => clamav::ClamAv,
+>>>>>>> d0ef294 (feat: add initial clamav)
         // Embedded binaries
         [unix] Nft => nft::Nft,
         [unix] Zsh => zsh::Zsh,
