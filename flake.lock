@@ -33,22 +33,6 @@
         "type": "github"
       }
     },
-    "libpcap-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1762794404,
-        "narHash": "sha256-r5uGGgXW24GrdT7m+w919cd9usOl2hLz4j2Yxkx6cGg=",
-        "ref": "refs/heads/master",
-        "rev": "c15e2e79023e32d0f4ca7be43236534fc651909e",
-        "revCount": 6792,
-        "type": "git",
-        "url": "https://github.com/the-tcpdump-group/libpcap"
-      },
-      "original": {
-        "type": "git",
-        "url": "https://github.com/the-tcpdump-group/libpcap"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1761373498,
@@ -80,25 +64,11 @@
         "type": "github"
       }
     },
-    "pamtester": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-pmdgzp1H4qeftbAG5ppmWnKnCwIO4fQSyZgqBb5Md7c=",
-        "type": "file",
-        "url": "http://ftp.de.debian.org/debian/pool/main/p/pamtester/pamtester_0.1.2-4_amd64.deb"
-      },
-      "original": {
-        "type": "file",
-        "url": "http://ftp.de.debian.org/debian/pool/main/p/pamtester/pamtester_0.1.2-4_amd64.deb"
-      }
-    },
     "root": {
       "inputs": {
         "crane": "crane",
         "flake-parts": "flake-parts",
-        "libpcap-src": "libpcap-src",
         "nixpkgs": "nixpkgs",
-        "pamtester": "pamtester",
         "rust-overlay": "rust-overlay"
       }
     },

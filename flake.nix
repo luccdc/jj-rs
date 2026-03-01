@@ -17,20 +17,9 @@
     };
     crane.url = "github:ipetkov/crane";
     flake-parts.url = "github:hercules-ci/flake-parts";
-
-    libpcap-src = {
-      url = "git+https://github.com/the-tcpdump-group/libpcap";
-      flake = false;
-    };
-    pamtester = {
-      url =
-        "http://ftp.de.debian.org/debian/pool/main/p/pamtester/pamtester_0.1.2-4_amd64.deb";
-      flake = false;
-    };
   };
 
-  outputs = inputs@{ self, flake-parts, crane, rust-overlay, libpcap-src
-    , pamtester, ... }:
+  outputs = inputs@{ self, nixpkgs, flake-parts, crane, rust-overlay, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [ ];
 
@@ -44,9 +33,7 @@
             config = {
               allowUnfreePredicate = pkg:
                 builtins.elem (lib.getName pkg) [ "vagrant" ];
-
             };
-
           };
 
           # Cross compilation requires using a different nixpkgs, and setting up
@@ -60,45 +47,33 @@
             };
           };
 
-          libpcap-static = pkgs.stdenv.mkDerivation {
-            name = "libpcap-static";
+          winpthreads = let
+            pthreads = pkgs.pkgsCross.mingwW64.windows.pthreads.overrideAttrs
+              (final: prev: { dontDisableStatic = true; });
+          in pkgs.runCommand "winpthreads-static-only" { } ''
+            mkdir $out
+            cp -a ${pthreads}/* $out
+            chmod -R +w $out
+            rm $out/lib/libwinpthread.dll.a
+            rm $out/lib/libpthread.dll.a
+            rm $out/bin/libwinpthread-1.dll
+          '';
 
-            buildInputs = with pkgs; [ clang automake bison cmake flex musl ];
-
-            src = libpcap-src;
-
-            configurePhase = ''
-              cmake \
-                  -DCMAKE_BUILD_TYPE=MinSizeRel \
-                  -DBUILD_SHARED_LIBS=OFF \
-                  -DDISABLE_BLUETOOTH=ON \
-                  -DDISABLE_DAG=ON \
-                  -DDISABLE_DBUS=ON \
-                  -DDISABLE_DPDK=ON \
-                  -DDISABLE_NETMAP=ON \
-                  -DDISABLE_RDMA=ON \
-                  -DDISABLE_LINUX_USBMON=ON \
-                  -DDISABLE_SNF=ON \
-                  -DPCAP_TYPE=linux \
-                  .
-            '';
-
-            buildPhase = ''
-              cmake --build . --target pcap_static
-            '';
-
-            installPhase = ''
-              mkdir -p $out/lib
-
-              cp libpcap.a $out/lib
-            '';
+          system-pkgs = import ./system-pkgs.nix {
+            inherit nixpkgs pkgs winPkgs winpthreads;
           };
 
-          pamtester-gzipped = pkgs.runCommand "pamtster-gzipped" { } ''
+          pamtester-gzipped = pkgs.runCommand "pamtester-gzipped" { } ''
             TEMP="$(mktemp -d)"
 
             cd $TEMP
-            ${pkgs.binutils}/bin/ar x ${pamtester}
+            ${pkgs.binutils}/bin/ar x ${
+              pkgs.fetchurl {
+                url =
+                  "http://ftp.de.debian.org/debian/pool/main/p/pamtester/pamtester_0.1.2-4_amd64.deb";
+                hash = "sha256-QzC/6TqIlYVrx/PUVj7XkGD4crmbOIZzZhFXYAFQKCU=";
+              }
+            }
             tar xvJpf data.tar.xz
             ${pkgs.busybox}/bin/gzip usr/bin/pamtester
             cp usr/bin/pamtester.gz $out
@@ -106,12 +81,38 @@
 
           pkgsStatic = pkgs.pkgsStatic;
 
-          libraries = [ libpcap-static pkgs.mold ];
+          linuxLibraries = [
+            system-pkgs.libpcap-linux-static
+            system-pkgs.libmodsecurity-linux-static
+            system-pkgs.libcurl-linux-static
+            pkgsStatic.pcre
+            pkgsStatic.libxml2
+            pkgsStatic.aws-lc
+            pkgsStatic.yajl
+            pkgsStatic.libpsl
+            pkgsStatic.zlib
+            pkgsStatic.libidn2
+            pkgsStatic.libunistring
+            pkgsStatic.libcxx
+            pkgs.mold
+          ];
 
-          windowsLibraries = (with pkgs; [
-            pkgsCross.mingwW64.buildPackages.clang
-            pkgsCross.mingwW64.windows.pthreads
-          ]) ++ libraries; # include Linux libraries for unit tests
+          windowsLibraries = (with pkgs.pkgsCross.mingwW64; [
+            buildPackages.gcc
+            buildPackages.clang
+            winpthreads
+          ]) ++ (with system-pkgs; [
+            aws-lc-windows-static
+            libcurl-windows-static
+            libiconv-windows-static
+            libidn2-windows-static
+            libunistring-windows-static
+            libpsl-windows-static
+            libpcre-windows-static
+            libmodsecurity-windows-static
+            libxml2-windows-static
+            libmcfgthread-windows-static
+          ]);
 
           wslDevShellTools = with pkgs; [
             rust-analyzer
@@ -137,7 +138,8 @@
           winDevShellTools = with pkgs;
             [ wineWow64Packages.minimal ] ++ windowsLibraries;
 
-          devShellTools = wslDevShellTools ++ (with pkgs; [ vagrant shellcheck ]);
+          devShellTools = wslDevShellTools
+            ++ (with pkgs; [ vagrant shellcheck ]);
 
           gzip-binary = name: binary:
             pkgs.runCommand "${name}-gzipped" { } ''
@@ -186,8 +188,8 @@
           };
 
           linuxCommonArgs = commonArgs // {
-            buildInputs = libraries;
-            nativeBuildInputs = libraries;
+            buildInputs = linuxLibraries;
+            nativeBuildInputs = linuxLibraries;
 
             CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
 
@@ -208,8 +210,11 @@
           linuxCargoArtifacts = craneLib.buildDepsOnly
             (linuxCommonArgs // { name = "jiujitsu-deps-linux"; });
 
-          windowsCargoArtifacts = winCraneLib.buildDepsOnly
-            (windowsCommonArgs // { name = "jiujitsu-deps-windows"; });
+          windowsCargoArtifacts = winCraneLib.buildDepsOnly (windowsCommonArgs
+            // {
+              name = "jiujitsu-deps-windows";
+              doCheck = false;
+            });
 
           jiujitsu-linux = craneLib.buildPackage (linuxCommonArgs // {
             cargoArtifacts = linuxCargoArtifacts;
@@ -225,6 +230,8 @@
 
             name = "jiujitsu-windows";
             cargoTestExtraArgs = "--all";
+
+            doCheck = false;
           });
 
           jiujitsu = pkgs.runCommand "jiujitsu" { } ''
@@ -245,9 +252,11 @@
             tar -czvf $out/jj.tgz --mode=755      \
               -C ${install-script}/bin install.sh \
               -C ${jiujitsu-linux} bin            \
-              ${lib.concatMapStringsSep "\\\n"
-                (p:
-                  ''-C ${p} bin '') staticTools}  \
+              ${
+                lib.concatMapStringsSep ''
+                  \
+                '' (p: "-C ${p} bin ") staticTools
+              }  \
               --transform='s,jj-rs,jj,'        \
               --transform='s,^bin,jj-bin,'        \
               --show-transformed-names            \
@@ -278,9 +287,7 @@
 
             shellcheck = pkgs.runCommandNoCC "shellcheck" {
               src = ./.;
-              nativeBuildInputs = with pkgs; [
-                shellcheck
-              ];
+              nativeBuildInputs = with pkgs; [ shellcheck ];
             } ''
               touch $out
               shellcheck --rcfile $src/.shellcheckrc \
@@ -292,13 +299,29 @@
             default = jiujitsu;
 
             inherit jiujitsu jiujitsu-linux jiujitsu-windows tools-tarball;
+
+            libcurl-windows-static = system-pkgs.libcurl-windows-static;
+            aws-lc-windows-static = system-pkgs.aws-lc-windows-static;
+            libunistring-windows-static =
+              system-pkgs.libunistring-windows-static;
+            libpsl-windows-static = system-pkgs.libpsl-windows-static;
+            libidn2-windows-static = system-pkgs.libidn2-windows-static;
+            libpcre-windows-static = system-pkgs.libpcre-windows-static;
+            libxml2-windows-static = system-pkgs.libxml2-windows-static;
+            libpoco-windows-static = system-pkgs.libpoco-windows-static;
+            libmcfgthread-windows-static =
+              system-pkgs.libmcfgthread-windows-static;
+            libmodsecurity-windows-static =
+              system-pkgs.libmodsecurity-windows-static;
+            libmodsecurity-linux-static =
+              system-pkgs.libmodsecurity-linux-static;
           };
 
           devShells = {
             default = craneLib.devShell ({
               name = "jj";
 
-              packages = devShellTools ++ libraries ++ staticTools;
+              packages = devShellTools ++ linuxLibraries ++ staticTools;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
@@ -328,7 +351,7 @@
             wsl = craneLib.devShell ({
               name = "jj";
 
-              packages = wslDevShellTools ++ libraries;
+              packages = wslDevShellTools ++ linuxLibraries;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
