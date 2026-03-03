@@ -168,6 +168,13 @@
               targets = [ "x86_64-pc-windows-gnu" ];
             });
 
+          common-ruleset = pkgs.fetchFromGitHub {
+            owner = "coreruleset";
+            repo = "coreruleset";
+            rev = "v4.24.0";
+            hash = "sha256-BUkeQPXjS5t+UQEBjj2p0SC89q38xDLOcnsSshcgdFg=";
+          };
+
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
@@ -180,6 +187,8 @@
             inherit src;
 
             CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+
+            COMMON_RULESET = common-ruleset;
 
             BUSYBOX_GZIPPED = busybox-gzipped;
             NFT_GZIPPED = nft-gzipped;
@@ -299,22 +308,6 @@
             default = jiujitsu;
 
             inherit jiujitsu jiujitsu-linux jiujitsu-windows tools-tarball;
-
-            libcurl-windows-static = system-pkgs.libcurl-windows-static;
-            aws-lc-windows-static = system-pkgs.aws-lc-windows-static;
-            libunistring-windows-static =
-              system-pkgs.libunistring-windows-static;
-            libpsl-windows-static = system-pkgs.libpsl-windows-static;
-            libidn2-windows-static = system-pkgs.libidn2-windows-static;
-            libpcre-windows-static = system-pkgs.libpcre-windows-static;
-            libxml2-windows-static = system-pkgs.libxml2-windows-static;
-            libpoco-windows-static = system-pkgs.libpoco-windows-static;
-            libmcfgthread-windows-static =
-              system-pkgs.libmcfgthread-windows-static;
-            libmodsecurity-windows-static =
-              system-pkgs.libmodsecurity-windows-static;
-            libmodsecurity-linux-static =
-              system-pkgs.libmodsecurity-linux-static;
           };
 
           devShells = {
@@ -325,6 +318,8 @@
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+
+              COMMON_RULESET = common-ruleset;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -342,6 +337,8 @@
               CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
+              COMMON_RULESET = common-ruleset;
+
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
               ZSH_GZIPPED = zsh-gzipped;
@@ -355,6 +352,8 @@
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
               CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
+
+              COMMON_RULESET = common-ruleset;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
