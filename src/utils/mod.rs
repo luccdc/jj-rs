@@ -15,9 +15,11 @@ pub mod checks;
 pub mod clap;
 #[cfg(unix)]
 pub mod containers;
+pub mod curl;
 #[cfg(unix)]
 pub mod download_container;
 pub mod logs;
+pub mod modsecurity;
 #[cfg(unix)]
 pub mod nft;
 pub mod os_version;
@@ -40,6 +42,7 @@ pub mod ssh;
 pub mod system;
 #[cfg(unix)]
 pub mod systemd;
+
 /// Alias for Perl's qx
 ///
 /// Runs the command provided and returns the output as a string as well as the exit code.
