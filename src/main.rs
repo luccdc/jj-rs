@@ -28,6 +28,7 @@ define_commands! {
         [unix] DownloadShell, ds => download_shell::DownloadShell,
         [unix] Elk => elk::Elk,
         [unix] Wazuh, wz => wazuh::Wazuh,
+        Proxy, pr => proxy::Proxy,
 
         // sysinfo commands
         Stat, st => stat::Stat,
