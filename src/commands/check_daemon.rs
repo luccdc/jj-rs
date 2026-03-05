@@ -62,12 +62,150 @@ mod tui;
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct CheckId(Arc<str>, Arc<str>);
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone)]
 struct TroubleshooterResult {
     timestamp: chrono::DateTime<chrono::Utc>,
     check_id: CheckId,
     overall_result: CheckResultType,
     steps: Vec<(String, CheckResult)>,
+}
+
+impl Serialize for TroubleshooterResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("timestamp", &self.timestamp)?;
+        map.serialize_entry(
+            "check_id",
+            &format!("{}.{}", self.check_id.0, self.check_id.1),
+        )?;
+        map.serialize_entry("overall_result", &self.overall_result)?;
+
+        for (i, (step_id, result)) in self.steps.iter().enumerate() {
+            let mut inner_map = HashMap::new();
+            inner_map.insert(
+                "result",
+                serde_json::json!({
+                    "timestamp": result.timestamp,
+                    "result_type": result.result_type,
+                    "log_item": result.log_item.clone(),
+                    "extra_details": result.extra_details.clone()
+                }),
+            );
+            inner_map.insert("name", step_id.to_string().into());
+            map.serialize_entry(
+                &format!(
+                    "step_{}_{}",
+                    i + 1,
+                    step_id.to_lowercase().replace(' ', "_")
+                ),
+                &inner_map,
+            )?;
+        }
+
+        map.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TroubleshooterResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+
+        struct ResultVisitor;
+
+        impl<'v> de::Visitor<'v> for ResultVisitor {
+            type Value = TroubleshooterResult;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct TroubleshooterResult")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'v>,
+            {
+                #[derive(Deserialize)]
+                struct SerializedCheck<'a> {
+                    result: CheckResult,
+                    name: &'a str,
+                }
+
+                let mut timestamp = None;
+                let mut check_id = None;
+                let mut overall_result = None;
+
+                let mut checks: Vec<SerializedCheck> = vec![];
+
+                while let Some(key) = map.next_key()? {
+                    let key: &str = key;
+
+                    match key {
+                        "timestamp" => {
+                            if timestamp.is_some() {
+                                return Err(de::Error::duplicate_field("timestamp"));
+                            }
+                            timestamp = Some(map.next_value()?);
+                        }
+                        "check_id" => {
+                            if check_id.is_some() {
+                                return Err(de::Error::duplicate_field("check_id"));
+                            }
+
+                            let check_id_raw: &str = map.next_value()?;
+                            let mut parts = check_id_raw.split('.');
+
+                            let Some(host) = parts.next() else {
+                                return Err(de::Error::custom(
+                                    "could not split on period to find check_id",
+                                ));
+                            };
+                            let Some(check) = parts.next() else {
+                                return Err(de::Error::custom(
+                                    "could not split on period to find check_id",
+                                ));
+                            };
+
+                            check_id = Some(CheckId(host.into(), check.into()));
+                        }
+                        "overall_result" => {
+                            if overall_result.is_some() {
+                                return Err(de::Error::duplicate_field("overall_result"));
+                            }
+                            overall_result = Some(map.next_value()?);
+                        }
+                        key if key.starts_with("step_") => {
+                            checks.push(map.next_value()?);
+                        }
+                        _ => {}
+                    }
+                }
+
+                let timestamp = timestamp.ok_or_else(|| de::Error::missing_field("timestamp"))?;
+                let check_id = check_id.ok_or_else(|| de::Error::missing_field("check_id"))?;
+                let overall_result =
+                    overall_result.ok_or_else(|| de::Error::missing_field("overall_result"))?;
+
+                Ok(TroubleshooterResult {
+                    timestamp,
+                    check_id,
+                    overall_result,
+                    steps: checks
+                        .into_iter()
+                        .map(|sc| (sc.name.to_owned(), sc.result))
+                        .collect(),
+                })
+            }
+        }
+
+        deserializer.deserialize_map(ResultVisitor)
+    }
 }
 
 type HostCheck = HashMap<Arc<str>, CheckTypes>;

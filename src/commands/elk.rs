@@ -21,7 +21,12 @@ use walkdir::WalkDir;
 use crate::{
     pcre,
     utils::{
-        busybox::Busybox, download_container::DownloadContainer, download_file, passwd, qx, system,
+        busybox::Busybox,
+        download_container::DownloadContainer,
+        download_file,
+        os_version::{OsFamily, get_distro},
+        packages::{DownloadSettings, install_apt_packages, install_dnf_packages},
+        passwd, qx, system,
     },
 };
 
@@ -39,6 +44,7 @@ const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
 const AUDITBEAT_SERVICE: &str = include_str!("elk/auditbeat.service");
 const FILEBEAT_SERVICE: &str = include_str!("elk/filebeat.service");
 const PACKETBEAT_SERVICE: &str = include_str!("elk/packetbeat.service");
+const SURICATA_YAML: &str = include_str!("elk/suricata.yaml");
 
 macro_rules! cpaths {
     ($base:expr, $($others:expr),*$(,)?) => {{
@@ -112,6 +118,22 @@ pub struct ElkBeatsArgs {
     /// Where to install and configure all the beats
     #[arg(long, short = 'e', default_value = "/opt/jj-es")]
     elastic_install_directory: PathBuf,
+
+    /// Don't install Suricata alongside beats
+    #[arg(long, short = 'S')]
+    dont_install_suricata: bool,
+}
+
+#[derive(Parser, Clone, Debug)]
+#[command(version, about)]
+pub struct SuricataInstallArgs {
+    /// Use the download container when downloading files to circumvent the host based firewall
+    #[arg(long, short = 'd')]
+    use_download_shell: bool,
+
+    /// Use a specific IP address for source NAT when downloading through the container
+    #[arg(long, short = 'I')]
+    sneaky_ip: Option<Ipv4Addr>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -159,13 +181,17 @@ pub enum ElkCommands {
     #[command(visible_alias = "fb")]
     SetupFilebeat(ElkSubcommandArgs),
 
+    /// Export dashboards to allow for a manual import
+    #[command(visible_alias = "exp-db")]
+    ExportDashboards,
+
     /// Install beats and configure the system to send logs to the ELK stack
     #[command(visible_alias = "beats")]
     InstallBeats(ElkBeatsArgs),
 
-    /// Export dashboards to allow for a manual import
-    #[command(visible_alias = "exp-db")]
-    ExportDashboards,
+    /// Install and configure Suricata, downloading updated rules for it
+    #[command(visible_alias = "sur")]
+    InstallSuricata(SuricataInstallArgs),
 }
 
 /// Install, configure, and manage ELK and beats locally and assist across the network
@@ -193,11 +219,11 @@ impl super::Command for Elk {
             return Ok(());
         }
 
-        if let EC::InstallBeats(args) = &self.command {
-            return install_beats(args);
-        }
-
         let busybox = Busybox::new()?;
+
+        if let EC::InstallBeats(args) = &self.command {
+            return install_beats(&busybox, args);
+        }
 
         let hostname = qx("hostnamectl")?.1;
         if pcre!(&hostname =~ qr/r"Static\+hostname:\s+\(unset\)"/xms) {
@@ -251,6 +277,18 @@ impl super::Command for Elk {
 
         if let EC::Install(args) | EC::SetupPacketbeat(args) = &self.command {
             setup_packetbeat(&mut elastic_password, args)?;
+        }
+
+        if let EC::Install(args) = &self.command {
+            install_suricata(
+                &busybox,
+                &SuricataInstallArgs {
+                    use_download_shell: args.use_download_shell,
+                    sneaky_ip: args.sneaky_ip,
+                },
+            )?;
+        } else if let EC::InstallSuricata(args) = &self.command {
+            install_suricata(&busybox, args)?;
         }
 
         if let EC::Install(_) = &self.command {
@@ -1064,7 +1102,7 @@ fn setup_logstash(
         "logstash_writer": {
             "cluster": ["monitor","manage_index_templates","manage_ilm"],
             "index": [{
-                "names": ["filebeat-*","winlogbeat-*","auditbeat-*","packetbeat-*","logs-*"],
+                "names": ["filebeat-*","winlogbeat-*","auditbeat-*","packetbeat-*","logs-*","jj-*"],
                 "privileges": ["view_index_metadata","read","create","manage","manage_ilm"]
             }]
         }
@@ -1131,8 +1169,39 @@ Environment="ES_API_KEY={}:{}"
     Ok(())
 }
 
+// auditbeat gracefully degrades if it can't hook into the audit socket, but we can
+// explicitly disable auditd
+fn disable_auditd() -> eyre::Result<()> {
+    println!("--- Disabling auditd");
+
+    let auditd_service = crate::utils::systemd::get_service_info("auditd")
+        .context("Could not find auditd service")?;
+
+    let Some(path) = auditd_service.get("FragmentPath") else {
+        eyre::bail!("Could not find systemd service configuration file for auditd");
+    };
+
+    std::fs::write(
+        &path,
+        std::fs::read_to_string(&path)
+            .context("Could not read current auditd systemd configuration")?
+            .replace("RefuseManualStop=yes", ""),
+    )
+    .context("Could not save modified auditd systemd settings")?;
+
+    system("systemctl daemon-reload")?;
+    system("systemctl stop auditd")?;
+    system("systemctl disable auditd")?;
+
+    Ok(())
+}
+
 fn setup_auditbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     println!("{}", "--- Setting up auditbeat".green());
+
+    if let Err(e) = disable_auditd() {
+        eprintln!("Could not disable auditd: {e}");
+    }
 
     std::fs::write(
         "/usr/lib/systemd/system/jj-auditbeat.service",
@@ -1440,7 +1509,7 @@ fn download_beats(download_shell: bool, args: &ElkBeatsArgs) -> eyre::Result<()>
     Ok(())
 }
 
-fn install_beats(args: &ElkBeatsArgs) -> eyre::Result<()> {
+fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
     if args.use_download_shell {
         let container = DownloadContainer::new(None, args.sneaky_ip)?;
 
@@ -1562,7 +1631,13 @@ output.logstash:
         ),
     )?;
 
-    println!("{}", "--- Done configuring beats! Verifying output".green());
+    println!("{}", "--- Done configuring beats!".green());
+
+    if let Err(e) = disable_auditd() {
+        eprintln!("Could not disable auditd: {e}");
+    }
+
+    println!("{}", "--- Verifying output".green());
 
     for beat in ["auditbeat", "packetbeat", "filebeat"] {
         Command::new(cpaths!(args.elastic_install_directory, beat, beat))
@@ -1575,6 +1650,104 @@ output.logstash:
     }
 
     println!("--- All set up!");
+
+    if !args.dont_install_suricata {
+        install_suricata(
+            bb,
+            &SuricataInstallArgs {
+                use_download_shell: args.use_download_shell,
+                sneaky_ip: args.sneaky_ip,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+fn install_suricata(bb: &Busybox, args: &SuricataInstallArgs) -> eyre::Result<()> {
+    println!("{}", "--- Installing Suricata...".green());
+
+    let distro = get_distro()?;
+    let download_settings = args
+        .use_download_shell
+        .then_some(DownloadSettings::Container {
+            name: None,
+            sneaky_ip: args.sneaky_ip,
+        })
+        .unwrap_or(DownloadSettings::NoContainer);
+
+    if distro.is_deb_based() {
+        install_apt_packages(download_settings.clone(), &["suricata", "suricata-update"])?;
+    } else if distro.is_rhel_based() {
+        if let OsFamily::Fedora = distro.root_family {
+            install_dnf_packages(download_settings.clone(), &["dnf-plugins-core"])?;
+        } else {
+            install_dnf_packages(
+                download_settings.clone(),
+                &["epel-release", "dnf-plugins-core"],
+            )?;
+        }
+
+        if args.use_download_shell {
+            DownloadContainer::new(None, args.sneaky_ip)?
+                .run(|| system("dnf copr enable -y @oisf/suricata-8.0"))??;
+        } else {
+            system("dnf copr enable -y @oisf/suricata-8.0")?;
+        }
+
+        install_dnf_packages(download_settings.clone(), &["suricata"])?;
+    } else {
+        println!("Cannot install Suricata on a non Debian or RHEL based system!");
+        return Ok(());
+    }
+
+    if args.use_download_shell {
+        DownloadContainer::new(None, args.sneaky_ip)?.run(|| system("suricata-update"))??;
+    } else {
+        system("suricata-update")?;
+    }
+
+    let routes = bb
+        .execute(&["ip", "route"])
+        .context("Could not query host routes")?;
+
+    let default_dev = pcre!(&routes =~ m/r"default[^\n]*dev\s([^\s]+)"/xms)
+        .get(0)
+        .ok_or(eyre::eyre!("Could not find default route!"))?
+        .extract::<1>()
+        .1[0];
+
+    std::fs::write(
+        "/etc/suricata/suricata.yaml",
+        SURICATA_YAML.replace("$INTERFACE", default_dev),
+    )?;
+    std::fs::write(
+        "/etc/suricata/suricata.yml",
+        SURICATA_YAML.replace("$INTERFACE", default_dev),
+    )?;
+
+    // default suricata configuration *forces* us to use eth0... but that doesn't exist
+    if distro.is_rhel_based() {
+        let _ = std::fs::read_to_string("/etc/sysconfig/suricata").and_then(|content| {
+            std::fs::write(
+                "/etc/sysconfig/suricata",
+                content.replace("eth0", default_dev),
+            )
+        });
+    } else {
+        let _ = std::fs::read_to_string("/etc/default/suricata").and_then(|content| {
+            std::fs::write(
+                "/etc/sysconfig/suricata",
+                content.replace("eth0", default_dev),
+            )
+        });
+    }
+
+    system("systemctl daemon-reload")?;
+    system("systemctl enable suricata")?;
+    system("systemctl start suricata")?;
+
+    println!("{}", "--- Configured Suricata!".green());
 
     Ok(())
 }

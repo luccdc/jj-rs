@@ -6,6 +6,14 @@ filebeat.inputs:
     - syslog:
         field: message
 
+- type: filestream
+  id: jj-check-daemon
+  paths:
+    - "/var/log/jj-check-daemon.json"
+  parsers:
+    - ndjson:
+        target: check
+
 processors:
   - add_host_metadata:
       when.not.contains.tags: forwarded
@@ -19,3 +27,9 @@ filebeat.modules:
       enabled: true
     auth:
       enabled: true
+
+  - module: suricata
+    eve:
+      enabled: true
+      paths: ["/var/log/suricata/eve.json"]
+
