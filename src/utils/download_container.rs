@@ -486,7 +486,7 @@ fn find_tunnel_net(bb: &Busybox) -> eyre::Result<Ipv4Addr> {
             .execute(&["ip", "addr"])
             .context("Could not list current addresses")?;
 
-        pcre!(&addrs =~ m{r"inet\s+(" IP_ADDR_REGEX r")/([0-9]+)"}xms)
+        pcre!(&addrs =~ m{r"inet\s+(" IP_ADDR_REGEX r")/([0-9]+)"}xmsg)
             .into_iter()
             .map(|c| c.extract::<2>().1)
             .map(|[ip, sn]| {
