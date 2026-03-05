@@ -65,6 +65,7 @@ define_checks! {
         Http, "http" => http::HttpTroubleshooter,
         Ftp, "ftp" => ftp::FtpTroubleshooter,
         Smtp, "smtp" => smtp::SmtpTroubleshooter,
+        Pop3, "pop3" => pop3::Pop3Troubleshooter,
     }
 }
 
@@ -96,5 +97,14 @@ fn main() -> eyre::Result<()> {
         eprintln!("{e1}");
         eprintln!("{e2}");
     }
+
+    unsafe {
+        let curl_init =
+            utils::curl::ffi::curl_global_init(utils::curl::ffi::CURL_GLOBAL_DEFAULT.into());
+        if curl_init != utils::curl::ffi::CURLcode_CURLE_OK {
+            tracing::warn!("Failed to initialize CURL! Commands that depend on CURL may fail");
+        }
+    }
+
     cli.command.execute()
 }

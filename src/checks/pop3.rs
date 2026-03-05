@@ -1,10 +1,6 @@
 use std::net::Ipv4Addr;
 
 use chrono::Utc;
-use lettre::{
-    SmtpTransport,
-    transport::smtp::authentication::{Credentials, Mechanism},
-};
 
 use crate::utils::clap::Host;
 
@@ -12,13 +8,13 @@ use super::*;
 
 #[derive(clap::Parser, serde::Serialize, serde::Deserialize, Debug, Clone)]
 #[serde(default)]
-pub struct SmtpTroubleshooter {
-    /// The host to connect to and attempt signing in
+pub struct Pop3Troubleshooter {
+    /// The host to connect to and attempt to signing in
     #[arg(long, short = 'H', default_value = "127.0.0.1")]
     pub host: Host,
 
-    /// The port of the SMTP server
-    #[arg(long, short, default_value_t = 25)]
+    /// The port of the POP3 server
+    #[arg(long, short, default_value_t = 110)]
     pub port: u16,
 
     /// The user to sign in as
@@ -49,11 +45,11 @@ pub struct SmtpTroubleshooter {
     pub sneaky_ip: Option<Ipv4Addr>,
 }
 
-impl Default for SmtpTroubleshooter {
+impl Default for Pop3Troubleshooter {
     fn default() -> Self {
-        SmtpTroubleshooter {
+        Pop3Troubleshooter {
             host: Host::from("127.0.0.1".to_string()),
-            port: 25,
+            port: 110,
             user: "root".to_string(),
             password: CheckValue::stdin(),
             local: false,
@@ -64,9 +60,9 @@ impl Default for SmtpTroubleshooter {
     }
 }
 
-impl Troubleshooter for SmtpTroubleshooter {
+impl Troubleshooter for Pop3Troubleshooter {
     fn display_name(&self) -> &'static str {
-        "SMTP"
+        "POP3"
     }
 
     fn checks<'a>(&'a self) -> eyre::Result<Vec<Box<dyn super::CheckStep<'a> + 'a>>> {
@@ -85,7 +81,7 @@ impl Troubleshooter for SmtpTroubleshooter {
             ),
             #[cfg(unix)]
             binary_ports_check(
-                Some(["master"]),
+                Some(["dovecot"]),
                 self.port,
                 CheckIpProtocol::Tcp,
                 self.host.is_loopback() || self.local,
@@ -115,57 +111,88 @@ impl Troubleshooter for SmtpTroubleshooter {
     }
 }
 
-impl SmtpTroubleshooter {
+impl Pop3Troubleshooter {
     pub fn try_remote_login(&self, tr: &mut dyn TroubleshooterRunner) -> eyre::Result<CheckResult> {
-        let host = self.host.clone();
+        let host = &self.host;
         let port = self.port;
         let user = self.user.clone();
         let pass = self
             .password
             .clone()
-            .resolve_prompt(tr, "SMTP Password: ")?;
+            .resolve_prompt(tr, "POP3 Password: ")?;
 
         std::thread::sleep(std::time::Duration::from_secs(1));
         let start = Utc::now();
 
-        let mailer = SmtpTransport::builder_dangerous(host.to_string().as_str())
-            .port(port)
-            .credentials(Credentials::new(user.clone(), pass.clone()))
-            .authentication(vec![Mechanism::Plain, Mechanism::Login])
-            .timeout(Some(std::time::Duration::from_secs(5)))
-            .build();
-
-        let check_result = match mailer.test_connection() {
-            Ok(true) => CheckResult::succeed(
-                format!("Successfully connected to {host}, {port}"),
-                serde_json::json!({}),
-            ),
-            Ok(false) => CheckResult::fail(
-                format!("Unable to connect to {host}, {port}"),
-                serde_json::json!({
-                    "local_connection_error": format!("could not connect"),
-                    "target_host": format!("{host}"),
-                    "target_port": format!("{port}"),
-                }
-                ),
-            ),
-
-            Err(e) => CheckResult::fail(
-                format!("Unable to connect to {host}, {port}"),
-                serde_json::json!({
-                    "local_connection_error": format!("{e}"),
-                    "target_host": format!("{host}"),
-                    "target_port": format!("{port}"),
-                }),
-            ),
-        };
+        let check_result = self
+            .try_login_inner(&host.to_string(), port, &user, &pass)
+            .into_check_result("Could not prepare arguments for CURL");
 
         let end = Utc::now();
-
         let logs = (self.local || host.is_loopback()).then(|| get_system_logs(start, end));
 
         Ok(check_result.merge_overwrite_details(serde_json::json!({
             "system_logs": logs,
         })))
+    }
+
+    fn try_login_inner(
+        &self,
+        host: &str,
+        port: u16,
+        user: &str,
+        pass: &str,
+    ) -> eyre::Result<CheckResult> {
+        use std::ffi::{CStr, CString};
+
+        use crate::utils::curl::ffi as curl_ffi;
+
+        let res = unsafe {
+            let curl = curl_ffi::curl_easy_init();
+
+            if curl.is_null() {
+                return Ok(CheckResult::fail(
+                    "Failed to initialize CURL",
+                    serde_json::json!({}),
+                ));
+            }
+
+            let url = CString::new(format!("pop3://{host}:{port}/"))?;
+            let username = CString::new(user)?;
+            let password = CString::new(pass)?;
+
+            curl_ffi::curl_easy_setopt(curl, curl_ffi::CURLoption_CURLOPT_URL, url.as_ptr());
+
+            curl_ffi::curl_easy_setopt(
+                curl,
+                curl_ffi::CURLoption_CURLOPT_USERNAME,
+                username.as_ptr(),
+            );
+            curl_ffi::curl_easy_setopt(
+                curl,
+                curl_ffi::CURLoption_CURLOPT_PASSWORD,
+                password.as_ptr(),
+            );
+
+            let res = curl_ffi::curl_easy_perform(curl);
+            curl_ffi::curl_easy_cleanup(curl);
+            res
+        };
+
+        if res == curl_ffi::CURLcode_CURLE_OK {
+            Ok(CheckResult::succeed(
+                "Successfully authenticated to POP3 server",
+                serde_json::json!({}),
+            ))
+        } else {
+            let err: &'static _ = unsafe { CStr::from_ptr(curl_ffi::curl_easy_strerror(res)) };
+
+            Ok(CheckResult::fail(
+                "Failed to authenticate to POP3 server",
+                serde_json::json!({
+                    "error": err.to_string_lossy()
+                }),
+            ))
+        }
     }
 }

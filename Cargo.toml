@@ -3,6 +3,9 @@ name = "jj-rs"
 version = "0.7.2"
 edition = "2024"
 
+[build-dependencies]
+bindgen = "0.71.0"
+
 [dependencies]
 accept-header = "0.2.3"
 ansi_term = "0.12.1"

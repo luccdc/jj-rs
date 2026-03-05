@@ -192,6 +192,7 @@
 
             CORE_RULESET = core-ruleset;
             MODSECURITY = system-pkgs.libmodsecurity-linux-static;
+            LIBCLANG_PATH = pkgs.libclang.lib;
 
             BUSYBOX_GZIPPED = busybox-gzipped;
             NFT_GZIPPED = nft-gzipped;
@@ -204,6 +205,8 @@
             nativeBuildInputs = linuxLibraries;
 
             CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+            LIBCURL_PATH = system-pkgs.libcurl-linux-static;
+            LIBC_PATH = pkgs.musl.dev;
 
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
           };
@@ -214,6 +217,8 @@
             packages = windowsLibraries;
 
             CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
+            LIBCURL_PATH = system-pkgs.libcurl-windows-static;
+            LIBC_PATH = pkgs.pkgsCross.mingwW64.windows.mingw_w64_headers;
 
             cargoExtraArgs = "--locked --target=x86_64-pc-windows-gnu";
           };
@@ -326,6 +331,9 @@
 
               MODSECURITY = system-pkgs.libmodsecurity-linux-static;
               CORE_RULESET = core-ruleset;
+              LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+              LIBCURL_PATH = "${system-pkgs.libcurl-linux-static}";
+              LIBC_PATH = pkgs.musl.dev;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -346,6 +354,9 @@
 
               MODSECURITY = system-pkgs.libmodsecurity-linux-static;
               CORE_RULESET = core-ruleset;
+              LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+              LIBCURL_PATH = "${system-pkgs.libcurl-windows-static}";
+              LIBC_PATH = pkgs.pkgsCross.mingwW64.windows.mingw_w64_headers;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -364,6 +375,9 @@
 
               MODSECURITY = system-pkgs.libmodsecurity-linux-static;
               CORE_RULESET = core-ruleset;
+              LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+              LIBCURL_PATH = "${system-pkgs.libcurl-linux-static}";
+              LIBC_PATH = pkgs.musl.dev;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
