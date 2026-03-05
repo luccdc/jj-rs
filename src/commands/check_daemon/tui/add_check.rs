@@ -106,6 +106,12 @@ enum AddCheckWizardState {
         username: TextInputState,
         password: TextInputState,
     },
+    Pop3Stage1 {
+        selection: usize,
+        host: TextInputState,
+        username: TextInputState,
+        password: TextInputState,
+    },
     Generalize {
         row_selection: usize,
         tab_selection: usize,
@@ -230,7 +236,76 @@ pub fn render(tui: &mut Tui<'_>, frame: &mut Frame, area: Rect, selected: bool) 
             username,
             password,
         }) => {
-            frame.render_widget(Block::bordered().title("DNS Check Setup Wizard"), area);
+            frame.render_widget(Block::bordered().title("SMTP Check Setup Wizard"), area);
+
+            let [submit, host_block, user_block, pass_block] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .areas(area.inner(Margin {
+                vertical: 1,
+                horizontal: 1,
+            }));
+
+            let submit_style = if *selection == 0 && selected {
+                Style::new().yellow()
+            } else {
+                Style::new()
+            };
+
+            frame.render_widget(
+                Line::raw("Submit").style(submit_style),
+                submit.inner(Margin {
+                    vertical: 0,
+                    horizontal: 1,
+                }),
+            );
+
+            host.set_selected(*selection == 1 && selected);
+            frame.render_stateful_widget(
+                TextInput::default()
+                    .label(Some("Host/IP:"))
+                    .selected_style(Some(Style::new().fg(Color::Yellow))),
+                host_block,
+                host,
+            );
+            if *selection == 1 && selected {
+                TextInput::default().set_cursor_position(host_block, frame, host);
+            }
+
+            username.set_selected(*selection == 2 && selected);
+            frame.render_stateful_widget(
+                TextInput::default()
+                    .label(Some("Username:"))
+                    .selected_style(Some(Style::new().fg(Color::Yellow))),
+                user_block,
+                username,
+            );
+            if *selection == 2 && selected {
+                TextInput::default().set_cursor_position(user_block, frame, username);
+            }
+
+            password.set_selected(*selection == 3 && selected);
+            frame.render_stateful_widget(
+                TextInput::default()
+                    .label(Some("Password:"))
+                    .selected_style(Some(Style::new().fg(Color::Yellow))),
+                pass_block,
+                password,
+            );
+            if *selection == 3 && selected {
+                TextInput::default().set_cursor_position(pass_block, frame, password);
+            }
+        }
+        Some(AddCheckWizardState::Pop3Stage1 {
+            selection,
+            host,
+            username,
+            password,
+        }) => {
+            frame.render_widget(Block::bordered().title("POP3 Check Setup Wizard"), area);
 
             let [submit, host_block, user_block, pass_block] = Layout::vertical([
                 Constraint::Length(1),
@@ -990,6 +1065,12 @@ pub async fn handle_keypress<'scope, 'env: 'scope>(
                 username: TextInputState::default(),
                 password: TextInputState::default().set_input("-".to_string()),
             }),
+            Some(&"POP3") => Some(AddCheckWizardState::Pop3Stage1 {
+                selection: 0,
+                host: TextInputState::default().set_input("127.0.0.1".to_string()),
+                username: TextInputState::default(),
+                password: TextInputState::default().set_input("-".to_string()),
+            }),
             _ => None,
         };
         tui.buffer.clear();
@@ -1324,6 +1405,168 @@ fn handle_wizard<'scope, 'env: 'scope>(
                         row_selection: 0,
                         tab_selection: 0,
                         check_type: "smtp",
+                        check_fields,
+                    });
+
+                    tui.buffer.clear();
+                    return true;
+                }
+            }
+
+            if is_generic_up(key) {
+                tui.buffer.clear();
+                return true;
+            }
+            if is_generic_down(key) {
+                tui.buffer.clear();
+                return true;
+            }
+
+            false
+        }
+        Some(AddCheckWizardState::Pop3Stage1 {
+            selection,
+            host,
+            username,
+            password,
+        }) => {
+            if let KeyCode::Char('n') = key.code
+                && key.modifiers == KeyModifiers::CONTROL
+            {
+                *selection = (*selection + 1).min(3);
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Down = key.code {
+                *selection = (*selection + 1).min(3);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if let KeyCode::BackTab = key.code {
+                if *selection == 0 {
+                    *selection = 3;
+                } else {
+                    *selection = *selection - 1;
+                }
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Tab = key.code {
+                *selection = *selection + 1;
+                if *selection == 4 {
+                    *selection = 0;
+                }
+                tui.buffer.clear();
+                return true;
+            }
+
+            if let KeyCode::Char('p') = key.code
+                && key.modifiers == KeyModifiers::CONTROL
+            {
+                if *selection == 0 {
+                    tui.current_selection = super::CurrentSelection::Tabs;
+                    tui.buffer.clear();
+                    return true;
+                }
+
+                *selection = selection.saturating_sub(1);
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Up = key.code {
+                if *selection == 0 {
+                    tui.current_selection = super::CurrentSelection::Tabs;
+                    tui.buffer.clear();
+                    return true;
+                }
+
+                *selection = selection.saturating_sub(1);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if *selection == 1 {
+                host.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if *selection == 2 {
+                username.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if *selection == 3 {
+                password.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if *selection == 0 {
+                if let KeyCode::Char(' ') | KeyCode::Enter = key.code {
+                    let Ok(password) = password.input().parse();
+
+                    let Ok(serde_json::Value::Object(check_type)) =
+                        serde_json::to_value(&crate::checks::pop3::Pop3Troubleshooter {
+                            host: host.input().to_string().into(),
+                            user: username.input().to_string(),
+                            password,
+                            ..Default::default()
+                        })
+                    else {
+                        tui.buffer.clear();
+                        return true;
+                    };
+
+                    let check_fields = (&check_type)
+                        .into_iter()
+                        .map(|(key, value)| {
+                            let check_type = check_type.clone();
+                            let key = key.to_owned();
+                            let is_str = value.is_string();
+                            (
+                                key.clone(),
+                                ErrorTextInputState::new(Box::new(
+                                    move |inp: &str| -> Result<serde_json::Value, String> {
+                                        let parsed: serde_json::Value = if is_str {
+                                            serde_json::Value::String(inp.to_owned())
+                                        } else {
+                                            serde_json::from_str(&inp)
+                                                .map_err(|e| format!("{e}"))?
+                                        };
+
+                                        let mut check_type = check_type.clone();
+                                        check_type.insert(key.clone(), parsed.clone());
+
+                                        serde_json::from_value::<
+                                            crate::checks::pop3::Pop3Troubleshooter,
+                                        >(
+                                            serde_json::Value::Object(check_type)
+                                        )
+                                        .map(|_| parsed)
+                                        .map_err(|e| format!("{e}"))
+                                    },
+                                )
+                                    as Box<
+                                        dyn for<'a> Fn(
+                                            &'a str,
+                                        )
+                                            -> Result<serde_json::Value, String>,
+                                    >)
+                                .set_input(
+                                    if let serde_json::Value::String(v) = value {
+                                        v.clone()
+                                    } else {
+                                        serde_json::to_string(&value).unwrap_or_default()
+                                    },
+                                ),
+                            )
+                        })
+                        .collect();
+
+                    tui.add_check_tab.wizard_state = Some(AddCheckWizardState::Generalize {
+                        row_selection: 0,
+                        tab_selection: 0,
+                        check_type: "pop3",
                         check_fields,
                     });
 
