@@ -29,10 +29,10 @@ fn main() -> std::io::Result<()> {
         println!("cargo:rerun-if-changed=src/commands/elk/dashboards");
     }
 
-    // bundle OWASP ModSecurity Common Ruleset
+    // bundle OWASP ModSecurity Core Ruleset
     {
         let mut rules_dir = PathBuf::from(
-            std::env::var("COMMON_RULESET").expect("Could not find COMMON_RULESET variable"),
+            std::env::var("CORE_RULESET").expect("Could not find CORE_RULESET variable"),
         );
         rules_dir.push("rules");
 
@@ -42,26 +42,24 @@ fn main() -> std::io::Result<()> {
 
         let conf_files = file_list
             .iter()
-            .filter(|entry| entry.path().extension() == Some(&*std::ffi::OsString::from("conf")));
+            .filter(|entry| entry.path().extension() == Some(&*std::ffi::OsString::from("conf")))
+            .collect::<Vec<_>>();
 
         let data_files = file_list
             .iter()
             .filter(|entry| entry.path().extension() == Some(&*std::ffi::OsString::from("data")));
 
-        let output_file_path = &format!(
-            "{}/crs-rules.conf",
-            std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
-        );
-        let mut output_file = std::io::BufWriter::new(
-            std::fs::OpenOptions::new()
-                .truncate(true)
-                .write(true)
-                .create(true)
-                .open(output_file_path)?,
-        );
-
-        for file in conf_files {
-            println!("{}", file.path().display());
+        for file in &conf_files {
+            let mut output_file_path =
+                PathBuf::from(std::env::var("OUT_DIR").expect("could not find OUT_DIR variable"));
+            output_file_path.push(file.file_name());
+            let mut output_file = std::io::BufWriter::new(
+                std::fs::OpenOptions::new()
+                    .truncate(true)
+                    .write(true)
+                    .create(true)
+                    .open(output_file_path)?,
+            );
             let conf = std::fs::read_to_string(file.path())?;
 
             for line in conf.split('\n') {
@@ -80,9 +78,9 @@ fn main() -> std::io::Result<()> {
                 output_file.write_all(current_line.as_bytes())?;
                 output_file.write_all("\n".as_bytes())?;
             }
-        }
 
-        output_file.flush()?;
+            output_file.flush()?;
+        }
 
         let file_mappings = data_files
             .filter_map(|file| {
@@ -97,6 +95,18 @@ fn main() -> std::io::Result<()> {
                         )
                     })
             })
+            .chain(conf_files.into_iter().filter_map(|file| {
+                file.path()
+                    .file_name()
+                    .and_then(|file_name| file_name.to_str())
+                    .map(|file_name| {
+                        format!(
+                            r#"("{0}", include_str!("{1}/{0}"))"#,
+                            file_name,
+                            std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
+                        )
+                    })
+            }))
             .collect::<Vec<_>>()
             .join(",");
 
@@ -106,8 +116,7 @@ fn main() -> std::io::Result<()> {
                 std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
             ),
             format!(
-                r#"pub const CRS_RULES: &'static str = include_str!("{output_file_path}");
-pub const CRS_DATA_FILES: &'static [(&'static str, &'static str)] = &[{file_mappings}];"#
+                r#"pub const CRS_DATA_FILES: &'static [(&'static str, &'static str)] = &[{file_mappings}];"#
             ),
         )?;
     }
@@ -122,6 +131,8 @@ pub const CRS_DATA_FILES: &'static [(&'static str, &'static str)] = &[{file_mapp
             println!("cargo:rustc-link-arg=-static-libgcc");
             println!("cargo:rustc-link-arg=-static-libstdc++");
             println!("cargo:rustc-link-arg=-Wl,-Bstatic");
+            println!("cargo:rustc-link-arg=-lmodsecurity");
+            println!("cargo:rustc-link-arg=-lcurl");
             println!("cargo:rustc-link-arg=-lstdc++");
             println!("cargo:rustc-link-arg=-lmcfgthread");
             println!("cargo:rustc-link-arg=-lpcre");
@@ -137,6 +148,8 @@ pub const CRS_DATA_FILES: &'static [(&'static str, &'static str)] = &[{file_mapp
             println!("cargo:rustc-link-arg=-lunistring");
             println!("cargo:rustc-link-arg=-lpthread");
             println!("cargo:rustc-link-arg=-lwinpthread");
+            println!("cargo:rustc-link-arg=-lcrypt32");
+            println!("cargo:rustc-link-arg=-lgcc");
             println!("cargo:rustc-link-arg=-Wl,-Bdynamic");
             println!("cargo:rustc-link-arg=-Wl,--start-group");
             println!("cargo:rustc-link-arg=-lmingwex");
@@ -147,7 +160,9 @@ pub const CRS_DATA_FILES: &'static [(&'static str, &'static str)] = &[{file_mapp
             println!("cargo:rustc-link-arg=-lkernel32");
             println!("cargo:rustc-link-arg=-ladvapi32");
             println!("cargo:rustc-link-arg=-lntdll");
+            println!("cargo:rustc-link-arg=-liphlpapi");
         } else if target_os == Ok("linux") {
+            println!("cargo:rustc-link-arg=-lcurl");
             println!("cargo:rustc-link-arg=-lpcre");
             println!("cargo:rustc-link-arg=-lxml2");
             println!("cargo:rustc-link-arg=-lyajl");
