@@ -8,7 +8,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use eyre::{Context, eyre};
+use eyre::Context;
 use libc::getuid;
 
 use crate::{
@@ -16,11 +16,14 @@ use crate::{
     utils::{
         busybox::Busybox,
         download_container::DownloadContainer,
+        get_public_ip,
         os_version::{Distro, get_distro},
         packages::{install_apt_packages, install_dnf_packages},
         passwd, qx, system,
     },
 };
+
+const LOGSTASH_WAZUH_CONF: &str = include_str!("elk/pipeline-wazuh.conf");
 
 #[derive(Parser, Debug)]
 #[command(about)]
@@ -40,17 +43,18 @@ pub struct WazuhSubcommandArgs {
     /// Where will temporary files be downloaded and extracted
     #[arg(long, short = 'w', default_value = "/tmp/wazuh-working-dir")]
     working_dir: PathBuf,
-}
 
-#[derive(Parser, Debug, Clone)]
-pub struct WazuhAgentArgs {
-    /// The IP address of the Wazuh cluster
-    #[arg(long, short = 'i', default_value = "127.0.0.1")]
-    wazuh_ip: Ipv4Addr,
+    /// Where to look for a jiujitsu installation of ELK when importing data and configurations
+    #[arg(long, short = 'e', default_value = "/opt/jj-es")]
+    jj_elastic_location: PathBuf,
 
-    /// Whether or not this is the Wazuh server. Set to true if run as part of `wazuh install`
-    #[arg(long, short = 'm')]
-    wazuh_manager: bool,
+    /// Where to look for the share drive for jiujitsu ELK installation, specifically to place the Wazuh CA certificate for Logstash
+    #[arg(long, short = 'E', default_value = "/opt/es-share")]
+    jj_elastic_share_location: PathBuf,
+
+    /// The version of ELK that this Wazuh setup is being designed to cooperate with
+    #[arg(long, short = 'S', default_value = "9.3.0")]
+    jj_elastic_version: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -99,9 +103,13 @@ pub enum WazuhCommands {
     #[command(visible_alias = "rc")]
     RotateCredentials,
 
-    /// Install and configure a Wazuh agent for this system
-    #[command(visible_alias = "ia")]
-    InstallAgent(WazuhAgentArgs),
+    /// Import beats ingest pipelines from an ELK stack installed by jiujitsu running on the same system
+    #[command(visible_alias = "ip")]
+    ImportPipelines(WazuhSubcommandArgs),
+
+    /// Configure jj-logstash to install the opensearch output plugin and copy data to Wazuh's opensearch instance
+    #[command(visible_alias = "fl")]
+    ForwardJjLogstash(WazuhSubcommandArgs),
 }
 
 /// Install, configure, and manage Wazuh on this server
@@ -131,10 +139,6 @@ impl super::Command for Wazuh {
             return Ok(());
         }
 
-        if let WC::InstallAgent(args) = self.command {
-            return install_wazuh_agent(args);
-        }
-
         let hostname = qx("hostnamectl")?.1;
         if pcre!(&hostname =~ qr/r"Static\+hostname:\s\(unset\)"/xms) {
             eprintln!(
@@ -148,7 +152,11 @@ impl super::Command for Wazuh {
 
         let mut new_pass = String::new();
 
-        if let WC::Install(_) | WC::RotateCredentials = &self.command {
+        if let WC::Install(_)
+        | WC::RotateCredentials
+        | WC::ImportPipelines(_)
+        | WC::ForwardJjLogstash(_) = &self.command
+        {
             print!("Enter the password for the admin user: ");
             std::io::stdout()
                 .flush()
@@ -157,6 +165,19 @@ impl super::Command for Wazuh {
                 .read_line(&mut new_pass)
                 .context("Could not read password from user")?;
             new_pass = new_pass.trim().to_string();
+        }
+
+        let mut elastic_pass = String::new();
+
+        if let WC::Install(_) | WC::ImportPipelines(_) = &self.command {
+            print!("Enter the password for the Elastic user (leave empty if not installed): ");
+            std::io::stdout()
+                .flush()
+                .context("Could not display password prompt")?;
+            std::io::stdin()
+                .read_line(&mut elastic_pass)
+                .context("Could not read password from user")?;
+            elastic_pass = elastic_pass.trim().to_string();
         }
 
         if let WC::Install(_) | WC::SetupZram = &self.command
@@ -198,7 +219,15 @@ impl super::Command for Wazuh {
         }
 
         if let WC::Install(_) | WC::RotateCredentials = &self.command {
-            rotate_credentials(new_pass)?;
+            rotate_credentials(&new_pass)?;
+        }
+
+        if let WC::Install(args) | WC::ImportPipelines(args) = &self.command {
+            import_pipelines(&busybox, args, &new_pass, &elastic_pass)?;
+        }
+
+        if let WC::Install(args) | WC::ForwardJjLogstash(args) = &self.command {
+            forward_jj_logstash(&busybox, args, &new_pass)?;
         }
 
         if let WC::Install(args) = &self.command {
@@ -250,8 +279,6 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
     println!("--- Downloading installer and packages...");
 
     let download_files_internal = || -> eyre::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-
         use crate::utils::download_file;
 
         let mut installer_path = args.working_dir.clone();
@@ -278,8 +305,7 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
         Command::new("/bin/sh")
             .args([
                 "-c",
-                &format!(
-                    "./wazuh-install.sh -dw {pkg_type} -da {arch_type}"),
+                &format!("./wazuh-install.sh -dw {pkg_type} -da {arch_type}"),
             ])
             .current_dir(&args.working_dir)
             .spawn()
@@ -938,7 +964,7 @@ fn install_dashboard(
     Ok(())
 }
 
-fn rotate_credentials(new_pass: String) -> eyre::Result<()> {
+fn rotate_credentials(new_pass: &str) -> eyre::Result<()> {
     println!("--- Rotating server credentials");
 
     system(
@@ -959,6 +985,325 @@ fn rotate_credentials(new_pass: String) -> eyre::Result<()> {
     Ok(())
 }
 
+fn import_pipelines(
+    bb: &Busybox,
+    args: &WazuhSubcommandArgs,
+    wazuh_password: &str,
+    elk_password: &str,
+) -> eyre::Result<()> {
+    println!("--- Checking for jiujitsu ELK...");
+
+    if !std::fs::exists(&args.jj_elastic_location)? {
+        println!("--- jiujitsu ELK not detected! Skipping import pipelines step...");
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        "--- Proceeding to import jiujitsu ELK pipelines...".green()
+    );
+
+    let cert = std::fs::read_to_string(
+        args.jj_elastic_location
+            .join("elasticsearch")
+            .join("config")
+            .join("certs")
+            .join("http_ca.crt"),
+    )?;
+    let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
+
+    let pipelines = reqwest::blocking::Client::builder()
+        .add_root_certificate(cert)
+        .build()?
+        .get("https://localhost:10200/_ingest/pipeline")
+        .basic_auth("elastic", Some(elk_password))
+        .header("kbn-xsrf", "true")
+        .send()?
+        .json::<serde_json::Value>()?;
+
+    let serde_json::Value::Object(mut pipelines) = pipelines else {
+        eyre::bail!("Could not download current pipelines");
+    };
+
+    let cert = std::fs::read_to_string("/etc/wazuh-indexer/certs/root-ca.pem")?;
+    let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
+    let wazuh_client = reqwest::blocking::Client::builder()
+        .add_root_certificate(cert)
+        .build()?;
+
+    let public_ip = get_public_ip(bb)?;
+
+    for beat in ["auditbeat", "filebeat", "winlogbeat", "packetbeat"] {
+        let create_index_result = wazuh_client
+            .put(format!(
+                "https://{public_ip}:9200/{beat}-{}",
+                args.jj_elastic_version
+            ))
+            .basic_auth("admin", Some(wazuh_password))
+            .send()
+            .context(format!("Could not create index for storing {beat} data"))?
+            .json::<serde_json::Value>()?;
+
+        println!("{create_index_result}");
+    }
+
+    let settings_update_result = wazuh_client
+        .put(format!("https://{public_ip}:9200/_cluster/settings"))
+        .basic_auth("admin", Some(wazuh_password))
+        .header("content-type", "application/json")
+        .body(r#"{
+    "persistent": {
+        "script.max_compilations_rate": "2000/1m"
+    }
+}"#)
+        .send()
+        .context("Could not update pipeline compilation limit (this will limit the effectiveness of Packetbeat TLS data)")?
+        .json::<serde_json::Value>()?;
+
+    println!("{settings_update_result}");
+
+    for (name, value) in pipelines.iter_mut() {
+        if !(name.starts_with("auditbeat")
+            || name.starts_with("filebeat")
+            || name.starts_with("packetbeat")
+            || name.starts_with("winlogbeat")
+            || name.starts_with("metricbeat"))
+        {
+            continue;
+        }
+
+        print!("Transferring pipeline {name}...");
+
+        let serde_json::Value::Object(pipeline) = value else {
+            continue;
+        };
+
+        pipeline.remove("created_date_millis");
+        pipeline.remove("modified_date_millis");
+
+        let Some(serde_json::Value::Array(processors)) = pipeline.remove("processors") else {
+            continue;
+        };
+
+        fn handle_processor(processor: serde_json::Value) -> Option<serde_json::Value> {
+            use serde_json::Value as V;
+
+            let V::Object(mut processor) = processor else {
+                return Some(processor);
+            };
+
+            if let Some(V::Object(community_id)) = processor.get_mut("community_id") {
+                if let Some(source) = community_id.remove("source_ip") {
+                    community_id.insert("source_ip_field".into(), source);
+                } else {
+                    community_id.insert("source_ip_field".into(), "source.ip".into());
+                }
+
+                if let Some(source) = community_id.remove("source_port") {
+                    community_id.insert("source_port_field".into(), source);
+                } else {
+                    community_id.insert("source_port_field".into(), "source.port".into());
+                }
+
+                if let Some(destination) = community_id.remove("destination_ip") {
+                    community_id.insert("destination_ip_field".into(), destination);
+                } else {
+                    community_id.insert("destination_ip_field".into(), "destination.ip".into());
+                }
+
+                if let Some(destination) = community_id.remove("destination_port") {
+                    community_id.insert("destination_port_field".into(), destination);
+                } else {
+                    community_id.insert("destination_port_field".into(), "destination.port".into());
+                }
+            }
+
+            if let Some(V::Object(_)) = processor.get("uri_parts") {
+                return None;
+            }
+
+            if let Some(V::Object(m)) = processor.get("registered_domain") {
+                let field = m.get("field")?;
+                let target_field = m.get("target_field")?;
+
+                return Some(serde_json::json!({
+                    "copy": {
+                        "source_field": field,
+                        "target_field": target_field,
+                        "ignore_missing": true
+                    }
+                }));
+            }
+
+            if let Some(V::Object(set)) = processor.get("set")
+                && let Some(V::String(copy_from)) = set.get("copy_from")
+                && let Some(V::String(field)) = set.get("field")
+            {
+                let ignore_failure = set
+                    .get("ignore_failure")
+                    .and_then(V::as_bool)
+                    .unwrap_or_default();
+
+                return Some(serde_json::json!({
+                    "copy": {
+                        "source_field": copy_from,
+                        "target_field": field,
+                        "ignore_missing": ignore_failure
+                    }
+                }));
+            }
+
+            for (_, proc_obj) in processor.iter_mut() {
+                if let V::Object(p) = proc_obj
+                    && let Some(V::Array(on_failure)) = p.remove("on_failure")
+                {
+                    p.insert(
+                        "on_failure".into(),
+                        on_failure
+                            .into_iter()
+                            .filter_map(handle_processor)
+                            .collect::<V>(),
+                    );
+                }
+            }
+
+            Some(V::Object(processor))
+        }
+
+        let processors = processors
+            .into_iter()
+            .filter_map(handle_processor)
+            .collect::<serde_json::Value>();
+
+        pipeline.insert("processors".into(), processors);
+
+        let Ok(pipeline_json) = serde_json::to_string(&pipeline) else {
+            continue;
+        };
+
+        match wazuh_client
+            .put(format!("https://{public_ip}:9200/_ingest/pipeline/{name}"))
+            .basic_auth("admin", Some(wazuh_password))
+            .header("content-type", "application/json")
+            .body(pipeline_json)
+            .send()
+            .and_then(|r| r.json::<serde_json::Value>())
+        {
+            Ok(v) => {
+                if let serde_json::Value::Object(ref o) = v
+                    && o.get("acknowledged") == Some(&(true.into()))
+                {
+                    println!(" {}", "Success".green());
+                } else {
+                    println!("\n  Failed to import pipeline {name}: {v}")
+                }
+            }
+            Err(e) => {
+                println!("\n  Failed to contact Wazuh server to import pipeline {name}: {e}");
+            }
+        }
+
+        // Wait a quarter second in between each import, as otherwise Opensearch gets overloaded
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+
+    let settings_update_result = wazuh_client
+        .put(format!("https://{public_ip}:9200/_cluster/settings"))
+        .basic_auth("admin", Some(wazuh_password))
+        .header("content-type", "application/json")
+        .body(r#"{
+    "persistent": {
+        "script.max_compilations_rate": "75/5m"
+    }
+}"#)
+        .send()
+        .context("Could not update pipeline compilation limit (this will limit the effectiveness of Packetbeat TLS data)")?
+        .json::<serde_json::Value>()?;
+
+    println!("{settings_update_result}");
+
+    println!("{}", "--- Successfully imported pipelines!".green());
+
+    Ok(())
+}
+
+fn forward_jj_logstash(
+    bb: &Busybox,
+    args: &WazuhSubcommandArgs,
+    wazuh_password: &str,
+) -> eyre::Result<()> {
+    println!("--- Checking for jiujitsu ELK...");
+
+    if !std::fs::exists(&args.jj_elastic_location)? {
+        println!("--- jiujitsu ELK not detected! Skipping import pipelines step...");
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        "--- Proceeding to configure jiujitsu Logstash to forward data to Wazuh Opensearch..."
+            .green()
+    );
+
+    let install_logstash_opensearch = || -> eyre::Result<()> {
+        system(&format!(
+            "{}/logstash/bin/logstash-plugin install logstash-output-opensearch",
+            args.jj_elastic_location.display()
+        ))?;
+
+        Ok(())
+    };
+
+    if args.use_download_shell {
+        let container = DownloadContainer::new(None, args.sneaky_ip)?;
+
+        container.run(install_logstash_opensearch)??;
+    } else {
+        install_logstash_opensearch()?;
+    }
+
+    println!("--- Successfully installed opensearch output plugin for logstash!");
+
+    std::fs::copy(
+        "/etc/wazuh-indexer/certs/root-ca.pem",
+        &format!(
+            "{}/wazuh_http_ca.crt",
+            args.jj_elastic_share_location.display()
+        ),
+    )?;
+
+    std::fs::set_permissions(
+        &format!(
+            "{}/wazuh_http_ca.crt",
+            args.jj_elastic_share_location.display()
+        ),
+        PermissionsExt::from_mode(0o644),
+    )?;
+
+    std::fs::write(
+        &format!(
+            "{}/logstash/config/conf.d/pipeline-wazuh.conf",
+            args.jj_elastic_location.display()
+        ),
+        LOGSTASH_WAZUH_CONF
+            .replace(
+                "$ES_SHARE",
+                &format!("{}", args.jj_elastic_share_location.display()),
+            )
+            .replace("$WAZUH_PASSWORD", wazuh_password)
+            .replace("$WAZUH_IP", &get_public_ip(bb)?),
+    )?;
+
+    system("systemctl restart jj-logstash")?;
+
+    println!(
+        "{}",
+        "--- Successfully configured logstash to duplicate records to Wazuh!".green()
+    );
+
+    Ok(())
+}
+
 fn cleanup(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
     println!("--- Performing cleanup of Wazuh installation directory");
 
@@ -970,33 +1315,4 @@ fn cleanup(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
     );
 
     Ok(())
-}
-
-fn install_wazuh_agent(_args: WazuhAgentArgs) -> eyre::Result<()> {
-    todo!()
-}
-
-fn get_public_ip(bb: &Busybox) -> eyre::Result<String> {
-    let routes = bb
-        .execute(&["ip", "route"])
-        .context("Could not query host routes")?;
-
-    let ips = bb
-        .execute(&["ip", "addr"])
-        .context("Could not query host addresses")?;
-
-    let default_dev = pcre!(&routes =~ m/r"default[^\n]*dev\s([^\s]+)"/xms)
-        .get(0)
-        .ok_or(eyre!("Could not find default route!"))?
-        .extract::<1>()
-        .1[0];
-
-    Ok(
-        pcre!(&ips =~ m{r"^[0-9]+:\s" default_dev r":\s.*?inet\s([^/]+)"}xms)
-            .get(0)
-            .ok_or(eyre!("Could not find associated IP!"))?
-            .extract::<1>()
-            .1[0]
-            .to_string(),
-    )
 }

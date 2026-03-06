@@ -189,3 +189,32 @@ pub fn download_file<P: AsRef<Path>>(url: &str, to: P) -> eyre::Result<()> {
 
     Ok(())
 }
+
+/// On a Linux system, query the system to determine the public IP
+///
+/// Useful for SIEMs that use TLS
+#[cfg(target_os = "linux")]
+pub fn get_public_ip(bb: &busybox::Busybox) -> eyre::Result<String> {
+    let routes = bb
+        .execute(&["ip", "route"])
+        .context("Could not query host routes")?;
+
+    let ips = bb
+        .execute(&["ip", "addr"])
+        .context("Could not query host addresses")?;
+
+    let default_dev = crate::pcre!(&routes =~ m/r"default[^\n]*dev\s([^\s]+)"/xms)
+        .get(0)
+        .ok_or(eyre::eyre!("Could not find default route!"))?
+        .extract::<1>()
+        .1[0];
+
+    Ok(
+        crate::pcre!(&ips =~ m{r"^[0-9]+:\s" default_dev r":\s.*?inet\s([^/]+)"}xms)
+            .get(0)
+            .ok_or(eyre::eyre!("Could not find associated IP!"))?
+            .extract::<1>()
+            .1[0]
+            .to_string(),
+    )
+}
