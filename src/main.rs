@@ -27,6 +27,7 @@ define_commands! {
         Get, g => get::Get,
         [unix] DownloadShell, ds => download_shell::DownloadShell,
         [unix] Elk => elk::Elk,
+        [windows] Elk => elk_winbeats::WinBeats,
         [unix] Wazuh, wz => wazuh::Wazuh,
 
         // sysinfo commands

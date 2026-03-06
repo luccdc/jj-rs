@@ -1363,6 +1363,10 @@ output.elasticsearch:
     certificate_authorities: "{}/http_ca.crt"
 "#,
             args.elasticsearch_share_directory.display()
+        )
+        .replace(
+            "$FILEBEAT_PATH",
+            &format!("{}/filebeat", args.elastic_install_directory.display()),
         ),
     )?;
 
@@ -1403,6 +1407,10 @@ output.elasticsearch:
 output.logstash:
   hosts: ["localhost:5044"]
 "#
+        )
+        .replace(
+            "$FILEBEAT_PATH",
+            &format!("{}/filebeat", args.elastic_install_directory.display()),
         ),
     )?;
 
@@ -1916,6 +1924,10 @@ output.logstash:
   hosts: ["{}:5044"]
 "#,
             FILEBEAT_YML, args.elk_ip
+        )
+        .replace(
+            "$FILEBEAT_PATH",
+            &format!("{}/filebeat", args.elastic_install_directory.display()),
         ),
     )?;
 

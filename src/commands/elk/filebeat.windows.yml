@@ -1,0 +1,19 @@
+filebeat.inputs:
+- type: filestream
+  id: jj-check-daemon
+  paths:
+    - "C:\\Program Files\\jiujitsu\\logs\\check-daemon.json"
+  parsers:
+    - ndjson:
+        target: check
+
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_docker_metadata: ~
+
+setup.template.settings.index.number_of_shards: 1
+
+filebeat.config.modules.path: $FILEBEAT_PATH/modules.d/*.yml
+
+filebeat.modules: []

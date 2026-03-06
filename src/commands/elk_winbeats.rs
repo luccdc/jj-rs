@@ -1,0 +1,195 @@
+use std::{net::Ipv4Addr, path::PathBuf, process::Command};
+
+use clap::{Parser, Subcommand};
+use colored::Colorize;
+
+use crate::utils::download_file;
+
+const FILEBEAT_YML: &str = include_str!("elk/filebeat.windows.yml");
+const WINLOGBEAT_YML: &str = include_str!("elk/winlogbeat.windows.yml");
+const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.windows.yml");
+
+#[derive(Parser, Clone, Debug)]
+#[command(version, about)]
+pub struct ElkBeatsArgs {
+    /// The IP address of the ELK server to download resources from and send logs to
+    #[arg(long, short = 'i', default_value = "127.0.0.1")]
+    elk_ip: Ipv4Addr,
+
+    /// The port of the share on the ELK server
+    #[arg(long, short = 'p', default_value_t = 8080)]
+    elk_share_port: u16,
+
+    /// Where to install and configure all the beats
+    #[arg(long, short = 'e', default_value = r"C:\Program Files\Elastic")]
+    elastic_install_directory: PathBuf,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ElkCommands {
+    /// Install beats and configure the system to send logs to the ELK stack
+    #[command(visible_alias = "beats")]
+    InstallBeats(ElkBeatsArgs),
+}
+
+/// Install, configure, and manage beats locally
+#[derive(Parser, Debug)]
+#[command(version, about)]
+pub struct WinBeats {
+    #[command(subcommand)]
+    command: ElkCommands,
+}
+
+impl super::Command for WinBeats {
+    fn execute(self) -> eyre::Result<()> {
+        let ElkCommands::InstallBeats(args) = self.command;
+
+        println!("{}", "--- Downloading beats...".green());
+
+        std::fs::create_dir_all(&args.elastic_install_directory)?;
+
+        let mut download_threads = vec![];
+
+        for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+            let args = args.clone();
+            download_threads.push(std::thread::spawn(move || {
+                let res = download_file(
+                    &format!("http://{}:{}/{beat}.zip", args.elk_ip, args.elk_share_port),
+                    &format!("{}/{beat}.zip", std::env::temp_dir().display()),
+                );
+                println!("Done downloading {beat}!");
+                res
+            }));
+        }
+
+        for thread in download_threads {
+            match thread.join() {
+                Ok(r) => r?,
+                Err(_) => {
+                    eprintln!(
+                        "{}",
+                        "!!! Could not join download thread due to panic!".red()
+                    );
+                }
+            }
+        }
+
+        println!("--- Unpacking beats...");
+
+        let mut unpack_threads = vec![];
+
+        for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+            let args = args.clone();
+            unpack_threads.push(std::thread::spawn(move || -> eyre::Result<()> {
+                let beat_zip = std::io::BufReader::new(
+                    std::fs::OpenOptions::new()
+                        .read(true)
+                        .open(std::env::temp_dir().join(&format!("{beat}.zip")))?,
+                );
+                let mut archive = zip::read::ZipArchive::new(beat_zip)?;
+
+                archive.extract_unwrapped_root_dir(
+                    args.elastic_install_directory.join(&beat),
+                    zip::read::root_dir_common_filter,
+                )?;
+
+                println!("Unpacked {beat}!");
+                Ok(())
+            }));
+        }
+
+        for thread in unpack_threads {
+            match thread.join() {
+                Ok(r) => r?,
+                Err(_) => {
+                    eprintln!("{}", "!!! Could not join unpack thread due to panic!".red());
+                }
+            }
+        }
+
+        println!("--- Unpacked beats! Configuring beats...");
+
+        std::fs::write(
+            args.elastic_install_directory
+                .join("winlogbeat")
+                .join("winlogbeat.yml"),
+            format!(
+                r#"
+{WINLOGBEAT_YML}
+
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+                args.elk_ip
+            ),
+        )?;
+
+        std::fs::write(
+            args.elastic_install_directory
+                .join("packetbeat")
+                .join("packetbeat.yml"),
+            format!(
+                r#"
+{PACKETBEAT_YML}
+
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+                args.elk_ip
+            ),
+        )?;
+
+        std::fs::write(
+            args.elastic_install_directory
+                .join("filebeat")
+                .join("filebeat.yml"),
+            format!(
+                r#"
+{FILEBEAT_YML}
+
+output.logstash:
+  hosts: ["{}:5044"]
+"#,
+                args.elk_ip
+            )
+            .replace(
+                "$FILEBEAT_PATH",
+                &format!(
+                    "{}",
+                    args.elastic_install_directory.join("filebeat").display()
+                ),
+            ),
+        )?;
+
+        println!("--- Configured beats! Installing as services...");
+
+        for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+            Command::new("powershell.exe")
+                .args(&[
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    &format!(
+                        "{}\\{beat}\\install-service-{beat}.ps1",
+                        args.elastic_install_directory.display()
+                    ),
+                ])
+                .spawn()?
+                .wait()?;
+        }
+
+        println!("--- Starting beats...");
+
+        for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+            Command::new("sc.exe")
+                .args(&["start", beat])
+                .spawn()?
+                .wait()?;
+        }
+
+        println!("{}", "--- Installed beats!".green());
+
+        Ok(())
+    }
+}

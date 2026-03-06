@@ -21,6 +21,8 @@ processors:
 
 setup.template.settings.index.number_of_shards: 1
 
+filebeat.config.modules.path: $FILEBEAT_PATH/modules.d/*.yml
+
 filebeat.modules:
   - module: system
     syslog:
