@@ -1667,6 +1667,11 @@ output.logstash:
 fn install_suricata(bb: &Busybox, args: &SuricataInstallArgs) -> eyre::Result<()> {
     println!("{}", "--- Installing Suricata...".green());
 
+    if qx("getenforce")?.1.contains("Enforcing") {
+        println!("SELinux is enabled, fixing contexts...");
+        system("restorecon -R /etc")?;
+    }
+
     let distro = get_distro()?;
     let download_settings = args
         .use_download_shell
@@ -1679,14 +1684,10 @@ fn install_suricata(bb: &Busybox, args: &SuricataInstallArgs) -> eyre::Result<()
     if distro.is_deb_based() {
         install_apt_packages(download_settings.clone(), &["suricata", "suricata-update"])?;
     } else if distro.is_rhel_based() {
-        if let OsFamily::Fedora = distro.root_family {
-            install_dnf_packages(download_settings.clone(), &["dnf-plugins-core"])?;
-        } else {
-            install_dnf_packages(
-                download_settings.clone(),
-                &["epel-release", "dnf-plugins-core"],
-            )?;
-        }
+        install_dnf_packages(
+            download_settings.clone(),
+            &["epel-release", "dnf-plugins-core"],
+        )?;
 
         if args.use_download_shell {
             DownloadContainer::new(None, args.sneaky_ip)?
