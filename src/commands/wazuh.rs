@@ -1202,9 +1202,6 @@ fn import_pipelines(
                 println!("\n  Failed to contact Wazuh server to import pipeline {name}: {e}");
             }
         }
-
-        // Wait a quarter second in between each import, as otherwise Opensearch gets overloaded
-        std::thread::sleep(std::time::Duration::from_millis(250));
     }
 
     let settings_update_result = wazuh_client

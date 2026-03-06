@@ -1681,13 +1681,27 @@ fn setup_winlogbeat(
             continue;
         }
 
-        let ingest_pipeline = match serde_yaml_ng::from_reader::<_, serde_json::Value>(file) {
+        let mut ingest_pipeline = match serde_yaml_ng::from_reader::<_, serde_json::Value>(file) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("Could not process {file_name}: {e}");
                 continue;
             }
         };
+
+        if let Some(serde_json::Value::Array(processors)) = ingest_pipeline.get_mut("processors") {
+            for processor in processors {
+                if let Some(pipeline) = processor.get_mut("pipeline")
+                    && let Some(name) = pipeline.get_mut("name")
+                    && let serde_json::Value::String(name) = name
+                    && let Some(inner_name) = name
+                        .strip_suffix("\" >}")
+                        .and_then(|s| s.strip_prefix("{< IngestPipeline \""))
+                {
+                    *name = format!("winlogbeat-{}-{inner_name}", args.elastic_version);
+                }
+            }
+        }
 
         let ingest_pipeline_json = match serde_json::to_string(&ingest_pipeline) {
             Ok(v) => v,
