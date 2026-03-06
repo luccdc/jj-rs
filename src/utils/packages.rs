@@ -167,7 +167,7 @@ pub fn install_dnf_packages<S: AsRef<str>>(
                 std::process::Command::new("/bin/sh")
                     .args([
                         "-c",
-                        &format!("dnf download --resolve {}", packages.join(" ")),
+                        &format!("dnf download --refresh --resolve {}", packages.join(" ")),
                     ])
                     .current_dir(&packages_dir)
                     .spawn()
@@ -182,7 +182,7 @@ pub fn install_dnf_packages<S: AsRef<str>>(
             std::process::Command::new("/bin/sh")
                 .args([
                     "-c",
-                    &format!("dnf download --resolve {}", packages.join(" ")),
+                    &format!("dnf download --refresh --resolve {}", packages.join(" ")),
                 ])
                 .current_dir(&packages_dir)
                 .spawn()

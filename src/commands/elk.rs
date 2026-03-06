@@ -23,8 +23,8 @@ use crate::{
     utils::{
         busybox::Busybox,
         download_container::DownloadContainer,
-        download_file,
-        os_version::{OsFamily, get_distro},
+        download_file, get_public_ip,
+        os_version::get_distro,
         packages::{DownloadSettings, install_apt_packages, install_dnf_packages},
         passwd, qx, system,
     },
@@ -34,9 +34,9 @@ use crate::{
 // It includes all the ndjson files for kibana dashboards
 include!(concat!(env!("OUT_DIR"), "/kibana_dashboards.rs"));
 
-const FILEBEAT_YML: &str = include_str!("elk/filebeat.yml");
-const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.yml");
-const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.yml");
+const FILEBEAT_YML: &str = include_str!("elk/filebeat.linux.yml");
+const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.linux.yml");
+const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.linux.yml");
 const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
 const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
 const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
@@ -181,6 +181,10 @@ pub enum ElkCommands {
     #[command(visible_alias = "fb")]
     SetupFilebeat(ElkSubcommandArgs),
 
+    /// Optimize Elasticsearch to handle winlogbeat logs
+    #[command(visible_alias = "wb")]
+    SetupWinlogbeat(ElkSubcommandArgs),
+
     /// Export dashboards to allow for a manual import
     #[command(visible_alias = "exp-db")]
     ExportDashboards,
@@ -277,6 +281,10 @@ impl super::Command for Elk {
 
         if let EC::Install(args) | EC::SetupPacketbeat(args) = &self.command {
             setup_packetbeat(&mut elastic_password, args)?;
+        }
+
+        if let EC::Install(args) | EC::SetupWinlogbeat(args) = &self.command {
+            setup_winlogbeat(&busybox, &mut elastic_password, args)?;
         }
 
         if let EC::Install(args) = &self.command {
@@ -408,7 +416,33 @@ fn download_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
                         ),
                         dest_path,
                     );
-                    println!("Done downloading {beat}!");
+                    println!("Done downloading {beat} for Linux!");
+                    res
+                }
+            };
+            if download_shell {
+                download_package()?;
+            } else {
+                download_threads.push(thread::spawn(download_package));
+            }
+        }
+
+        for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+            let download_package = {
+                let args = args.clone();
+                let beat = beat.to_string();
+
+                move || {
+                    let mut dest_path = args.elasticsearch_share_directory.clone();
+                    dest_path.push(format!("{beat}.zip"));
+                    let res = download_file(
+                        &format!(
+                            "{}/{}/{}-{}-windows-x86_64.zip",
+                            args.beats_download_url, beat, beat, args.elastic_version
+                        ),
+                        dest_path,
+                    );
+                    println!("Done downloading {beat} for Windows!");
                     res
                 }
             };
@@ -1148,16 +1182,18 @@ Environment="ES_API_KEY={}:{}"
     std::fs::write(
         cpaths!(ls_path_conf, "pipelines.yml"),
         format!(
-            "- pipeline.id: main\n  path.config: {}/*.conf",
+            "- pipeline.id: main\n  path.config: {}/*.conf\n  pipeline.ecs_compatibility: disabled",
             cpaths!(ls_path_conf, "conf.d").display()
         ),
     )?;
     std::fs::write(
         cpaths!(ls_path_conf, "conf.d", "pipeline.conf"),
-        LOGSTASH_CONF.replace(
-            "$ES_SHARE",
-            &format!("{}", args.elasticsearch_share_directory.display()),
-        ),
+        LOGSTASH_CONF
+            .replace(
+                "$ES_SHARE",
+                &format!("{}", args.elasticsearch_share_directory.display()),
+            )
+            .replace("$ELK_IP", &get_public_ip(&bb)?),
     )?;
 
     system("systemctl daemon-reload")?;
@@ -1331,7 +1367,7 @@ output.elasticsearch:
     )?;
 
     system(&format!(
-        "{0}/filebeat --path.home {0} --path.config {0} --path.data {0}/data --path.logs {0}/logs setup",
+        "{0}/filebeat --path.home {0} --path.config {0} --path.data {0}/data --path.logs {0}/logs setup --modules iis,mysql,apache,nginx",
         fb_home.display()
     ))?;
 
@@ -1440,6 +1476,261 @@ output.logstash:
     system("systemctl restart jj-packetbeat")?;
 
     println!("{}", "--- Packetbeat is set up".green());
+
+    Ok(())
+}
+
+fn setup_winlogbeat(
+    bb: &Busybox,
+    password: &mut Option<String>,
+    args: &ElkSubcommandArgs,
+) -> eyre::Result<()> {
+    println!(
+        "{}",
+        "--- Prepping Elasticsearch for Winlogbeat data".green()
+    );
+
+    let es_password = get_elastic_password(password)?;
+
+    let cert = std::fs::read_to_string(cpaths!(args.elasticsearch_share_directory, "http_ca.crt"))?;
+    let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
+
+    let client = reqwest::blocking::Client::builder()
+        .add_root_certificate(cert)
+        .build()?;
+
+    let public_ip = get_public_ip(bb)?;
+
+    let winlogbeat_zip = std::io::BufReader::new(std::fs::OpenOptions::new().read(true).open(
+        cpaths!(args.elasticsearch_share_directory, "winlogbeat.zip"),
+    )?);
+    let mut archive = zip::read::ZipArchive::new(winlogbeat_zip)?;
+
+    fn visit_fields(
+        mappings: &mut serde_json::Map<String, serde_json::Value>,
+        object_chain: Option<&str>,
+        field: serde_json::Value,
+    ) {
+        use serde_json::Value as V;
+
+        // only returns None when object_chain is an empty string or when internal corruption happens
+        fn resolve_chain<'a, 'b>(
+            mappings: &'a mut serde_json::Map<String, serde_json::Value>,
+            mut object_chain: impl Iterator<Item = &'b str>,
+        ) -> Option<serde_json::map::Entry<'a>> {
+            let mut current_entry = mappings.entry(object_chain.next()?);
+
+            while let Some(part) = object_chain.next() {
+                let new_mapping = current_entry.or_insert(serde_json::json!({
+                    "properties": {}
+                }));
+
+                current_entry = new_mapping
+                    .as_object_mut()?
+                    .get_mut("properties")?
+                    .as_object_mut()?
+                    .entry(part);
+            }
+
+            Some(current_entry)
+        }
+
+        let V::Object(mut m) = field else {
+            return;
+        };
+
+        m.remove("level");
+        m.remove("description");
+        m.remove("required");
+        m.remove("example");
+        m.remove("default_field");
+
+        let Some(field_type) = m.get("type").and_then(V::as_str) else {
+            return;
+        };
+        let Some(name) = m.get("name").and_then(V::as_str) else {
+            return;
+        };
+
+        let Some(field_entry) = resolve_chain(
+            mappings,
+            object_chain
+                .map_or(
+                    Box::new(std::iter::empty()) as Box<dyn Iterator<Item = &str>>,
+                    |s| Box::new(s.split('.')),
+                )
+                .chain(name.split('.')),
+        ) else {
+            return;
+        };
+
+        if field_type == "group" {
+            let name = name.to_owned();
+
+            let Some(V::Array(fields)) = m.remove("fields") else {
+                return;
+            };
+
+            let new_chain = object_chain.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}"));
+
+            for field in fields {
+                visit_fields(mappings, Some(&new_chain), field);
+            }
+        } else {
+            field_entry.or_insert(m.into());
+        }
+    }
+
+    println!("Parsing index template...");
+
+    let fields_file = archive.by_name(&format!(
+        "winlogbeat-{}-windows-x86_64/fields.yml",
+        args.elastic_version
+    ))?;
+
+    let mut mappings = serde_json::Map::new();
+
+    let fields_parsed = serde_yaml_ng::from_reader::<_, serde_json::Value>(fields_file)
+        .context("Could not parse basic winlogbeat fields mappings")?;
+
+    let transformed_fields = match fields_parsed {
+        serde_json::Value::Array(a) => {
+            for field in a {
+                visit_fields(&mut mappings, None, field);
+            }
+        }
+        _ => {
+            eyre::bail!("Could not parse field mappings file to prepare index template");
+        }
+    };
+
+    let index_template = serde_json::json!({
+        "index_patterns": ["winlogbeat-*"],
+        "data_stream": {},
+        "template": {
+            "settings": {
+                "index.number_of_shards": 1,
+                "index.lifecycle.name": "winlogbeat"
+            },
+            "mappings": {
+                "properties": transformed_fields
+            }
+        }
+    });
+
+    let index_template_body = serde_json::to_string(&index_template)?;
+
+    println!("Uploading index template...");
+
+    let response = client
+        .post(format!(
+            "https://{public_ip}:10200/_index_template/winlogbeat-{}",
+            args.elastic_version
+        ))
+        .basic_auth("elastic", Some(&es_password))
+        .header("content-type", "application/json")
+        .body(index_template_body)
+        .send()
+        .context("Could not contact elasticsearch server")?
+        .json::<serde_json::Value>()
+        .context("Could not parse response from elasticsearch")?;
+
+    if response.get("acknowledged") == Some(&(true.into())) {
+        println!("Successfully uploaded index template!");
+    } else {
+        eyre::bail!("Issues uploading index template: {response}");
+    }
+
+    println!("Done uploading index template! Creating data stream...");
+
+    let response = client
+        .put(format!(
+            "https://{public_ip}:10200/_data_stream/winlogbeat-{}",
+            args.elastic_version
+        ))
+        .basic_auth("elastic", Some(&es_password))
+        .send()
+        .context("Could not contact elasticsearch server")?
+        .json::<serde_json::Value>()
+        .context("Could not parse response from elasticsearch")?;
+
+    if response.get("acknowledged") == Some(&(true.into())) {
+        println!("Successfully uploaded index template!");
+    } else {
+        eyre::bail!("Issues uploading index template: {response}");
+    }
+
+    println!("Done creating data stream! Searching for ingest pipelines...");
+
+    for i in 0..archive.len() {
+        let file = match archive.by_index(i) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Could not search for winlogbeat ingest pipeline: {e}");
+                continue;
+            }
+        };
+
+        if file.is_dir() {
+            continue;
+        }
+
+        let file_name = file.name().to_owned();
+
+        if !file_name.ends_with(".yml") || !file_name.contains("ingest") {
+            continue;
+        }
+
+        let ingest_pipeline = match serde_yaml_ng::from_reader::<_, serde_json::Value>(file) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Could not process {file_name}: {e}");
+                continue;
+            }
+        };
+
+        let ingest_pipeline_json = match serde_json::to_string(&ingest_pipeline) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Could not serialize pipeline {file_name} as JSON: {e}");
+                continue;
+            }
+        };
+
+        let Some(file_name) = file_name.rsplitn(2, '/').next() else {
+            eprintln!("Could not extract file name from path");
+            continue;
+        };
+
+        let pipeline_name = file_name.trim_end_matches(".yml");
+
+        match client
+            .put(format!(
+                "https://{public_ip}:10200/_ingest/pipeline/winlogbeat-{}-{pipeline_name}",
+                args.elastic_version
+            ))
+            .basic_auth("elastic", Some(&es_password))
+            .header("content-type", "application/json")
+            .body(ingest_pipeline_json)
+            .send()
+            .and_then(|r| r.json::<serde_json::Value>())
+        {
+            Ok(v) => {
+                if let serde_json::Value::Object(ref o) = v
+                    && o.get("acknowledged") == Some(&(true.into()))
+                {
+                    println!("Success!");
+                } else {
+                    eprintln!("Failed to import pipeline {pipeline_name}: {v}");
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to contact elasticsearch to import pipeline: {e}")
+            }
+        }
+    }
+
+    println!("{}", "--- Ready for Winlogbeat data".green());
 
     Ok(())
 }
