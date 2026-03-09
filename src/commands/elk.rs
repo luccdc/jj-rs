@@ -5,7 +5,10 @@ use std::process::{Command, Stdio};
 use std::{
     io::{self, Write},
     net::Ipv4Addr,
-    os::unix::fs::PermissionsExt,
+    os::{
+        fd::{AsRawFd, FromRawFd, IntoRawFd},
+        unix::fs::PermissionsExt,
+    },
     path::PathBuf,
     thread,
 };
@@ -14,7 +17,10 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use eyre::{Context, bail};
 use flate2::bufread::GzDecoder;
-use nix::unistd::chown;
+use nix::{
+    sys::memfd::{MFdFlags, memfd_create},
+    unistd::chown,
+};
 use tar::Archive;
 use walkdir::WalkDir;
 
@@ -61,39 +67,39 @@ macro_rules! cpaths {
 pub struct ElkSubcommandArgs {
     /// Version to use for Elasticsearch, Logstash, Kibana, Auditbeat, Filebeat, and Packetbeat
     #[arg(long, short = 'V', default_value = "9.3.0")]
-    elastic_version: String,
+    pub elastic_version: String,
 
     /// URL to download Elasticsearch, Logstash, and Kibana from
     #[arg(long, default_value = "https://artifacts.elastic.co/downloads")]
-    download_url: String,
+    pub download_url: String,
 
     /// URL to download Auditbeat, Filebeat, and Packetbeat from
     #[arg(long, default_value = "https://artifacts.elastic.co/downloads/beats")]
-    beats_download_url: String,
+    pub beats_download_url: String,
 
     /// Where to put files to be shared on the network
     #[arg(long, short = 'S', default_value = "/opt/es-share")]
-    elasticsearch_share_directory: PathBuf,
+    pub elasticsearch_share_directory: PathBuf,
 
     /// Where to install and configure everything ELK related, including beats
     #[arg(long, short = 'e', default_value = "/opt/jj-es")]
-    elastic_install_directory: PathBuf,
+    pub elastic_install_directory: PathBuf,
 
     /// Disable syslog input
     #[arg(long, short = 'D')]
-    disable_syslog: bool,
+    pub disable_syslog: bool,
 
     /// Syslog input port for Filebeat
     #[arg(long, short = 'l', default_value = "1514")]
-    syslog_port: u16,
+    pub syslog_port: u16,
 
     /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
-    use_download_shell: bool,
+    pub use_download_shell: bool,
 
     /// Use a specific IP address for source NAT when downloading through the container
     #[arg(long, short = 'I')]
-    sneaky_ip: Option<Ipv4Addr>,
+    pub sneaky_ip: Option<Ipv4Addr>,
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -163,7 +169,7 @@ pub enum ElkCommands {
 
     /// Extra step to load Kibana dashboards if such setup fails in the previous step
     #[command(visible_alias = "kd")]
-    LoadKibanaDashboards,
+    LoadKibanaDashboards(ElkSubcommandArgs),
 
     /// Configure Logstash to be able to store to Elasticsearch and configure a pipeline for beats
     #[command(visible_alias = "lo")]
@@ -203,7 +209,7 @@ pub enum ElkCommands {
 #[command(version, about)]
 pub struct Elk {
     #[command(subcommand)]
-    command: ElkCommands,
+    pub command: ElkCommands,
 }
 
 impl super::Command for Elk {
@@ -241,63 +247,7 @@ impl super::Command for Elk {
             get_elastic_password(&mut elastic_password)?;
         }
 
-        if let EC::Install(_) | EC::SetupZram(_) = &self.command
-            && let Err(e) = setup_zram()
-        {
-            eprintln!("{}{e}", "??? Could not set up zram: ".yellow());
-        }
-
-        if let EC::Install(args) | EC::DownloadPackages(args) = &self.command {
-            download_packages(args)?;
-        }
-
-        if let EC::Install(args) | EC::ExtractPackages(args) = &self.command {
-            extract_packages(args)?;
-        }
-
-        if let EC::Install(args) | EC::SetupElastic(args) = &self.command {
-            setup_elasticsearch(&busybox, &mut elastic_password, args)?;
-        }
-
-        if let EC::Install(args) | EC::SetupKibana(args) = &self.command {
-            setup_kibana(&busybox, args)?;
-        }
-
-        if let EC::Install(_) | EC::LoadKibanaDashboards = &self.command {
-            load_kibana_dashboards(&mut elastic_password)?;
-        }
-
-        if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
-            setup_logstash(&busybox, &mut elastic_password, args)?;
-        }
-
-        if let EC::Install(args) | EC::SetupAuditbeat(args) = &self.command {
-            setup_auditbeat(&mut elastic_password, args)?;
-        }
-
-        if let EC::Install(args) | EC::SetupFilebeat(args) = &self.command {
-            setup_filebeat(&mut elastic_password, args)?;
-        }
-
-        if let EC::Install(args) | EC::SetupPacketbeat(args) = &self.command {
-            setup_packetbeat(&mut elastic_password, args)?;
-        }
-
-        if let EC::Install(args) | EC::SetupWinlogbeat(args) = &self.command {
-            setup_winlogbeat(&busybox, &mut elastic_password, args)?;
-        }
-
-        if let EC::Install(args) = &self.command {
-            install_suricata(
-                &busybox,
-                &SuricataInstallArgs {
-                    use_download_shell: args.use_download_shell,
-                    sneaky_ip: args.sneaky_ip,
-                },
-            )?;
-        } else if let EC::InstallSuricata(args) = &self.command {
-            install_suricata(&busybox, args)?;
-        }
+        self.execute_pipeline(&busybox, &mut elastic_password)?;
 
         if let EC::Install(_) = &self.command {
             println!(
@@ -314,6 +264,76 @@ Configuration Notes:
         - 10200/tcp: Elasticsearch
 "
             );
+        }
+
+        Ok(())
+    }
+}
+
+impl Elk {
+    pub fn execute_pipeline(
+        &self,
+        busybox: &Busybox,
+        elastic_password: &mut Option<String>,
+    ) -> eyre::Result<()> {
+        use ElkCommands as EC;
+
+        if let EC::Install(_) | EC::SetupZram(_) = &self.command
+            && let Err(e) = setup_zram()
+        {
+            eprintln!("{}{e}", "??? Could not set up zram: ".yellow());
+        }
+
+        if let EC::Install(args) | EC::DownloadPackages(args) = &self.command {
+            download_packages(args)?;
+        }
+
+        if let EC::Install(args) | EC::ExtractPackages(args) = &self.command {
+            extract_packages(args)?;
+        }
+
+        if let EC::Install(args) | EC::SetupElastic(args) = &self.command {
+            setup_elasticsearch(&busybox, elastic_password, args)?;
+        }
+
+        if let EC::Install(args) | EC::SetupKibana(args) = &self.command {
+            setup_kibana(&busybox, args)?;
+        }
+
+        if let EC::Install(args) | EC::LoadKibanaDashboards(args) = &self.command {
+            load_kibana_dashboards(args, elastic_password)?;
+        }
+
+        if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
+            setup_logstash(&busybox, elastic_password, args)?;
+        }
+
+        if let EC::Install(args) | EC::SetupAuditbeat(args) = &self.command {
+            setup_auditbeat(elastic_password, args)?;
+        }
+
+        if let EC::Install(args) | EC::SetupFilebeat(args) = &self.command {
+            setup_filebeat(elastic_password, args)?;
+        }
+
+        if let EC::Install(args) | EC::SetupPacketbeat(args) = &self.command {
+            setup_packetbeat(elastic_password, args)?;
+        }
+
+        if let EC::Install(args) | EC::SetupWinlogbeat(args) = &self.command {
+            setup_winlogbeat(&busybox, elastic_password, args)?;
+        }
+
+        if let EC::Install(args) = &self.command {
+            install_suricata(
+                &busybox,
+                &SuricataInstallArgs {
+                    use_download_shell: args.use_download_shell,
+                    sneaky_ip: args.sneaky_ip,
+                },
+            )?;
+        } else if let EC::InstallSuricata(args) = &self.command {
+            install_suricata(&busybox, args)?;
         }
 
         Ok(())
@@ -345,7 +365,7 @@ fn setup_zram() -> eyre::Result<()> {
     let mods = qx("lsmod")?.1;
 
     if pcre!(&mods =~ qr/"zram"/xms) {
-        println!("{}", "--- Skipping ZRAM setup".green());
+        println!("{}", "--- Skipping ZRAM setup (already loaded)".green());
         return Ok(());
     }
 
@@ -779,7 +799,9 @@ fn setup_elasticsearch(
     let mut i = 0;
     loop {
         i += 1;
-        println!("Waiting for Elasticsearch {i}...");
+        if i % 10 == 0 {
+            println!("Waiting for Elasticsearch {i}...");
+        }
         std::thread::sleep(std::time::Duration::from_secs(1));
 
         let Ok(res) = client.get("https://localhost:10200/_cluster/health").send() else {
@@ -825,7 +847,89 @@ fn setup_elasticsearch(
 
     std::fs::set_permissions(share_dir, perms)?;
 
-    println!("{}", "--- Elasticsearch configured!".green());
+    println!("Extracting HTTP CA private key...");
+
+    let ca_password = String::from_utf8_lossy(
+        &Command::new(cpaths!(es_home, "bin", "elasticsearch-keystore"))
+            .args(&["show", "xpack.security.http.ssl.keystore.secure_password"])
+            .current_dir(&es_home)
+            .env("ES_HOME", &format!("{}", es_home.display()))
+            .env("ES_PATH_CONF", &format!("{}", es_path_conf.display()))
+            .stdout(Stdio::piped())
+            .output()?
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let _ = std::fs::remove_file(cpaths!(&es_path_conf, "certs", "http_ca.p12"));
+
+    let mut extract_cmd = Command::new(cpaths!(es_home, "jdk", "bin", "keytool"))
+        .args(&[
+            "-importkeystore",
+            "-srckeystore",
+            "config/certs/http.p12",
+            "-destkeystore",
+            "config/certs/http_ca.p12",
+            "-srcalias",
+            "http_ca",
+        ])
+        .current_dir(&es_home)
+        .env("ES_HOME", &format!("{}", es_home.display()))
+        .env("ES_PATH_CONF", &format!("{}", es_path_conf.display()))
+        .stdin(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .spawn()?;
+
+    if let Some(ref mut stdin) = extract_cmd.stdin {
+        writeln!(stdin, "{ca_password}")?;
+        writeln!(stdin, "{ca_password}")?;
+        writeln!(stdin, "{ca_password}")?;
+    }
+
+    extract_cmd.wait()?;
+
+    println!("\nGenerating Kibana keys...");
+
+    let public_ip = get_public_ip(&bb)?;
+
+    let config_file = memfd_create("", MFdFlags::empty())?;
+    let config_fd = config_file.into_raw_fd();
+
+    let mut config_file = unsafe { File::from_raw_fd(config_fd) };
+    writeln!(config_file, "instances:")?;
+    writeln!(config_file, "  - name: kibana")?;
+    writeln!(config_file, "    ip:")?;
+    writeln!(config_file, "      - {public_ip}")?;
+    writeln!(config_file, "    dns:")?;
+    writeln!(config_file, "      - localhost")?;
+
+    let _ = std::fs::remove_file(cpaths!(es_path_conf, "lk-certs.zip"));
+    let mut generate_keys = Command::new("/bin/sh")
+        .args([
+            "-c",
+            &format!(
+                "bin/elasticsearch-certutil cert --silent --in /proc/self/fd/{} --out config/lk-certs.zip --ca config/certs/http_ca.p12",
+                config_file.as_raw_fd()
+            )
+        ])
+        .current_dir(&es_home)
+        .env("ES_HOME", format!("{}", es_home.display()))
+        .env("ES_PATH_CONF", format!("{}", es_path_conf.display()))
+        .stdin(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .spawn()?;
+
+    if let Some(mut stdin) = generate_keys.stdin.take() {
+        writeln!(stdin, "{ca_password}")?;
+        writeln!(stdin, "")?;
+    }
+
+    generate_keys.wait()?;
+
+    println!("\n{}", "--- Elasticsearch configured!".green());
 
     Ok(())
 }
@@ -951,13 +1055,69 @@ fn setup_kibana(bb: &Busybox, args: &ElkSubcommandArgs) -> eyre::Result<()> {
         .map(|c| c[1].to_string())
         .collect::<Vec<_>>();
 
+    let certs = std::io::BufReader::new(
+        std::fs::OpenOptions::new()
+            .read(true)
+            .open(cpaths!(es_path_conf, "lk-certs.zip"))?,
+    );
+    let mut certs_archive = zip::read::ZipArchive::new(certs)?;
+
+    let mut certs_bundle = certs_archive.by_path("kibana/kibana.p12")?;
+
+    std::io::copy(
+        &mut certs_bundle,
+        &mut std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(cpaths!(kbn_path_conf, "http.p12"))?,
+    )?;
+
+    if !std::fs::exists(cpaths!(kbn_path_conf, "kibana.keystore"))? {
+        Command::new("/bin/sh")
+            .args(["-c", "sudo -u jj-kibana bin/kibana-keystore create"])
+            .current_dir(&kbn_home)
+            .env("KBN_HOME", format!("{}", kbn_home.display()))
+            .env("KBN_PATH_CONF", format!("{}", kbn_path_conf.display()))
+            .spawn()?
+            .wait()?;
+
+        let mut keystore_password_set = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "sudo -u jj-kibana bin/kibana-keystore add server.ssl.keystore.password",
+            ])
+            .current_dir(&kbn_home)
+            .env("KBN_HOME", format!("{}", kbn_home.display()))
+            .env("KBN_PATH_CONF", format!("{}", kbn_path_conf.display()))
+            .stdin(Stdio::piped())
+            .spawn()?;
+
+        if let Some(mut stdin) = keystore_password_set.stdin.take() {
+            writeln!(stdin, "")?;
+        }
+
+        keystore_password_set.wait()?;
+    }
+
     let kibana_yml = std::fs::read_to_string(cpaths!(kbn_path_conf, "kibana.yml"))?;
+
+    let cert_config = format!(
+        "server.ssl.keystore.path: {}/http.p12",
+        kbn_path_conf.display()
+    );
+
     let mut new_kibana_yml =
         pcre!(&kibana_yml =~ s/r"^[^\n]server.host:[^\n]+"/r#"server.host: "0.0.0.0""#/xms);
     new_kibana_yml.push('\n');
     new_kibana_yml.push_str(&keys.join("\n"));
+    new_kibana_yml.push('\n');
+    new_kibana_yml.push_str("server.ssl.enabled: true");
+    new_kibana_yml.push('\n');
+    new_kibana_yml.push_str(&cert_config);
     std::fs::write(cpaths!(kbn_path_conf, "kibana.yml"), new_kibana_yml)?;
 
+    system("systemctl daemon-reload")?;
     system("systemctl enable jj-kibana")?;
     system("systemctl start jj-kibana")?;
 
@@ -981,15 +1141,22 @@ fn setup_kibana(bb: &Busybox, args: &ElkSubcommandArgs) -> eyre::Result<()> {
         struct KibanaStatus {
             status: Overall,
         }
-        let client = Client::new();
+
+        let root_cert = reqwest::Certificate::from_pem(
+            std::fs::read_to_string(cpaths!(&es_path_conf, "certs", "http_ca.crt"))?.as_bytes(),
+        )?;
+
+        let client = Client::builder().add_root_certificate(root_cert).build()?;
 
         let mut i = 0;
         loop {
             i += 1;
-            println!("Waiting for Kibana {i}...");
+            if i % 10 == 0 {
+                println!("Waiting for Kibana {i}...");
+            }
             std::thread::sleep(std::time::Duration::from_secs(1));
 
-            let Ok(res) = client.get("http://localhost:5601/api/status").send() else {
+            let Ok(res) = client.get("https://localhost:5601/api/status").send() else {
                 continue;
             };
             let Ok(json) = res.json::<KibanaStatus>() else {
@@ -1007,8 +1174,13 @@ fn setup_kibana(bb: &Busybox, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     Ok(())
 }
 
-fn load_kibana_dashboards(password: &mut Option<String>) -> eyre::Result<()> {
+fn load_kibana_dashboards(
+    args: &ElkSubcommandArgs,
+    password: &mut Option<String>,
+) -> eyre::Result<()> {
     let elastic_password = get_elastic_password(password)?;
+
+    let es_path_conf = cpaths!(args.elastic_install_directory, "elasticsearch", "config");
 
     println!("{}", "--- Importing Kibana dashboards...".green());
 
@@ -1016,7 +1188,12 @@ fn load_kibana_dashboards(password: &mut Option<String>) -> eyre::Result<()> {
         Client,
         multipart::{Form, Part},
     };
-    let client = Client::new();
+
+    let root_cert = reqwest::Certificate::from_pem(
+        std::fs::read_to_string(cpaths!(&es_path_conf, "certs", "http_ca.crt"))?.as_bytes(),
+    )?;
+
+    let client = Client::builder().add_root_certificate(root_cert).build()?;
 
     for (i, dash) in KIBANA_DASHBOARDS.iter().enumerate() {
         println!("Importing dashboard {}...", i + 1);
@@ -1025,7 +1202,7 @@ fn load_kibana_dashboards(password: &mut Option<String>) -> eyre::Result<()> {
         let form = Form::new().part("file", part);
 
         client
-            .post("http://localhost:5601/api/saved_objects/_import?overwrite=true")
+            .post("https://localhost:5601/api/saved_objects/_import?overwrite=true")
             .basic_auth("elastic", Some(elastic_password.clone()))
             .header("kbn-xsrf", "true")
             .multipart(form)
@@ -1181,10 +1358,13 @@ Environment="ES_API_KEY={}:{}"
     )?;
     std::fs::write(
         cpaths!(ls_path_conf, "pipelines.yml"),
-        format!(
-            "- pipeline.id: main\n  path.config: {}/*.conf\n  pipeline.ecs_compatibility: disabled",
-            cpaths!(ls_path_conf, "conf.d").display()
-        ),
+        serde_yaml_ng::to_string(&serde_json::json!([
+            {
+                "pipeline.id": "main",
+                "path.config": format!("{}/*.conf", cpaths!(ls_path_conf, "conf.d").display()),
+                "pipeline.ecs_compatibility": "disabled"
+            }
+        ]))?,
     )?;
     std::fs::write(
         cpaths!(ls_path_conf, "conf.d", "pipeline.conf"),
@@ -1264,6 +1444,13 @@ fn setup_auditbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> e
             r#"
 {AUDITBEAT_YML}
 
+setup.kibana:
+  host: "localhost:5601"
+  protocol: https
+  ssl:
+    enabled: true
+    certificate_authorities: ["{0}/http_ca.crt"]
+
 output.elasticsearch:
   hosts: ["https://localhost:10200"]
   transport: https
@@ -1271,9 +1458,9 @@ output.elasticsearch:
   password: "{es_password}"
   ssl:
     enabled: true
-    certificate_authorities: "{}/http_ca.crt"
+    certificate_authorities: "{0}/http_ca.crt"
 "#,
-            args.elasticsearch_share_directory.display()
+            args.elasticsearch_share_directory.display(),
         ),
     )?;
 
@@ -1353,6 +1540,13 @@ fn setup_filebeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> ey
       var.syslog_port: 9002
       var.log_level: 5
 
+setup.kibana:
+  host: "localhost:5601"
+  protocol: https
+  ssl:
+    enabled: true
+    certificate_authorities: ["{0}/http_ca.crt"]
+
 output.elasticsearch:
   hosts: ["https://localhost:10200"]
   transport: https
@@ -1360,9 +1554,9 @@ output.elasticsearch:
   password: "{es_password}"
   ssl:
     enabled: true
-    certificate_authorities: "{}/http_ca.crt"
+    certificate_authorities: "{0}/http_ca.crt"
 "#,
-            args.elasticsearch_share_directory.display()
+            args.elasticsearch_share_directory.display(),
         )
         .replace(
             "$FILEBEAT_PATH",
@@ -1450,6 +1644,13 @@ fn setup_packetbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> 
             r#"
 {PACKETBEAT_YML}
 
+setup.kibana:
+  host: "localhost:5601"
+  protocol: https
+  ssl:
+    enabled: true
+    certificate_authorities: ["{0}/http_ca.crt"]
+
 output.elasticsearch:
   hosts: ["https://localhost:10200"]
   transport: https
@@ -1457,9 +1658,9 @@ output.elasticsearch:
   password: "{es_password}"
   ssl:
     enabled: true
-    certificate_authorities: "{}/http_ca.crt"
+    certificate_authorities: "{0}/http_ca.crt"
 "#,
-            args.elasticsearch_share_directory.display()
+            args.elasticsearch_share_directory.display(),
         ),
     )?;
 

@@ -3,7 +3,6 @@ auditbeat.modules:
   audit_rules: |
     # Executions
     -a always,exit -F arch=b64 -S execve,execveat -k exec
-    -a always,exit -F arch=b64 -S clone,clone3 -k clones
 
     # Identity changes
     -w /etc/group -p wa -k identity
@@ -14,11 +13,15 @@ auditbeat.modules:
     # Unauthorized access attempts/enumeration
     -a always,exit -F arch=b64 -S open,creat,truncate,ftruncate,openat,open_by_handle_at -F exit=-EACCES -k access
     -a always,exit -F arch=b64 -S open,creat,truncate,ftruncate,openat,open_by_handle_at -F exit=-EPERM -k access
-    -a always,exit -F arch=b64 -S geteuid,getuid,getegid,getgid -k potential_enum
 
     # Networking info
-    -a always,exit -F arch=b64 -S socket -k sockets
+    ## handled by socket dataset
+    -a never,exclude -F arch=b64 -S F a0=2 socket
+    ## unix socket path is not recorded
+    -a never,exclude -F arch=b64 -S F a0=1 socket
     -a always,exit -F arch=b64 -S socket -F a0=17 -F a1=3 -k raw_sockets
+    -a always,exit -F arch=b64 -S socket -F a0=17 -F a1=10 -k raw_sockets
+    -a always,exit -F arch=b64 -S socket -k sockets
 
     # Process injection
     -a always,exit -F arch=b64 -S ptrace -k ptrace

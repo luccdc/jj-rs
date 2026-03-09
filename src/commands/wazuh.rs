@@ -30,31 +30,31 @@ const LOGSTASH_WAZUH_CONF: &str = include_str!("elk/pipeline-wazuh.conf");
 pub struct WazuhSubcommandArgs {
     /// Version to use for Wazuh to download packages and install them
     #[arg(long, short = 'V', default_value = "4.14")]
-    wazuh_version: String,
+    pub wazuh_version: String,
 
     /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
-    use_download_shell: bool,
+    pub use_download_shell: bool,
 
     /// Use a specific IP address for source NAT when downloading through the container
     #[arg(long, short = 'I')]
-    sneaky_ip: Option<Ipv4Addr>,
+    pub sneaky_ip: Option<Ipv4Addr>,
 
     /// Where will temporary files be downloaded and extracted
     #[arg(long, short = 'w', default_value = "/tmp/wazuh-working-dir")]
-    working_dir: PathBuf,
+    pub working_dir: PathBuf,
 
     /// Where to look for a jiujitsu installation of ELK when importing data and configurations
     #[arg(long, short = 'e', default_value = "/opt/jj-es")]
-    jj_elastic_location: PathBuf,
+    pub jj_elastic_location: PathBuf,
 
     /// Where to look for the share drive for jiujitsu ELK installation, specifically to place the Wazuh CA certificate for Logstash
     #[arg(long, short = 'E', default_value = "/opt/es-share")]
-    jj_elastic_share_location: PathBuf,
+    pub jj_elastic_share_location: PathBuf,
 
     /// The version of ELK that this Wazuh setup is being designed to cooperate with
     #[arg(long, short = 'S', default_value = "9.3.0")]
-    jj_elastic_version: String,
+    pub jj_elastic_version: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -117,7 +117,7 @@ pub enum WazuhCommands {
 #[command(version, about)]
 pub struct Wazuh {
     #[command(subcommand)]
-    command: WazuhCommands,
+    pub command: WazuhCommands,
 }
 
 impl super::Command for Wazuh {
@@ -180,6 +180,20 @@ impl super::Command for Wazuh {
             elastic_pass = elastic_pass.trim().to_string();
         }
 
+        self.execute_pipeline(&distro, &busybox, &new_pass, &elastic_pass)
+    }
+}
+
+impl Wazuh {
+    pub fn execute_pipeline(
+        self,
+        distro: &Distro,
+        busybox: &Busybox,
+        new_pass: &str,
+        elastic_pass: &str,
+    ) -> eyre::Result<()> {
+        use WazuhCommands as WC;
+
         if let WC::Install(_) | WC::SetupZram = &self.command
             && let Err(e) = setup_zram()
         {
@@ -191,43 +205,43 @@ impl super::Command for Wazuh {
         }
 
         if let WC::Install(args) | WC::DownloadFiles(args) = &self.command {
-            download_files(&args, &distro)?;
+            download_files(&args, distro)?;
         }
 
         if let WC::Install(args) | WC::GenerateBundle(args) = &self.command {
-            generate_bundle(&args, &busybox)?;
+            generate_bundle(&args, busybox)?;
         }
 
         if let WC::Install(args) | WC::UnpackBundle(args) = &self.command {
-            unpack_bundle(&args, &busybox)?;
+            unpack_bundle(&args, busybox)?;
         }
 
         if let WC::Install(args) | WC::InstallIndexer(args) = &self.command {
-            install_indexer(&args, &distro)?;
+            install_indexer(&args, distro)?;
         }
 
         if let WC::Install(args) | WC::InstallServer(args) = &self.command {
-            install_server(&args, &distro)?;
+            install_server(&args, distro)?;
         }
 
         if let WC::Install(args) | WC::InstallFilebeat(args) = &self.command {
-            install_filebeat(&args, &distro, &busybox)?;
+            install_filebeat(&args, distro, busybox)?;
         }
 
         if let WC::Install(args) | WC::InstallDashboard(args) = &self.command {
-            install_dashboard(&args, &distro, &busybox)?;
+            install_dashboard(&args, distro, busybox)?;
         }
 
         if let WC::Install(_) | WC::RotateCredentials = &self.command {
-            rotate_credentials(&new_pass)?;
+            rotate_credentials(new_pass)?;
         }
 
         if let WC::Install(args) | WC::ImportPipelines(args) = &self.command {
-            import_pipelines(&busybox, args, &new_pass, &elastic_pass)?;
+            import_pipelines(busybox, args, new_pass, elastic_pass)?;
         }
 
         if let WC::Install(args) | WC::ForwardJjLogstash(args) = &self.command {
-            forward_jj_logstash(&busybox, args, &new_pass)?;
+            forward_jj_logstash(busybox, args, new_pass)?;
         }
 
         if let WC::Install(args) = &self.command {
@@ -242,7 +256,7 @@ fn setup_zram() -> eyre::Result<()> {
     let mods = qx("lsmod")?.1;
 
     if pcre!(&mods =~ qr/"zram"/xms) {
-        println!("{}", "--- Skipping ZRAM setup".green());
+        println!("{}", "--- Skipping ZRAM setup (already loaded)".green());
         return Ok(());
     }
 
@@ -377,6 +391,8 @@ fn unpack_bundle(args: &WazuhSubcommandArgs, bb: &Busybox) -> eyre::Result<()> {
         .wait()
         .context("Could not wait for tar to finish")?;
 
+    std::fs::remove_file(args.working_dir.join("wazuh-offline.tar.gz"))?;
+
     bb.command("tar")
         .args(["xf", "wazuh-install-files.tar"])
         .current_dir(&args.working_dir)
@@ -384,6 +400,8 @@ fn unpack_bundle(args: &WazuhSubcommandArgs, bb: &Busybox) -> eyre::Result<()> {
         .context("Could not spawn tar")?
         .wait()
         .context("Could not wait for tar to finish")?;
+
+    std::fs::remove_file(args.working_dir.join("wazuh-install-files.tar"))?;
 
     println!("{}", "--- Unpacked Wazuh bundle!".green());
 
@@ -1204,21 +1222,6 @@ fn import_pipelines(
         }
     }
 
-    let settings_update_result = wazuh_client
-        .put(format!("https://{public_ip}:9200/_cluster/settings"))
-        .basic_auth("admin", Some(wazuh_password))
-        .header("content-type", "application/json")
-        .body(r#"{
-    "persistent": {
-        "script.max_compilations_rate": "75/5m"
-    }
-}"#)
-        .send()
-        .context("Could not update pipeline compilation limit (this will limit the effectiveness of Packetbeat TLS data)")?
-        .json::<serde_json::Value>()?;
-
-    println!("{settings_update_result}");
-
     println!("{}", "--- Successfully imported pipelines!".green());
 
     Ok(())
@@ -1269,6 +1272,35 @@ fn forward_jj_logstash(
         ),
     )?;
 
+    let mut previous_pipeline_config = serde_yaml_ng::from_slice::<serde_json::Value>(
+        &std::fs::read(
+            args.jj_elastic_location
+                .join("logstash")
+                .join("config")
+                .join("pipelines.yml"),
+        )
+        .context("Could not read previous logstash pipeline configuration")?,
+    )
+    .context("Could not parse previous logstash pipeline configuration")?;
+
+    if let serde_json::Value::Array(a) = &mut previous_pipeline_config
+        && !a.iter().any(|p| p["pipeline.id"].as_str() == Some("wazuh"))
+    {
+        a.push(serde_json::json!({
+            "pipeline.id": "wazuh",
+            "path.config": format!("{}/logstash/config/wazuh.conf.d/*.conf", args.jj_elastic_location.display()),
+            "pipeline.ecs_compatibility": "disabled"
+        }));
+
+        std::fs::write(
+            args.jj_elastic_location
+                .join("logstash")
+                .join("config")
+                .join("pipelines.yml"),
+            serde_yaml_ng::to_string(&previous_pipeline_config)?,
+        )?;
+    }
+
     std::fs::set_permissions(
         &format!(
             "{}/wazuh_http_ca.crt",
@@ -1277,9 +1309,14 @@ fn forward_jj_logstash(
         PermissionsExt::from_mode(0o644),
     )?;
 
+    std::fs::create_dir_all(&format!(
+        "{}/logstash/config/wazuh.conf.d",
+        args.jj_elastic_location.display()
+    ))?;
+
     std::fs::write(
         &format!(
-            "{}/logstash/config/conf.d/pipeline-wazuh.conf",
+            "{}/logstash/config/wazuh.conf.d/pipeline.conf",
             args.jj_elastic_location.display()
         ),
         LOGSTASH_WAZUH_CONF
@@ -1289,6 +1326,14 @@ fn forward_jj_logstash(
             )
             .replace("$WAZUH_PASSWORD", wazuh_password)
             .replace("$WAZUH_IP", &get_public_ip(bb)?),
+    )?;
+
+    std::fs::write(
+        &format!(
+            "{}/logstash/config/conf.d/pipeline-wazuh.conf",
+            args.jj_elastic_location.display()
+        ),
+        "output { pipeline { send_to => [wazuh] } }",
     )?;
 
     system("systemctl restart jj-logstash")?;

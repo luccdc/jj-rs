@@ -241,10 +241,24 @@
           install-script-src = builtins.readFile ./install.sh;
           install-script = pkgs.writeScriptBin "install.sh" install-script-src;
 
-          staticTools = with pkgsStatic; [ jq tcpdump tmux nftables ];
+          staticNcdu = let
+            ncduDownload = builtins.fetchTarball {
+              url =
+                "https://dev.yorhel.nl/download/ncdu-2.9.1-linux-x86_64.tar.gz";
+              sha256 =
+                "sha256:1pbjdfy9qrjw5a5r4xzdvbahjb0p7hb9nan9x97g07nxrrpv2bf1";
+            };
+          in pkgs.runCommand "download-ncdu" { } ''
+            mkdir -p $out/bin
+            cp ${ncduDownload}/ncdu $out/bin
+          '';
+
+          staticTools = (with pkgsStatic; [ jq tcpdump tmux nftables btop ])
+            ++ [ staticNcdu ];
 
           tools-tarball = pkgs.runCommand "tools-tarball" { } ''
             mkdir -p $out
+            export GZIP=-9
             tar -czvf $out/jj.tgz --mode=755      \
               -C ${install-script}/bin install.sh \
               -C ${jiujitsu-linux} bin            \

@@ -29,6 +29,7 @@ define_commands! {
         [unix] Elk => elk::Elk,
         [windows] Elk => elk_winbeats::WinBeats,
         [unix] Wazuh, wz => wazuh::Wazuh,
+        [unix] SiemSetup => siem::SiemSetup,
 
         // sysinfo commands
         Stat, st => stat::Stat,
