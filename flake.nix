@@ -107,6 +107,7 @@
             libiconv-windows-static
             libidn2-windows-static
             libunistring-windows-static
+            libpoco-windows-static
             libpsl-windows-static
             libpcre-windows-static
             libmodsecurity-windows-static
@@ -168,7 +169,7 @@
               targets = [ "x86_64-pc-windows-gnu" ];
             });
 
-          common-ruleset = pkgs.fetchFromGitHub {
+          core-ruleset = pkgs.fetchFromGitHub {
             owner = "coreruleset";
             repo = "coreruleset";
             rev = "v4.24.0";
@@ -183,14 +184,15 @@
             ];
           };
 
-          commonArgs = {
+          commonArgs = rec {
             inherit src;
 
-            RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+            RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
             CARGO_BUILD_RUSTFLAGS =
-              "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+              "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
 
-            COMMON_RULESET = common-ruleset;
+            CORE_RULESET = core-ruleset;
+            MODSECURITY = system-pkgs.libmodsecurity-linux-static;
 
             BUSYBOX_GZIPPED = busybox-gzipped;
             NFT_GZIPPED = nft-gzipped;
@@ -213,7 +215,6 @@
             packages = windowsLibraries;
 
             CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
-            CARGO_BUILD_RUSTFLAGS = "-Ctarget-feature=+crt-static";
 
             cargoExtraArgs = "--locked --target=x86_64-pc-windows-gnu";
           };
@@ -324,20 +325,23 @@
             default = jiujitsu;
 
             inherit jiujitsu jiujitsu-linux jiujitsu-windows tools-tarball;
+
+            libpoco-windows-static = system-pkgs.libpoco-windows-static;
           };
 
           devShells = {
-            default = craneLib.devShell ({
+            default = craneLib.devShell (rec {
               name = "jj";
 
               packages = devShellTools ++ linuxLibraries ++ staticTools;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
               CARGO_BUILD_RUSTFLAGS =
-                "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
 
-              COMMON_RULESET = common-ruleset;
+              MODSECURITY = system-pkgs.libmodsecurity-linux-static;
+              CORE_RULESET = core-ruleset;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -345,7 +349,7 @@
               PAMTESTER_GZIPPED = pamtester-gzipped;
             });
 
-            windows = winCraneLib.devShell ({
+            windows = winCraneLib.devShell (rec {
               name = "jj";
 
               packages = wslDevShellTools ++ winDevShellTools;
@@ -353,11 +357,12 @@
               buildInputs = windowsLibraries;
 
               CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
-              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
               CARGO_BUILD_RUSTFLAGS =
-                "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
 
-              COMMON_RULESET = common-ruleset;
+              MODSECURITY = system-pkgs.libmodsecurity-linux-static;
+              CORE_RULESET = core-ruleset;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -365,17 +370,18 @@
               PAMTESTER_GZIPPED = pamtester-gzipped;
             });
 
-            wsl = craneLib.devShell ({
+            wsl = craneLib.devShell (rec {
               name = "jj";
 
               packages = wslDevShellTools ++ linuxLibraries;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
               CARGO_BUILD_RUSTFLAGS =
-                "-Ctarget-feature=+crt-static --cfg reqwest_unstable";
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
 
-              COMMON_RULESET = common-ruleset;
+              MODSECURITY = system-pkgs.libmodsecurity-linux-static;
+              CORE_RULESET = core-ruleset;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;

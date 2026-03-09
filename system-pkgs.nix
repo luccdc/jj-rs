@@ -220,6 +220,7 @@
 
   gnulib-source = pkgs.fetchgit {
     url = "git://git.savannah.gnu.org/gnulib.git";
+    rev = "edf2e42f5f170f7e3dab78de25dcb67a7417fc97";
     hash = "sha256-hbywWti/WCPggix+jLkpJDosGuOrs8hdyvTRcixGxhE=";
   };
 
@@ -246,6 +247,7 @@
 
     src = pkgs.fetchgit {
       url = "https://git.savannah.gnu.org/git/libunistring.git";
+      rev = "ad26ecf8f1c1317f6d1449ad3db20d3323fc10e4";
       hash = "sha256-Z04zcJcEMiy+NYpzpLW8f50siHeNKXsMwQSrlQ23++M=";
     };
 
@@ -617,7 +619,6 @@
       libidn2-windows-static
       libxml2-windows-static
       libunistring-windows-static
-      libpoco-windows-static
       libiconv-windows-static
       libmcfgthread-windows-static
     ];
@@ -665,6 +666,11 @@
       }
       }
       EOD
+
+      # it also imports an entire library for glob, but we don't use glob
+      sed -i 's/Poco::Glob::glob(var, files)/files.emplace(var)/' src/utils/system.cc
+      # ...but the header file imported for Poco also imports a standard Windows API...
+      sed -i 's/Poco\/Glob.h/processthreadsapi.h/' src/utils/system.cc
 
       ./build.sh
       ./configure \
