@@ -30,6 +30,7 @@ define_commands! {
         [windows] Elk => elk_winbeats::WinBeats,
         [unix] Wazuh, wz => wazuh::Wazuh,
         [unix] SiemSetup => siem::SiemSetup,
+        Proxy, pr => proxy::Proxy,
 
         // sysinfo commands
         Stat, st => stat::Stat,

@@ -106,8 +106,8 @@ fn main() -> std::io::Result<()> {
                 std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
             ),
             format!(
-                r#"const CRS_RULES: &'static str = include_str!("{output_file_path}");
-const CRS_DATA_FILES: &'static [(&'static str, &'static str)] = &[{file_mappings}];"#
+                r#"pub const CRS_RULES: &'static str = include_str!("{output_file_path}");
+pub const CRS_DATA_FILES: &'static [(&'static str, &'static str)] = &[{file_mappings}];"#
             ),
         )?;
     }
