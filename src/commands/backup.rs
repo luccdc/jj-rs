@@ -52,7 +52,7 @@ pub struct Backup {
     paths: Vec<String>,
 
     /// Directories to exclude from backup
-    #[cfg_attr(unix, arg(short, long, default_values_t = strvec!["/opt/jj-es"]))]
+    #[cfg_attr(unix, arg(short, long, default_values_t = strvec!["/opt/jj-es", "/opt/es-share"]))]
     #[cfg_attr(windows, arg(short, long))]
     exclude: Vec<String>,
 }
@@ -129,9 +129,16 @@ impl Backup {
         );
 
         for path in paths {
-            for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
-                if self.exclude.iter().any(|e| entry.path().starts_with(e)) {
-                    continue;
+            'entries: for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+                for exclude in self.exclude.iter() {
+                    if entry.path().starts_with(exclude)
+                        && !self
+                            .paths
+                            .iter()
+                            .any(|p| p.len() > exclude.len() && entry.path().starts_with(p))
+                    {
+                        continue 'entries;
+                    }
                 }
 
                 #[allow(clippy::collapsible_if)]
@@ -198,12 +205,19 @@ impl Backup {
 
             println!("{} {}", "--- Adding ".green(), path.green());
 
-            for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+            'entries: for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
                 let Some(str_path) = entry.path().to_str().map(str::to_owned) else {
                     continue;
                 };
-                if self.exclude.iter().any(|e| str_path.starts_with(e)) {
-                    continue;
+                for exclude in self.exclude.iter() {
+                    if entry.path().starts_with(exclude)
+                        && !self
+                            .paths
+                            .iter()
+                            .any(|p| p.len() > exclude.len() && entry.path().starts_with(p))
+                    {
+                        continue 'entries;
+                    }
                 }
                 if entry.path().is_file() {
                     print!("{}...", entry.path().display());
@@ -263,12 +277,19 @@ impl Backup {
 
             println!("{} {}", "--- Adding ".green(), path.green());
 
-            for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+            'entries: for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
                 if !entry.path().is_file() {
                     continue;
                 }
-                if self.exclude.iter().any(|e| entry.path().starts_with(e)) {
-                    continue;
+                for exclude in self.exclude.iter() {
+                    if entry.path().starts_with(exclude)
+                        && !self
+                            .paths
+                            .iter()
+                            .any(|p| p.len() > exclude.len() && entry.path().starts_with(p))
+                    {
+                        continue 'entries;
+                    }
                 }
                 let Ok(mut file) = File::open(entry.path()) else {
                     continue;
