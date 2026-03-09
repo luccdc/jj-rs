@@ -16,9 +16,9 @@ auditbeat.modules:
 
     # Networking info
     ## handled by socket dataset
-    -a never,exclude -F arch=b64 -S F a0=2 socket
+    -a never,exit -S socket -F a0=2
     ## unix socket path is not recorded
-    -a never,exclude -F arch=b64 -S F a0=1 socket
+    -a never,exit -S socket -F a0=1
     -a always,exit -F arch=b64 -S socket -F a0=17 -F a1=3 -k raw_sockets
     -a always,exit -F arch=b64 -S socket -F a0=17 -F a1=10 -k raw_sockets
     -a always,exit -F arch=b64 -S socket -k sockets
