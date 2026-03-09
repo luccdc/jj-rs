@@ -179,6 +179,12 @@ output.logstash:
                 .wait()?;
         }
 
+        println!("Installing npcap by starting packetbeat... (should fail!)");
+        Command::new("sc.exe")
+            .args(&["start", "packetbeat"])
+            .spawn()?
+            .wait()?;
+
         println!("--- Starting beats...");
 
         for beat in ["winlogbeat", "filebeat", "packetbeat"] {
