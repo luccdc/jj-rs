@@ -26,6 +26,12 @@ auditbeat.modules:
     # Process injection
     -a always,exit -F arch=b64 -S ptrace -k ptrace
 
+    # Configuration file changes
+    -a exit,always -F dir=/etc -p wa -k etc_changes
+
+    # Kernel module loads
+    -a always,exit -F arch=b64 -S init_module,finit_module -k module_load
+
 - module: file_integrity
   paths:
   - /bin
