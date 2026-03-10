@@ -412,10 +412,25 @@ fn get_namespace(bb: &Busybox) -> eyre::Result<Pid> {
         nix::sched::unshare(CloneFlags::CLONE_NEWNET | CloneFlags::CLONE_NEWNS)
             .context("Could not unshare as child")?;
 
-        let file_raw = bb.execute(&["mktemp"])?;
-        let file = file_raw.trim();
-        std::fs::write(file, "nameserver 1.1.1.1\n")?;
-        std::fs::set_permissions(file, PermissionsExt::from_mode(0o555))?;
+        let resolve_path_raw = bb.execute(&["mktemp"])?;
+        let resolve_path = resolve_path_raw.trim();
+        std::fs::write(resolve_path, "nameserver 1.1.1.1\n")?;
+        std::fs::set_permissions(resolve_path, PermissionsExt::from_mode(0o555))?;
+
+        let old_nsswitch_contents = std::fs::read_to_string("/etc/nsswitch.conf")?;
+        let nsswitch_lines = old_nsswitch_contents
+            .split('\n')
+            .map(|line| {
+                if line.starts_with("hosts:") {
+                    line.replace("resolve", "").replace("[!UNAVAIL=return]", "")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>();
+        let nsswitch_path_raw = bb.execute(&["mktemp"])?;
+        let nsswitch_path = nsswitch_path_raw.trim();
+        std::fs::write(nsswitch_path, nsswitch_lines.join("\n"))?;
 
         nix::mount::mount(
             None::<&str>,
@@ -426,8 +441,16 @@ fn get_namespace(bb: &Busybox) -> eyre::Result<Pid> {
         )?;
 
         nix::mount::mount(
-            Some(file),
+            Some(resolve_path),
             "/etc/resolv.conf",
+            None::<&str>,
+            nix::mount::MsFlags::MS_BIND,
+            None::<&str>,
+        )?;
+
+        nix::mount::mount(
+            Some(nsswitch_path),
+            "/etc/nsswitch.conf",
             None::<&str>,
             nix::mount::MsFlags::MS_BIND,
             None::<&str>,
