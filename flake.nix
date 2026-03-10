@@ -94,6 +94,7 @@
             pkgsStatic.libidn2
             pkgsStatic.libunistring
             pkgsStatic.libcxx
+            pkgsStatic.libgcc
             pkgs.mold
           ];
 
@@ -181,18 +182,22 @@
             fileset = lib.fileset.unions [
               (craneLib.fileset.commonCargoSources ./.)
               ./src/commands/elk
+              ./src/utils/curl.h
+              ./src/commands/proxy/core_ruleset.conf
             ];
           };
 
           commonArgs = rec {
             inherit src;
 
-            RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
+            RUSTFLAGS =
+              "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
             CARGO_BUILD_RUSTFLAGS =
               "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
 
             CORE_RULESET = core-ruleset;
             MODSECURITY = system-pkgs.libmodsecurity-linux-static;
+            LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
 
             BUSYBOX_GZIPPED = busybox-gzipped;
             NFT_GZIPPED = nft-gzipped;
@@ -205,6 +210,8 @@
             nativeBuildInputs = linuxLibraries;
 
             CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+            LIBCURL_PATH = system-pkgs.libcurl-linux-static;
+            LIBC_PATH = pkgs.musl.dev;
 
             cargoExtraArgs = "--locked --target=x86_64-unknown-linux-musl";
           };
@@ -215,6 +222,8 @@
             packages = windowsLibraries;
 
             CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
+            LIBCURL_PATH = system-pkgs.libcurl-windows-static;
+            LIBC_PATH = pkgs.pkgsCross.mingwW64.windows.mingw_w64_headers;
 
             cargoExtraArgs = "--locked --target=x86_64-pc-windows-gnu";
           };
@@ -336,12 +345,16 @@
               packages = devShellTools ++ linuxLibraries ++ staticTools;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
+              RUSTFLAGS =
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
               CARGO_BUILD_RUSTFLAGS =
                 "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
 
               MODSECURITY = system-pkgs.libmodsecurity-linux-static;
               CORE_RULESET = core-ruleset;
+              LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+              LIBCURL_PATH = "${system-pkgs.libcurl-linux-static}";
+              LIBC_PATH = pkgs.musl.dev;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -357,12 +370,16 @@
               buildInputs = windowsLibraries;
 
               CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
-              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
+              RUSTFLAGS =
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
               CARGO_BUILD_RUSTFLAGS =
                 "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
 
               MODSECURITY = system-pkgs.libmodsecurity-linux-static;
               CORE_RULESET = core-ruleset;
+              LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+              LIBCURL_PATH = "${system-pkgs.libcurl-windows-static}";
+              LIBC_PATH = pkgs.pkgsCross.mingwW64.windows.mingw_w64_headers;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;
@@ -376,12 +393,16 @@
               packages = wslDevShellTools ++ linuxLibraries;
 
               CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-              RUSTFLAGS = "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
+              RUSTFLAGS =
+                "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
               CARGO_BUILD_RUSTFLAGS =
                 "-Ctarget-feature=+crt-static --cfg reqwest_unstable --cfg tracing_unstable";
 
               MODSECURITY = system-pkgs.libmodsecurity-linux-static;
               CORE_RULESET = core-ruleset;
+              LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+              LIBCURL_PATH = "${system-pkgs.libcurl-linux-static}";
+              LIBC_PATH = pkgs.musl.dev;
 
               BUSYBOX_GZIPPED = busybox-gzipped;
               NFT_GZIPPED = nft-gzipped;

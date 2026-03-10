@@ -121,6 +121,29 @@ fn main() -> std::io::Result<()> {
         )?;
     }
 
+    // bindgen for libcurl
+    {
+        let bindings = bindgen::Builder::default()
+            .clang_arg(format!(
+                "-I{}/include",
+                std::env::var("LIBC_PATH").expect("Could not get LIBCURL_PATH"),
+            ))
+            .clang_arg(format!(
+                "-I{}/include",
+                std::env::var("LIBCURL_PATH").expect("Could not get LIBCURL_PATH"),
+            ))
+            .header("src/utils/curl.h")
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+            .generate()
+            .expect("Unable to generate bindings");
+
+        let out_path =
+            PathBuf::from(std::env::var("OUT_DIR").expect("Could not get OUT_DIR variable"));
+        bindings
+            .write_to_file(out_path.join("curl_bindings.rs"))
+            .expect("Could not write bindings");
+    }
+
     // Link modsecurity, curl, and their dependencies
     {
         let target_os = std::env::var("CARGO_CFG_TARGET_OS");
@@ -173,6 +196,8 @@ fn main() -> std::io::Result<()> {
             println!("cargo:rustc-link-arg=-lz");
             println!("cargo:rustc-link-arg=-lidn2");
             println!("cargo:rustc-link-arg=-lunistring");
+            println!("cargo:rustc-link-arg=-lc");
+            println!("cargo:rustc-link-arg=-lgcc");
         }
     }
 
