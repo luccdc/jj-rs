@@ -1,4 +1,5 @@
 use std::{
+    ffi::CString,
     fs::File,
     io::prelude::*,
     net::Ipv4Addr,
@@ -89,12 +90,20 @@ impl super::Command for DownloadShell {
             ) {
                 (Some(uid), ShellType::Zsh, true) => match unsafe { fork()? } {
                     ForkResult::Child => {
-                        let _ = std::env::var("SUDO_GID")
+                        let gid: u32 = std::env::var("SUDO_GID")
+                            .as_deref()
                             .ok()
-                            .and_then(|u| u.parse::<u32>().ok())
-                            .and_then(|g| nix::unistd::setgid(g.into()).ok());
+                            .and_then(|u| u.parse().ok())
+                            .unwrap_or_default();
 
-                        let _ = nix::unistd::setuid(uid.into());
+                        if let Ok(user) = std::env::var("SUDO_USER")
+                            && let Ok(user) = CString::new(user)
+                        {
+                            let _ = nix::unistd::initgroups(&user, gid.into());
+                        }
+
+                        let _ = nix::unistd::setresgid(gid.into(), gid.into(), gid.into());
+                        let _ = nix::unistd::setresuid(uid.into(), uid.into(), uid.into());
 
                         let (fd, mut cmd) = zsh_command()?;
 
@@ -128,10 +137,19 @@ impl super::Command for DownloadShell {
                 },
                 (Some(uid), ShellType::Sh, true) => match unsafe { fork()? } {
                     ForkResult::Child => {
-                        let _ = std::env::var("SUDO_GID")
+                        let gid: u32 = std::env::var("SUDO_GID")
+                            .as_deref()
                             .ok()
-                            .and_then(|u| u.parse::<u32>().ok())
-                            .and_then(|g| nix::unistd::setgid(g.into()).ok());
+                            .and_then(|u| u.parse().ok())
+                            .unwrap_or_default();
+
+                        if let Ok(user) = std::env::var("SUDO_USER")
+                            && let Ok(user) = CString::new(user)
+                        {
+                            let _ = nix::unistd::initgroups(&user, gid.into());
+                        }
+
+                        let _ = nix::unistd::setresgid(gid.into(), gid.into(), gid.into());
 
                         let _ = nix::unistd::setuid(uid.into());
 
@@ -167,11 +185,19 @@ impl super::Command for DownloadShell {
                 },
                 (Some(uid), ShellType::Bash, true) => match unsafe { fork()? } {
                     ForkResult::Child => {
-                        let _ = std::env::var("SUDO_GID")
+                        let gid: u32 = std::env::var("SUDO_GID")
+                            .as_deref()
                             .ok()
-                            .and_then(|u| u.parse::<u32>().ok())
-                            .and_then(|g| nix::unistd::setgid(g.into()).ok());
+                            .and_then(|u| u.parse().ok())
+                            .unwrap_or_default();
 
+                        if let Ok(user) = std::env::var("SUDO_USER")
+                            && let Ok(user) = CString::new(user)
+                        {
+                            let _ = nix::unistd::initgroups(&user, gid.into());
+                        }
+
+                        let _ = nix::unistd::setresgid(gid.into(), gid.into(), gid.into());
                         let _ = nix::unistd::setuid(uid.into());
 
                         let mut cmd = Command::new("bash");
@@ -204,11 +230,19 @@ impl super::Command for DownloadShell {
                 },
                 (Some(uid), _, false) => match unsafe { fork()? } {
                     ForkResult::Child => {
-                        let _ = std::env::var("SUDO_GID")
+                        let gid: u32 = std::env::var("SUDO_GID")
+                            .as_deref()
                             .ok()
-                            .and_then(|u| u.parse::<u32>().ok())
-                            .and_then(|g| nix::unistd::setgid(g.into()).ok());
+                            .and_then(|u| u.parse().ok())
+                            .unwrap_or_default();
 
+                        if let Ok(user) = std::env::var("SUDO_USER")
+                            && let Ok(user) = CString::new(user)
+                        {
+                            let _ = nix::unistd::initgroups(&user, gid.into());
+                        }
+
+                        let _ = nix::unistd::setresgid(gid.into(), gid.into(), gid.into());
                         let _ = nix::unistd::setuid(uid.into());
 
                         let mut cmd = Command::new(&self.command[0]);
