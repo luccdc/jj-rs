@@ -68,6 +68,7 @@ define_checks! {
         Ftp, "ftp" => ftp::FtpTroubleshooter,
         Smtp, "smtp" => smtp::SmtpTroubleshooter,
         Pop3, "pop3" => pop3::Pop3Troubleshooter,
+        Command, "command" => command::CommandTroubleshooter,
     }
 }
 
