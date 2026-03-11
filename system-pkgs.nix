@@ -456,7 +456,7 @@
 
     src = builtins.fetchTarball {
       url =
-        "https://cytranet-dal.dl.sourceforge.net/project/pcre/pcre/8.45/pcre-8.45.tar.gz";
+        "https://downloads.sourceforge.net/project/pcre/pcre/8.45/pcre-8.45.tar.gz";
       sha256 = "1pp6k7c4v3d4is8kj4z6rbmxkl2nq84d2rr767snr7qlymmmsnxi";
     };
 
