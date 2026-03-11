@@ -100,6 +100,11 @@ enum AddCheckWizardState {
         host: ETIS<Ipv4Addr>,
         username: TextInputState,
     },
+    CommandStage1 {
+        selection: usize,
+        command: TextInputState,
+        output_check: TextInputState,
+    },
     SmtpStage1 {
         selection: usize,
         host: TextInputState,
@@ -878,6 +883,61 @@ pub fn render(tui: &mut Tui<'_>, frame: &mut Frame, area: Rect, selected: bool) 
                 TextInput::default().set_cursor_position(user_block, frame, username);
             }
         }
+        Some(AddCheckWizardState::CommandStage1 {
+            selection,
+            command,
+            output_check,
+        }) => {
+            frame.render_widget(Block::bordered().title("Command Check Setup Wizard"), area);
+
+            let [submit, cmd_block, check_block] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .areas(area.inner(Margin {
+                vertical: 1,
+                horizontal: 1,
+            }));
+
+            let submit_style = if *selection == 0 && selected {
+                Style::new().yellow()
+            } else {
+                Style::new()
+            };
+
+            frame.render_widget(
+                Line::raw("Submit").style(submit_style),
+                submit.inner(Margin {
+                    vertical: 0,
+                    horizontal: 1,
+                }),
+            );
+
+            command.set_selected(*selection == 1 && selected);
+            frame.render_stateful_widget(
+                TextInput::default()
+                    .label(Some("Command:"))
+                    .selected_style(Some(Style::new().fg(Color::Yellow))),
+                cmd_block,
+                command,
+            );
+            if *selection == 1 && selected {
+                TextInput::default().set_cursor_position(cmd_block, frame, command);
+            }
+
+            output_check.set_selected(*selection == 2 && selected);
+            frame.render_stateful_widget(
+                TextInput::default()
+                    .label(Some("Output filter:"))
+                    .selected_style(Some(Style::new().fg(Color::Yellow))),
+                check_block,
+                output_check,
+            );
+            if *selection == 2 && selected {
+                TextInput::default().set_cursor_position(check_block, frame, output_check);
+            }
+        }
         Some(AddCheckWizardState::Generalize {
             row_selection,
             tab_selection,
@@ -1070,6 +1130,11 @@ pub async fn handle_keypress<'scope, 'env: 'scope>(
                 host: TextInputState::default().set_input("127.0.0.1".to_string()),
                 username: TextInputState::default(),
                 password: TextInputState::default().set_input("-".to_string()),
+            }),
+            Some(&"Command") => Some(AddCheckWizardState::CommandStage1 {
+                selection: 0,
+                command: TextInputState::default().set_input("echo hello".to_string()),
+                output_check: TextInputState::default().set_input("hello".to_string()),
             }),
             _ => None,
         };
@@ -3006,6 +3071,158 @@ fn handle_wizard<'scope, 'env: 'scope>(
                         row_selection: 0,
                         tab_selection: 0,
                         check_type: "ssh",
+                        check_fields,
+                    });
+
+                    tui.buffer.clear();
+                    return true;
+                }
+            }
+
+            if is_generic_up(key) {
+                tui.buffer.clear();
+                return true;
+            }
+            if is_generic_down(key) {
+                tui.buffer.clear();
+                return true;
+            }
+
+            false
+        }
+        Some(AddCheckWizardState::CommandStage1 {
+            selection,
+            command,
+            output_check,
+        }) => {
+            if let KeyCode::Char('n') = key.code
+                && key.modifiers == KeyModifiers::CONTROL
+            {
+                *selection = (*selection + 1).min(2);
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Down = key.code {
+                *selection = (*selection + 1).min(2);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if let KeyCode::BackTab = key.code {
+                if *selection == 0 {
+                    *selection = 2;
+                } else {
+                    *selection = *selection - 1;
+                }
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Tab = key.code {
+                *selection = *selection + 1;
+                if *selection == 3 {
+                    *selection = 0;
+                }
+                tui.buffer.clear();
+                return true;
+            }
+
+            if let KeyCode::Char('p') = key.code
+                && key.modifiers == KeyModifiers::CONTROL
+            {
+                if *selection == 0 {
+                    tui.current_selection = super::CurrentSelection::Tabs;
+                    tui.buffer.clear();
+                    return true;
+                }
+
+                *selection = selection.saturating_sub(1);
+                tui.buffer.clear();
+                return true;
+            } else if let KeyCode::Up = key.code {
+                if *selection == 0 {
+                    tui.current_selection = super::CurrentSelection::Tabs;
+                    tui.buffer.clear();
+                    return true;
+                }
+
+                *selection = selection.saturating_sub(1);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if *selection == 1 {
+                command.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if *selection == 2 {
+                output_check.handle_keybind(*key);
+                tui.buffer.clear();
+                return true;
+            }
+
+            if *selection == 0 {
+                if let KeyCode::Char(' ') | KeyCode::Enter = key.code {
+                    let Ok(serde_json::Value::Object(check_type)) =
+                        serde_json::to_value(&crate::checks::command::CommandTroubleshooter {
+                            command: command.input().to_owned(),
+                            expected_output: output_check.input().to_owned(),
+                            ..Default::default()
+                        })
+                    else {
+                        tui.buffer.clear();
+                        return true;
+                    };
+
+                    let check_fields = (&check_type)
+                        .into_iter()
+                        .map(|(key, value)| {
+                            let check_type = check_type.clone();
+                            let key = key.to_owned();
+                            let is_str = value.is_string();
+                            (
+                                key.clone(),
+                                ErrorTextInputState::new(Box::new(
+                                    move |inp: &str| -> Result<serde_json::Value, String> {
+                                        let parsed: serde_json::Value = if is_str {
+                                            serde_json::Value::String(inp.to_owned())
+                                        } else {
+                                            serde_json::from_str(&inp)
+                                                .map_err(|e| format!("{e}"))?
+                                        };
+
+                                        let mut check_type = check_type.clone();
+                                        check_type.insert(key.clone(), parsed.clone());
+
+                                        serde_json::from_value::<
+                                            crate::checks::command::CommandTroubleshooter,
+                                        >(
+                                            serde_json::Value::Object(check_type)
+                                        )
+                                        .map(|_| parsed)
+                                        .map_err(|e| format!("{e}"))
+                                    },
+                                )
+                                    as Box<
+                                        dyn for<'a> Fn(
+                                            &'a str,
+                                        )
+                                            -> Result<serde_json::Value, String>,
+                                    >)
+                                .set_input(
+                                    if let serde_json::Value::String(v) = value {
+                                        v.clone()
+                                    } else {
+                                        serde_json::to_string(&value).unwrap_or_default()
+                                    },
+                                ),
+                            )
+                        })
+                        .collect();
+
+                    tui.add_check_tab.wizard_state = Some(AddCheckWizardState::Generalize {
+                        row_selection: 0,
+                        tab_selection: 0,
+                        check_type: "command",
                         check_fields,
                     });
 

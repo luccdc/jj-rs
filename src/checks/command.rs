@@ -15,8 +15,6 @@ use crate::utils::checks::{
 /// - Can run inside the download container (unless disabled).
 /// - Fails if the command exits with a non-zero status.
 /// - Fails if the command output does not contain the expected text.
-/// - On success, records `exit_code`, `stdout`, `stderr`, `expected_output`,
-///   `wan_ip`, and `system_logs` in the extra details JSON.
 #[derive(clap::Parser, serde::Serialize, serde::Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct CommandTroubleshooter {
@@ -77,7 +75,7 @@ impl CommandTroubleshooter {
         let expected = self.expected_output.clone();
 
         let (res, start) = optionally_run_in_container(
-            true, // wait_1s: avoid overlapping logs with container setup
+            true,
             self.disable_download_shell,
             self.sneaky_ip,
             move |wan_ip| try_run_command_inner(&cmd_line, &expected, wan_ip),
@@ -99,8 +97,6 @@ fn try_run_command_inner(
     expected_output: &str,
     wan_ip: Option<Ipv4Addr>,
 ) -> eyre::Result<CheckResult> {
-    // On Unix, run via /bin/sh -c "<cmd_line>"
-    // On Windows, run via cmd.exe /C "<cmd_line>"
     #[cfg(unix)]
     let mut cmd = {
         let mut c = Command::new("/bin/sh");
@@ -111,7 +107,7 @@ fn try_run_command_inner(
     #[cfg(windows)]
     let mut cmd = {
         let mut c = Command::new("cmd.exe");
-        c.arg("/C").arg(cmd_line);
+        c.arg("/c").arg(cmd_line);
         c
     };
 
