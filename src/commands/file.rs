@@ -189,7 +189,7 @@ impl VerifyHashes {
                         if new_hash == old_hash {
                             //Great! It's valid!
                             if !self.quiet {
-                                println!("[{}] {disp}", "✓".green());
+                                println!("[{}] {disp}", "o".green());
                             }
                         } else {
                             // Invalid!
@@ -201,12 +201,12 @@ impl VerifyHashes {
                                 let time_display = DateTime::<Utc>::from(modified);
                                 println!(
                                     "[{}] {disp} (modified {} UTC, {} ago)",
-                                    "✗".red(),
+                                    "x".red(),
                                     time_display.format("%Y-%m-%d %H:%M:%S"),
                                     humantime::Duration::from(modified_duration)
                                 );
                             } else {
-                                println!("[{}] {disp}", "✗".red());
+                                println!("[{}] {disp}", "x".red());
                             }
                         }
                     } else {
@@ -235,7 +235,7 @@ impl VerifyHashes {
                         } else {
                             println!(
                                 "[{}] {disp} ({} != {old_target})",
-                                "✗".red(),
+                                "x".red(),
                                 new_target.display()
                             );
                         }
