@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::Local;
+use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use colored::Colorize;
 use eyre::Result;
@@ -92,7 +92,7 @@ impl SaveHashes {
                         "F {} {} {}",
                         e.path().display(),
                         sha256_file(e.path())?,
-                        Local::now().format("%Y-%m-%d %H:%M:%S"),
+                        Utc::now().format("%Y-%m-%d %H:%M:%S"),
                     )?;
                 } else if e.path().is_dir() {
                     writeln!(ob, "D {}", e.path().display())?;
@@ -105,7 +105,7 @@ impl SaveHashes {
                         "S {} {} {}",
                         e.path().display(),
                         target.display(),
-                        Local::now().format("%Y-%m-%d %H:%M:%S")
+                        Utc::now().format("%Y-%m-%d %H:%M:%S")
                     )?;
                 }
             }
@@ -193,10 +193,23 @@ impl VerifyHashes {
                             }
                         } else {
                             // Invalid!
-                            println!("[{}] {disp}", "✗".red());
+                            let now = std::time::SystemTime::now();
+                            if let Ok(meta) = e.path().metadata()
+                                && let Ok(modified) = meta.modified()
+                                && let Ok(modified_duration) = now.duration_since(modified)
+                            {
+                                let time_display = DateTime::<Utc>::from(modified);
+                                println!(
+                                    "[{}] {disp} (modified {} UTC, {} ago)",
+                                    "✗".red(),
+                                    time_display.format("%Y-%m-%d %H:%M:%S"),
+                                    humantime::Duration::from(modified_duration)
+                                );
+                            } else {
+                                println!("[{}] {disp}", "✗".red());
+                            }
                         }
                     } else {
-                        // New!
                         println!("[{}] {disp}", "!".yellow());
                     }
                 } else if e.path().is_dir() {
