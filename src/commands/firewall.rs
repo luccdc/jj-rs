@@ -153,7 +153,8 @@ impl QuickSetup {
             "        icmp type {{ echo-request, echo-reply }} ct state new accept"
         )?;
         writeln!(ob, "        ct state established,related accept")?;
-        writeln!(ob, r#"        log prefix "inbound-drop: " drop"#)?;
+        writeln!(ob, r#"        ct state new log prefix "inbound-drop: " drop"#)?;
+        writeln!(ob, r#"        drop"#)?;
         writeln!(ob, "    }}\n")?;
         writeln!(ob, "    chain output {{")?;
         writeln!(
@@ -202,7 +203,11 @@ impl QuickSetup {
         }
 
         writeln!(ob, "        ct state established,related accept")?;
-        writeln!(ob, r#"        log prefix "outbound-drop: " reject"#)?;
+        writeln!(
+            ob,
+            r#"        ct state new log prefix "outbound-drop: " reject"#
+        )?;
+        writeln!(ob, r#"        reject"#)?;
         writeln!(ob, "    }}")?;
         writeln!(ob, "}}")?;
 
