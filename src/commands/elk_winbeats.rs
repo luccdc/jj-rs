@@ -48,6 +48,11 @@ impl super::Command for WinBeats {
 
         std::fs::create_dir_all(&args.elastic_install_directory)?;
 
+        download_file(
+            &format!("http://{}:{}/http_ca.crt", args.elk_ip, args.elk_share_port),
+            format!("{}\\http_ca.crt", args.elastic_install_directory.display()),
+        )?;
+
         let mut download_threads = vec![];
 
         for beat in ["winlogbeat", "filebeat", "packetbeat"] {
@@ -119,8 +124,12 @@ impl super::Command for WinBeats {
 
 output.logstash:
   hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}\\http_ca.crt"]
 "#,
-                args.elk_ip
+                args.elk_ip,
+                format!("{}", args.elastic_install_directory.display()).replace("\\", "\\\\")
             ),
         )?;
 
@@ -134,8 +143,12 @@ output.logstash:
 
 output.logstash:
   hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}\\http_ca.crt"]
 "#,
-                args.elk_ip
+                args.elk_ip,
+                format!("{}", args.elastic_install_directory.display()).replace("\\", "\\\\")
             ),
         )?;
 
@@ -149,8 +162,12 @@ output.logstash:
 
 output.logstash:
   hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}\\http_ca.crt"]
 "#,
-                args.elk_ip
+                args.elk_ip,
+                format!("{}", args.elastic_install_directory.display()).replace("\\", "\\\\")
             )
             .replace(
                 "$FILEBEAT_PATH",
@@ -184,6 +201,19 @@ output.logstash:
             .args(&["start", "packetbeat"])
             .spawn()?
             .wait()?;
+
+        println!("--- Testing output...");
+
+        for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+            Command::new(format!(
+                "{}\\{beat}\\{beat}.exe",
+                args.elastic_install_directory.display()
+            ))
+            .args(&["test", "output"])
+            .current_dir(&args.elastic_install_directory.join(beat))
+            .spawn()?
+            .wait()?;
+        }
 
         println!("--- Starting beats...");
 

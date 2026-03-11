@@ -97,6 +97,10 @@ pub struct ElkSubcommandArgs {
     #[arg(long, short = 'l', default_value = "1514")]
     pub syslog_port: u16,
 
+    /// Public IP before NAT of Logstash
+    #[arg(long, short)]
+    pub nat_ip: Option<Ipv4Addr>,
+
     /// The size of the zram swap area, in gigabytes
     #[arg(long, short, default_value = "4")]
     pub zram_size: u8,
@@ -952,6 +956,9 @@ fn setup_elasticsearch(
     writeln!(config_file, "  - name: kibana")?;
     writeln!(config_file, "    ip:")?;
     writeln!(config_file, "      - {public_ip}")?;
+    if let Some(ip) = args.nat_ip {
+        writeln!(config_file, "      - {ip}")?;
+    }
     writeln!(config_file, "    dns:")?;
     writeln!(config_file, "      - localhost")?;
 
@@ -960,7 +967,7 @@ fn setup_elasticsearch(
         .args([
             "-c",
             &format!(
-                "bin/elasticsearch-certutil cert --silent --in /proc/self/fd/{} --out config/lk-certs.zip --ca config/certs/http_ca.p12",
+                "bin/elasticsearch-certutil cert --silent --in /proc/self/fd/{} --out config/ki-certs.zip --ca config/certs/http_ca.p12",
                 config_file.as_raw_fd()
             )
         ])
@@ -991,6 +998,9 @@ fn setup_elasticsearch(
     writeln!(config_file, "  - name: logstash")?;
     writeln!(config_file, "    ip:")?;
     writeln!(config_file, "      - {public_ip}")?;
+    if let Some(ip) = args.nat_ip {
+        writeln!(config_file, "      - {ip}")?;
+    }
     writeln!(config_file, "    dns:")?;
     writeln!(config_file, "      - localhost")?;
 
@@ -999,7 +1009,7 @@ fn setup_elasticsearch(
         .args([
             "-c",
             &format!(
-                "bin/elasticsearch-certutil cert --silent --in /proc/self/fd/{} --out config/lk-certs.zip --ca config/certs/http_ca.p12",
+                "bin/elasticsearch-certutil cert --silent --in /proc/self/fd/{} --out config/ls-certs.zip --pem --ca config/certs/http_ca.p12",
                 config_file.as_raw_fd()
             )
         ])
@@ -1152,7 +1162,7 @@ fn setup_kibana(bb: &Busybox, args: &ElkSubcommandArgs) -> eyre::Result<()> {
     let certs = std::io::BufReader::new(
         std::fs::OpenOptions::new()
             .read(true)
-            .open(cpaths!(es_path_conf, "lk-certs.zip"))?,
+            .open(cpaths!(es_path_conf, "ki-certs.zip"))?,
     );
     let mut certs_archive = zip::read::ZipArchive::new(certs)?;
 
@@ -1375,6 +1385,38 @@ fn setup_logstash(
     let dir_perms: Permissions = PermissionsExt::from_mode(0o700);
     let file_perms: Permissions = PermissionsExt::from_mode(0o700);
 
+    let certs = std::io::BufReader::new(std::fs::OpenOptions::new().read(true).open(cpaths!(
+        args.elastic_install_directory,
+        "elasticsearch",
+        "config",
+        "ls-certs.zip"
+    ))?);
+    let mut certs_archive = zip::read::ZipArchive::new(certs)?;
+
+    {
+        let mut logstash_cert = certs_archive.by_path("logstash/logstash.crt")?;
+        std::io::copy(
+            &mut logstash_cert,
+            &mut std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(cpaths!(ls_path_conf, "logstash.crt"))?,
+        )?;
+    }
+
+    {
+        let mut logstash_key = certs_archive.by_path("logstash/logstash.key")?;
+        std::io::copy(
+            &mut logstash_key,
+            &mut std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(cpaths!(ls_path_conf, "logstash.key"))?,
+        )?;
+    }
+
     println!("Setting permissions...");
     for entry in WalkDir::new(&ls_home) {
         let Ok(entry) = entry else {
@@ -1472,7 +1514,8 @@ Environment="ES_API_KEY={}:{}"
                 "$ES_SHARE",
                 &format!("{}", args.elasticsearch_share_directory.display()),
             )
-            .replace("$ELK_IP", &get_public_ip(&bb)?),
+            .replace("$ELK_IP", &get_public_ip(&bb)?)
+            .replace("$LS_HOME", &format!("{}", ls_path_conf.display())),
     )?;
 
     system("systemctl daemon-reload")?;
@@ -1577,7 +1620,11 @@ output.elasticsearch:
 
 output.logstash:
   hosts: ["localhost:5044"]
-"#
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            args.elasticsearch_share_directory.display()
         ),
     )?;
 
@@ -1701,7 +1748,11 @@ output.elasticsearch:
 
 output.logstash:
   hosts: ["localhost:5044"]
-"#
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            args.elasticsearch_share_directory.display()
         )
         .replace(
             "$FILEBEAT_PATH",
@@ -1779,7 +1830,11 @@ output.elasticsearch:
 
 output.logstash:
   hosts: ["localhost:5044"]
-"#
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            args.elasticsearch_share_directory.display()
         ),
     )?;
 
@@ -2110,6 +2165,22 @@ fn download_beats(download_shell: bool, args: &ElkBeatsArgs) -> eyre::Result<()>
         }
     }
 
+    let args = args.clone();
+    if download_shell {
+        download_file(
+            &format!("http://{}:{}/http_ca.crt", args.elk_ip, args.elk_share_port),
+            format!("{}/http_ca.crt", args.elastic_install_directory.display()),
+        )?;
+    } else {
+        let args = args.clone();
+        download_threads.push(thread::spawn(move || {
+            download_file(
+                &format!("http://{}:{}/http_ca.crt", args.elk_ip, args.elk_share_port),
+                format!("{}/http_ca.crt", args.elastic_install_directory.display()),
+            )
+        }));
+    }
+
     for thread in download_threads {
         match thread.join() {
             Ok(r) => r?,
@@ -2126,6 +2197,8 @@ fn download_beats(download_shell: bool, args: &ElkBeatsArgs) -> eyre::Result<()>
 }
 
 fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
+    std::fs::create_dir_all(&args.elastic_install_directory)?;
+
     if args.use_download_shell {
         let container = DownloadContainer::new(None, args.sneaky_ip)?;
 
@@ -2156,7 +2229,7 @@ fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
             Err(_) => {
                 eprintln!(
                     "{}",
-                    "!!! Could not join download thread due to panic!".red()
+                    "!!! Could not join extract thread due to panic!".red()
                 );
             }
         }
@@ -2169,7 +2242,7 @@ fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
             &dest_path,
             &cpaths!(dest_path, &format!("{pkg}.yml")),
             &cpaths!(dest_path, pkg),
-            &cpaths!(dest_path, pkg, "data"),
+            &cpaths!(dest_path, "data"),
         )?;
     }
 
@@ -2213,8 +2286,13 @@ fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
 
 output.logstash:
   hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
 "#,
-            AUDITBEAT_YML, args.elk_ip
+            AUDITBEAT_YML,
+            args.elk_ip,
+            args.elastic_install_directory.display()
         ),
     )?;
 
@@ -2226,8 +2304,13 @@ output.logstash:
 
 output.logstash:
   hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
 "#,
-            FILEBEAT_YML, args.elk_ip
+            FILEBEAT_YML,
+            args.elk_ip,
+            args.elastic_install_directory.display()
         )
         .replace(
             "$FILEBEAT_PATH",
@@ -2247,8 +2330,13 @@ output.logstash:
 
 output.logstash:
   hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
 "#,
-            PACKETBEAT_YML, args.elk_ip
+            PACKETBEAT_YML,
+            args.elk_ip,
+            args.elastic_install_directory.display()
         ),
     )?;
 

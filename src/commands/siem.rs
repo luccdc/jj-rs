@@ -49,6 +49,10 @@ pub struct SiemSetup {
     #[arg(long, short = 'l', default_value = "1514")]
     syslog_port: u16,
 
+    /// Public IP before NAT of Logstash
+    #[arg(long, short)]
+    nat_ip: Option<Ipv4Addr>,
+
     /// The size of the zram swap area, in gigabytes
     #[arg(long, short, default_value = "4")]
     zram_size: u8,
@@ -127,6 +131,7 @@ impl super::Command for SiemSetup {
                 elastic_version: self.elastic_version.clone(),
                 elasticsearch_share_directory: self.elasticsearch_share_directory.clone(),
                 elasticsearch_data_directory: self.elasticsearch_data_directory,
+                nat_ip: self.nat_ip,
                 zram_size: self.zram_size,
                 sneaky_ip: self.sneaky_ip,
                 syslog_port: self.syslog_port,
