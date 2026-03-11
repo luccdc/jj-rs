@@ -85,6 +85,10 @@ pub struct ElkSubcommandArgs {
     #[arg(long, short = 'e', default_value = "/opt/jj-es")]
     pub elastic_install_directory: PathBuf,
 
+    /// Where Elasticsearch should put its data directory
+    #[arg(long, default_value = "/opt/jj-es/elasticsearch/data")]
+    pub elasticsearch_data_directory: PathBuf,
+
     /// Disable syslog input
     #[arg(long, short = 'D')]
     pub disable_syslog: bool,
@@ -581,12 +585,17 @@ fn extract_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
     Ok(())
 }
 
-fn apply_selinux_labels(home: &Path, path_conf: &Path, path_bin: &Path) -> eyre::Result<()> {
+fn apply_selinux_labels(
+    home: &Path,
+    path_conf: &Path,
+    path_bin: &Path,
+    path_data: &Path,
+) -> eyre::Result<()> {
     if qx("getenforce")?.1.contains("Enforcing") {
         println!("SELinux is enabled, configuring contexts...");
 
         std::fs::create_dir_all(cpaths!(home, "logs"))?;
-        std::fs::create_dir_all(cpaths!(home, "data"))?;
+        std::fs::create_dir_all(&path_data)?;
 
         system(&format!(
             "semanage fcontext -a -s system_u -t usr_t {}",
@@ -626,16 +635,15 @@ fn apply_selinux_labels(home: &Path, path_conf: &Path, path_bin: &Path) -> eyre:
         ))?;
         system(&format!("restorecon -R {}", path_bin.display()))?;
 
-        let data = cpaths!(home, "data");
         system(&format!(
             "semanage fcontext -a -s system_u -t var_lib_t {}",
-            data.display()
+            path_data.display()
         ))?;
         system(&format!(
             "chcon -u system_u -t var_lib_t -R {}",
-            data.display()
+            path_data.display()
         ))?;
-        system(&format!("restorecon -R {}", data.display()))?;
+        system(&format!("restorecon -R {}", path_data.display()))?;
     }
 
     Ok(())
@@ -679,7 +687,12 @@ fn setup_elasticsearch(
         ])
         .output()?;
 
-    apply_selinux_labels(&es_home, &es_path_conf, &cpaths!(es_home, "bin"))?;
+    apply_selinux_labels(
+        &es_home,
+        &es_path_conf,
+        &cpaths!(es_home, "bin"),
+        &args.elasticsearch_data_directory,
+    )?;
 
     let elasticsearch_user = passwd::load_users("jj-elasticsearch")
         .ok()
@@ -709,6 +722,36 @@ fn setup_elasticsearch(
             let _ = chown(entry.path(), elasticsearch_user, elasticsearch_group);
         }
     }
+
+    for entry in WalkDir::new(&args.elasticsearch_data_directory) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+
+        if entry.file_type().is_dir() {
+            let _ = std::fs::set_permissions(entry.path(), dir_perms.clone());
+            let _ = chown(entry.path(), elasticsearch_user, elasticsearch_group);
+        } else {
+            let _ = std::fs::set_permissions(entry.path(), file_perms.clone());
+            let _ = chown(entry.path(), elasticsearch_user, elasticsearch_group);
+        }
+    }
+
+    let elasticsearch_config = std::fs::read_to_string(cpaths!(es_path_conf, "elasticsearch.yml"))
+        .context("Could not read phase 1 elasticsearch configuration")?;
+
+    let data_path_regex =
+        regex::Regex::new("(?ms)(#?path.data: [^\n]+)").expect("Static regex failed after testing");
+    let elasticsearch_config = data_path_regex.replace(
+        &elasticsearch_config,
+        format!("path.data: {}", args.elasticsearch_data_directory.display()),
+    );
+
+    std::fs::write(
+        cpaths!(es_path_conf, "elasticsearch.yml"),
+        &*elasticsearch_config,
+    )
+    .context("Could not write phase 1 elasticsearch configuration")?;
 
     println!("Performing auto configuration of node...");
     Command::new("/bin/sh")
@@ -936,6 +979,45 @@ fn setup_elasticsearch(
 
     generate_keys.wait()?;
 
+    println!("\nGenerating Logstash keys...");
+
+    let public_ip = get_public_ip(&bb)?;
+
+    let config_file = memfd_create("", MFdFlags::empty())?;
+    let config_fd = config_file.into_raw_fd();
+
+    let mut config_file = unsafe { File::from_raw_fd(config_fd) };
+    writeln!(config_file, "instances:")?;
+    writeln!(config_file, "  - name: logstash")?;
+    writeln!(config_file, "    ip:")?;
+    writeln!(config_file, "      - {public_ip}")?;
+    writeln!(config_file, "    dns:")?;
+    writeln!(config_file, "      - localhost")?;
+
+    let _ = std::fs::remove_file(cpaths!(es_path_conf, "lk-certs.zip"));
+    let mut generate_keys = Command::new("/bin/sh")
+        .args([
+            "-c",
+            &format!(
+                "bin/elasticsearch-certutil cert --silent --in /proc/self/fd/{} --out config/lk-certs.zip --ca config/certs/http_ca.p12",
+                config_file.as_raw_fd()
+            )
+        ])
+        .current_dir(&es_home)
+        .env("ES_HOME", format!("{}", es_home.display()))
+        .env("ES_PATH_CONF", format!("{}", es_path_conf.display()))
+        .stdin(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .spawn()?;
+
+    if let Some(mut stdin) = generate_keys.stdin.take() {
+        writeln!(stdin, "{ca_password}")?;
+        writeln!(stdin, "")?;
+    }
+
+    generate_keys.wait()?;
+
     println!("\n{}", "--- Elasticsearch configured!".green());
 
     Ok(())
@@ -980,7 +1062,12 @@ fn setup_kibana(bb: &Busybox, args: &ElkSubcommandArgs) -> eyre::Result<()> {
         ])
         .output()?;
 
-    apply_selinux_labels(&kbn_home, &kbn_path_conf, &cpaths!(kbn_home, "bin"))?;
+    apply_selinux_labels(
+        &kbn_home,
+        &kbn_path_conf,
+        &cpaths!(kbn_home, "bin"),
+        &cpaths!(kbn_home, "data"),
+    )?;
 
     let kibana_user = passwd::load_users("jj-kibana")
         .ok()
@@ -1267,7 +1354,12 @@ fn setup_logstash(
         ])
         .output()?;
 
-    apply_selinux_labels(&ls_home, &ls_path_conf, &cpaths!(ls_home, "bin"))?;
+    apply_selinux_labels(
+        &ls_home,
+        &ls_path_conf,
+        &cpaths!(ls_home, "bin"),
+        &cpaths!(ls_home, "data"),
+    )?;
 
     let logstash_user = passwd::load_users("jj-logstash")
         .ok()
@@ -1443,6 +1535,7 @@ fn setup_auditbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> e
         &ab_home,
         &cpaths!(ab_home, "auditbeat.yml"),
         &cpaths!(ab_home, "auditbeat"),
+        &cpaths!(ab_home, "data"),
     )?;
 
     std::fs::write(
@@ -1516,6 +1609,7 @@ fn setup_filebeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> ey
         &fb_home,
         &cpaths!(fb_home, "filebeat.yml"),
         &cpaths!(fb_home, "filebeat"),
+        &cpaths!(fb_home, "data"),
     )?;
 
     std::fs::write(
@@ -1643,6 +1737,7 @@ fn setup_packetbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> 
         &pb_home,
         &cpaths!(pb_home, "packetbeat.yml"),
         &cpaths!(pb_home, "packetbeat"),
+        &cpaths!(pb_home, "data"),
     )?;
 
     std::fs::write(
@@ -2074,6 +2169,7 @@ fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
             &dest_path,
             &cpaths!(dest_path, &format!("{pkg}.yml")),
             &cpaths!(dest_path, pkg),
+            &cpaths!(dest_path, pkg, "data"),
         )?;
     }
 

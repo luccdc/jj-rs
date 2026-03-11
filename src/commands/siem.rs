@@ -37,6 +37,10 @@ pub struct SiemSetup {
     #[arg(long, short = 'e', default_value = "/opt/jj-es")]
     elastic_install_directory: PathBuf,
 
+    /// Where Elasticsearch should put its data directory
+    #[arg(long, default_value = "/opt/jj-es/elasticsearch/data")]
+    elasticsearch_data_directory: PathBuf,
+
     /// Disable syslog input
     #[arg(long, short = 'D')]
     disable_syslog: bool,
@@ -122,6 +126,7 @@ impl super::Command for SiemSetup {
                 elastic_install_directory: self.elastic_install_directory.clone(),
                 elastic_version: self.elastic_version.clone(),
                 elasticsearch_share_directory: self.elasticsearch_share_directory.clone(),
+                elasticsearch_data_directory: self.elasticsearch_data_directory,
                 zram_size: self.zram_size,
                 sneaky_ip: self.sneaky_ip,
                 syslog_port: self.syslog_port,
