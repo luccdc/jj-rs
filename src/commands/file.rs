@@ -4,14 +4,13 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
 };
-use walkdir::WalkDir;
-
-use eyre::Result;
-use sha2::{Digest, Sha256};
 
 use chrono::Local;
-
 use clap::{Args, Parser, Subcommand};
+use colored::Colorize;
+use eyre::Result;
+use sha2::{Digest, Sha256};
+use walkdir::WalkDir;
 
 /// Define common arguments between subcommands
 #[derive(Args, Debug)]
@@ -112,7 +111,7 @@ struct VerifyHashes {
 
     /// Only output changed files
     #[arg(short = 'q', long = "quiet")]
-   quiet: bool,
+    quiet: bool,
 
     /// Verify all files in hash file
     #[arg(short = 'a', long = "all")]
@@ -176,25 +175,25 @@ impl VerifyHashes {
                         if new_hash == old_hash {
                             //Great! It's valid!
                             if !self.quiet {
-                                println!("[1] {disp}");
+                                println!("[{}] {disp}", "✓".green());
                             }
                         } else {
                             // Invalid!
-                            println!("[0] {disp}");
+                            println!("[{}] {disp}", "✗".red());
                         }
                     } else {
                         // New!
-                        println!("[+] {disp}");
+                        println!("[{}] {disp}", "!".yellow());
                     }
                 } else if e.path().is_dir() {
                     if tracked_dirs.remove(e.path()) {
                         // Good dir
                         if !self.quiet {
-                            println!("[1] {disp}/");
+                            println!("[{}] {disp}", "✓".green());
                         }
                     } else {
                         // New dir
-                        println!("[+] {disp}/");
+                        println!("[{}] {disp}/", "!".yellow());
                     }
                 }
             }
@@ -202,7 +201,7 @@ impl VerifyHashes {
 
         // Missing dir/file
         for path in tracked_files.keys() {
-            println!("[-] {}", path.display());
+            println!("[{}] {}", "?".yellow(), path.display());
         }
 
         for path in tracked_dirs {
