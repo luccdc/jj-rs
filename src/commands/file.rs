@@ -96,6 +96,17 @@ impl SaveHashes {
                     )?;
                 } else if e.path().is_dir() {
                     writeln!(ob, "D {}", e.path().display())?;
+                } else if e.path().is_symlink() {
+                    let Ok(target) = e.path().read_link() else {
+                        continue;
+                    };
+                    writeln!(
+                        ob,
+                        "S {} {} {}",
+                        e.path().display(),
+                        target.display(),
+                        Local::now().format("%Y-%m-%d %H:%M:%S")
+                    )?;
                 }
             }
         }
@@ -135,6 +146,9 @@ impl VerifyHashes {
                 }
                 (Some("D"), Some(path), _) => {
                     tracked_dirs.insert(PathBuf::from(path.to_string()));
+                }
+                (Some("S"), Some(path), Some(target)) => {
+                    tracked_files.insert(PathBuf::from(path.to_string()), target.to_string());
                 }
                 _ => eprintln!("Bad line: {line}"),
             }
@@ -195,6 +209,26 @@ impl VerifyHashes {
                         // New dir
                         println!("[{}] {disp}/", "!".yellow());
                     }
+                } else if e.path().is_symlink() {
+                    if let Some(old_target) = tracked_files.remove(e.path()) {
+                        let Ok(new_target) = e.path().read_link() else {
+                            continue;
+                        };
+
+                        if new_target == old_target {
+                            if !self.quiet {
+                                println!("[{}] {disp}", "s".cyan());
+                            }
+                        } else {
+                            println!(
+                                "[{}] {disp} ({} != {old_target})",
+                                "✗".red(),
+                                new_target.display()
+                            );
+                        }
+                    } else {
+                        println!("[{}] {disp}", "s".yellow());
+                    }
                 }
             }
         }
@@ -205,7 +239,7 @@ impl VerifyHashes {
         }
 
         for path in tracked_dirs {
-            println!("[-] {}/", path.display());
+            println!("[{}] {}/", "?".yellow(), path.display());
         }
 
         Ok(())
