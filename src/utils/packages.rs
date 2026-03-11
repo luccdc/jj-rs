@@ -3,7 +3,7 @@
 //! Utilities are built using the download container and package manager to download
 //! packages, and then use the package manager to further install packages
 
-use std::{net::Ipv4Addr, ops::Not, os::unix::fs::PermissionsExt};
+use std::{net::Ipv4Addr, os::unix::fs::PermissionsExt};
 
 use eyre::Context;
 use nix::{
@@ -34,11 +34,12 @@ pub fn install_apt_packages<S: AsRef<str>>(
     let packages = packages
         .iter()
         .flat_map(|p| {
-            package_list
-                .split('\n')
-                .any(|i| i.starts_with(&format!("ii  {}", p.as_ref())))
-                .not()
-                .then(|| p.as_ref())
+            if !package_list.split('\n').any(|i| i.starts_with(p.as_ref())) {
+                Some(p.as_ref())
+            } else {
+                eprintln!("Package {} already installed!", p.as_ref());
+                None
+            }
         })
         .collect::<Vec<_>>();
 
@@ -146,11 +147,12 @@ pub fn install_dnf_packages<S: AsRef<str>>(
     let packages = packages
         .iter()
         .flat_map(|p| {
-            package_list
-                .split('\n')
-                .any(|i| i.starts_with(p.as_ref()))
-                .not()
-                .then(|| p.as_ref())
+            if !package_list.split('\n').any(|i| i.starts_with(p.as_ref())) {
+                Some(p.as_ref())
+            } else {
+                eprintln!("Package {} already installed!", p.as_ref());
+                None
+            }
         })
         .collect::<Vec<_>>();
 
