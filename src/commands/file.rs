@@ -142,13 +142,21 @@ impl VerifyHashes {
             let mut split = line.split_whitespace();
             match (split.next(), split.next(), split.next()) {
                 (Some("F"), Some(path), Some(hash)) => {
-                    tracked_files.insert(PathBuf::from(path.to_string()), hash.to_string());
+                    tracked_files.insert(
+                        PathBuf::from(path.strip_prefix("./").unwrap_or(path).to_string()),
+                        hash.to_string(),
+                    );
                 }
                 (Some("D"), Some(path), _) => {
-                    tracked_dirs.insert(PathBuf::from(path.to_string()));
+                    tracked_dirs.insert(PathBuf::from(
+                        path.strip_prefix("./").unwrap_or(path).to_string(),
+                    ));
                 }
                 (Some("S"), Some(path), Some(target)) => {
-                    tracked_files.insert(PathBuf::from(path.to_string()), target.to_string());
+                    tracked_files.insert(
+                        PathBuf::from(path.strip_prefix("./").unwrap_or(path).to_string()),
+                        target.to_string(),
+                    );
                 }
                 _ => eprintln!("Bad line: {line}"),
             }
@@ -174,11 +182,12 @@ impl VerifyHashes {
                     }
                 };
                 let disp = e.path().display();
-                if e.path().is_file() {
+                let path = e.path().strip_prefix("./").unwrap_or(e.path());
+                if path.is_file() {
                     // Check if present in tracked_paths, otherwise it's new.
-                    if let Some(old_hash) = tracked_files.remove(e.path()) {
+                    if let Some(old_hash) = tracked_files.remove(path) {
                         // Ok, it's present. Is it valid?
-                        let new_hash = match sha256_file(e.path()) {
+                        let new_hash = match sha256_file(path) {
                             Ok(h) => h,
                             Err(e) => {
                                 eprintln!("Error: {e}");
@@ -194,7 +203,7 @@ impl VerifyHashes {
                         } else {
                             // Invalid!
                             let now = std::time::SystemTime::now();
-                            if let Ok(meta) = e.path().metadata()
+                            if let Ok(meta) = path.metadata()
                                 && let Ok(modified) = meta.modified()
                                 && let Ok(modified_duration) = now.duration_since(modified)
                             {
@@ -212,8 +221,8 @@ impl VerifyHashes {
                     } else {
                         println!("[{}] {disp}", "!".yellow());
                     }
-                } else if e.path().is_dir() {
-                    if tracked_dirs.remove(e.path()) {
+                } else if path.is_dir() {
+                    if tracked_dirs.remove(path) {
                         // Good dir
                         if !self.quiet {
                             println!("[{}] {disp}", "✓".green());
@@ -222,9 +231,9 @@ impl VerifyHashes {
                         // New dir
                         println!("[{}] {disp}/", "!".yellow());
                     }
-                } else if e.path().is_symlink() {
-                    if let Some(old_target) = tracked_files.remove(e.path()) {
-                        let Ok(new_target) = e.path().read_link() else {
+                } else if path.is_symlink() {
+                    if let Some(old_target) = tracked_files.remove(path) {
+                        let Ok(new_target) = path.read_link() else {
                             continue;
                         };
 
