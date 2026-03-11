@@ -216,7 +216,8 @@ impl HttpTroubleshooter {
         let client = reqwest::blocking::Client::new();
         let request = client.get(format!(
             "http://{}:{}{}{}",
-            ip.unwrap_or(self.host),
+            ip.filter(|_| self.host.is_loopback() || self.local)
+                .unwrap_or(self.host),
             self.port,
             if self.uri.starts_with('/') { "" } else { "/" },
             self.uri

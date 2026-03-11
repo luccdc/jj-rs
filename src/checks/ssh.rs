@@ -133,8 +133,16 @@ impl SshTroubleshooter {
                     .build()
                     .map_err(|e| format!("{e}"))
                     .and_then(|rt| {
-                        rt.block_on(self.try_connection(ip.unwrap_or(host), port, &user, &pass))
-                            .map_err(|e| format!("{e}"))
+                        rt.block_on(
+                            self.try_connection(
+                                ip.filter(|_| host.is_loopback() || self.local)
+                                    .unwrap_or(host),
+                                port,
+                                &user,
+                                &pass,
+                            ),
+                        )
+                        .map_err(|e| format!("{e}"))
                     })
             },
         );

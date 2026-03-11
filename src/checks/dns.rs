@@ -128,7 +128,8 @@ impl Dns {
             |ip| {
                 crate::utils::qx(&format!(
                     "nslookup -port={port} -q={qtype} {domain} {}",
-                    ip.unwrap_or(host)
+                    ip.filter(|_| host.is_loopback() || self.local)
+                        .unwrap_or(host)
                 ))
             },
         );

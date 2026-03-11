@@ -130,7 +130,7 @@ impl SmtpTroubleshooter {
             self.disable_download_shell,
             self.sneaky_ip,
             |ip| {
-                let host = if host.is_loopback()
+                let host = if (host.is_loopback() || self.local)
                     && let Some(ip) = ip
                 {
                     format!("{ip}")

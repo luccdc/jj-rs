@@ -170,13 +170,16 @@ impl FtpTroubleshooter {
                     .build()
                     .map_err(|e| format!("{e}"))
                     .and_then(|rt| {
-                        rt.block_on(self.try_compare_hashes_internal(
-                            ip.unwrap_or(host),
-                            port,
-                            &user,
-                            &pass,
-                            hashes_path,
-                        ))
+                        rt.block_on(
+                            self.try_compare_hashes_internal(
+                                ip.filter(|_| host.is_loopback() || self.local)
+                                    .unwrap_or(host),
+                                port,
+                                &user,
+                                &pass,
+                                hashes_path,
+                            ),
+                        )
                         .map_err(|e| format!("{e}"))
                     })
             },
@@ -226,13 +229,16 @@ impl FtpTroubleshooter {
                     .build()
                     .map_err(|e| format!("{e}"))
                     .and_then(|rt| {
-                        rt.block_on(self.try_write_internal(
-                            ip.unwrap_or(host),
-                            port,
-                            &user,
-                            &pass,
-                            write_path,
-                        ))
+                        rt.block_on(
+                            self.try_write_internal(
+                                ip.filter(|_| host.is_loopback() || self.local)
+                                    .unwrap_or(host),
+                                port,
+                                &user,
+                                &pass,
+                                write_path,
+                            ),
+                        )
                         .map_err(|e| format!("{e}"))
                     })
             },
