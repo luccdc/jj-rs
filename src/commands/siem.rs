@@ -45,6 +45,10 @@ pub struct SiemSetup {
     #[arg(long, short = 'l', default_value = "1514")]
     syslog_port: u16,
 
+    /// The size of the zram swap area, in gigabytes
+    #[arg(long, short, default_value = "4")]
+    zram_size: u8,
+
     /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
     use_download_shell: bool,
@@ -118,6 +122,7 @@ impl super::Command for SiemSetup {
                 elastic_install_directory: self.elastic_install_directory.clone(),
                 elastic_version: self.elastic_version.clone(),
                 elasticsearch_share_directory: self.elasticsearch_share_directory.clone(),
+                zram_size: self.zram_size,
                 sneaky_ip: self.sneaky_ip,
                 syslog_port: self.syslog_port,
                 use_download_shell: self.use_download_shell,

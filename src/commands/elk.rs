@@ -93,6 +93,10 @@ pub struct ElkSubcommandArgs {
     #[arg(long, short = 'l', default_value = "1514")]
     pub syslog_port: u16,
 
+    /// The size of the zram swap area, in gigabytes
+    #[arg(long, short, default_value = "4")]
+    pub zram_size: u8,
+
     /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
     pub use_download_shell: bool,
@@ -278,8 +282,8 @@ impl Elk {
     ) -> eyre::Result<()> {
         use ElkCommands as EC;
 
-        if let EC::Install(_) | EC::SetupZram(_) = &self.command
-            && let Err(e) = setup_zram()
+        if let EC::Install(args) | EC::SetupZram(args) = &self.command
+            && let Err(e) = setup_zram(args)
         {
             eprintln!("{}{e}", "??? Could not set up zram: ".yellow());
         }
@@ -361,7 +365,7 @@ fn get_elastic_password(password: &mut Option<String>) -> eyre::Result<String> {
     Ok(new_pass)
 }
 
-fn setup_zram() -> eyre::Result<()> {
+fn setup_zram(args: &ElkSubcommandArgs) -> eyre::Result<()> {
     let mods = qx("lsmod")?.1;
 
     if pcre!(&mods =~ qr/"zram"/xms) {
@@ -373,7 +377,10 @@ fn setup_zram() -> eyre::Result<()> {
         bail!("Could not load zram!");
     }
 
-    if !qx("zramctl /dev/zram0 --size=4G")?.0.success() {
+    if !qx(&format!("zramctl /dev/zram0 --size={}G", args.zram_size))?
+        .0
+        .success()
+    {
         bail!("Could not initialize zram device");
     }
 
