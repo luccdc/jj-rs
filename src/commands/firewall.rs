@@ -188,7 +188,7 @@ impl QuickSetup {
             )?;
             writeln!(
                 ob,
-                "        ip daddr {elk_ip} tcp dport 5040 ct state new accept"
+                "        ip daddr {elk_ip} tcp dport 5044 ct state new accept"
             )?;
             writeln!(ob)?;
         }
