@@ -54,4 +54,22 @@ Vagrant.configure("2") do |config|
 
     alpine.vm.network "private_network", ip: "192.168.56.4"
   end
+
+  config.vm.define "win2019" do |win|
+    win.vm.box = "StefanScherer/windows_2019"
+
+    win.vm.network "private_network", ip: "192.168.56.7"
+
+    # Create a convenient PATH entry for jj
+  
+    win.vm.provision "shell", privileged: true, inline: <<-POWERSHELL
+    net user Administrator Chiapet1!
+    Install-WindowsFeature -Name NFS-Client
+   POWERSHELL
+    
+    win.vm.provider :virtualbox do |vb|
+      vb.memory = 4096
+      vb.cpus = 4
+    end
+  end
 end
