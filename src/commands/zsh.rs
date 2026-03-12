@@ -61,12 +61,21 @@ impl super::Command for Zsh {
                 .open(&self.install_path)?;
             file.set_permissions(PermissionsExt::from_mode(0o755))?;
 
-            let current_file = std::env::args()
-                .next()
-                .ok_or(eyre::eyre!("Could not get current binary"))?;
+            let current_file = PathBuf::from("/proc/self/exe")
+                .read_link()
+                .context("Could not find current jj binary")?;
 
-            writeln!(file, "#!{} zsh", &current_file)?;
-            writeln!(file, "exec {} zsh $@", &current_file)?;
+            writeln!(file, "#!{} zsh", current_file.display())?;
+            if let Some(parent) = current_file.parent() {
+                writeln!(
+                    file,
+                    r#"export PATH="{}:$PATH:/usr/local/sbin:/usr/sbin""#,
+                    parent.display()
+                )?;
+            } else {
+                writeln!(file, r#"export PATH="$PATH:/usr/local/sbin:/usr/sbin""#)?;
+            }
+            writeln!(file, "exec {} zsh $@", current_file.display())?;
 
             println!("Successfully installed!");
         }
