@@ -28,33 +28,68 @@ pub enum EnumSubcommands {
     /// Current network ports and listening services
     #[command(visible_alias("p"))]
     Ports(super::ports::Ports),
+
+    /// Check WSL and Docker status
+    WslDocker,
+    /// Enumerate IIS sites and scan for potential web shells
+    IisSites,
+    /// Check for python web servers
+    PythonSites,
+    /// Enumerate FTP servers (IIS and FileZilla)
+    FtpSites,
+    /// Enumerate suspicious startup items
+    Autoruns,
+    /// Enumerate suspicious or unsigned files in System32
+    System32Unsigned {
+        /// Search for DLLs, BATs, and PS1s in addition to EXEs
+        #[arg(short = 'd', long)]
+        detailed: bool,
+    },
 }
 
 impl super::Command for Enum {
     fn execute(self) -> eyre::Result<()> {
         let mut ob = pager::get_pager_output(true);
 
-        // Standard Enumeration
+        // Always run Hostname enumeration
         enum_hostname(&mut ob)?;
-        enum_ports(&mut ob, super::ports::Ports::default())?; // Added back
-        
-        // Security & Environment
-        //enum_defender_status(&mut ob)?;
-        enum_wsl_docker(&mut ob)?;
-        
-        // Web & Services
-        enum_iis_sites(&mut ob)?;
-        enum_python_sites(&mut ob)?;
-        enum_ftp_sites(&mut ob)?;
-        
-        // Persistence & Files
-        enum_startup_items(&mut ob)?;
-        enum_system32_unsigned(&mut ob, self.detailed)?;
+
+        match self.subcommand {
+            // Run a specific subsystem if a subcommand is provided
+            Some(EnumSubcommands::Ports(ports)) => enum_ports(&mut ob, ports)?,
+            Some(EnumSubcommands::WslDocker) => enum_wsl_docker(&mut ob)?,
+            Some(EnumSubcommands::IisSites) => enum_iis_sites(&mut ob)?,
+            Some(EnumSubcommands::PythonSites) => enum_python_sites(&mut ob)?,
+            Some(EnumSubcommands::FtpSites) => enum_ftp_sites(&mut ob)?,
+            Some(EnumSubcommands::Autoruns) => enum_startup_items(&mut ob)?,
+            Some(EnumSubcommands::System32Unsigned { detailed }) => {
+                enum_system32_unsigned(&mut ob, self.detailed || detailed)?
+            }
+            
+            // Default behavior: Run all enumerations if no subcommand is given
+            None => {
+                // Standard Enumeration
+                enum_ports(&mut ob, super::ports::Ports::default())?; 
+                
+                // Security & Environment
+                enum_wsl_docker(&mut ob)?;
+                
+                // Web & Services
+                enum_iis_sites(&mut ob)?;
+                enum_python_sites(&mut ob)?;
+                enum_ftp_sites(&mut ob)?;
+                
+                // Persistence & Files
+                enum_startup_items(&mut ob)?;
+                enum_system32_unsigned(&mut ob, self.detailed)?;
+            }
+        }
 
         Ok(())
     }
 }
 
+// Enumerate ports and associated PID's on the device
 fn enum_ports(out: &mut impl PagerOutput, p: super::ports::Ports) -> eyre::Result<()> {
     writeln!(out, "\n==== PORTS INFO")?;
     p.run(out)
@@ -72,6 +107,7 @@ fn enum_hostname(out: &mut impl PagerOutput) -> eyre::Result<()> {
     Ok(())
 }
 
+// Check if a tool exists in the user's path
 fn tool_exists(tool: &str) -> bool {
     // Check if the executable exists in any folder listed in the PATH environment variable
     if let Ok(path) = std::env::var("PATH") {
@@ -85,7 +121,7 @@ fn tool_exists(tool: &str) -> bool {
     false
 }
 
-
+// Enumerate if WSL or docker is in the user's path
 fn enum_wsl_docker(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== WSL / DOCKER")?;
 
@@ -106,6 +142,7 @@ fn enum_wsl_docker(out: &mut impl PagerOutput) -> eyre::Result<()> {
     Ok(())
 }
 
+// Enumerate IIS sites, listing out where they are being hosted and ports
 fn enum_iis_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== IIS SITES")?;
 
@@ -149,6 +186,7 @@ fn enum_iis_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
 use walkdir::WalkDir;
 use colored::*;
 
+// List out possible shells in website directories
 fn scan_web_files(out: &mut impl PagerOutput, root: &str) -> eyre::Result<()> {
     // 1. Clean the path (remove quotes or trailing spaces from PowerShell/appcmd)
     let clean_root = root.trim_matches(|c| c == '\"' || c == ' ');
@@ -195,6 +233,7 @@ fn scan_web_files(out: &mut impl PagerOutput, root: &str) -> eyre::Result<()> {
     Ok(())
 }
 
+// Check for python web servers
 fn enum_python_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
 
     writeln!(out, "\n==== PYTHON WEB SERVERS")?;
@@ -216,6 +255,7 @@ fn enum_python_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
     Ok(())
 }
 
+// Check startup items, similar to autoruns. Ignore Microsoft ones
 fn enum_startup_items(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== SUSPICIOUS STARTUP ITEMS")?;
 
@@ -251,6 +291,7 @@ fn enum_startup_items(out: &mut impl PagerOutput) -> eyre::Result<()> {
     Ok(())
 }
 
+// Enumerate FTP sites
 fn enum_ftp_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== FTP SERVERS (IIS & FILEZILLA)")?;
 
@@ -316,6 +357,7 @@ fn enum_ftp_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
     Ok(())
 }
 
+// Check System32 for unsigned dll's, exe's, or .ps1's. without -d just checks for .exe
 fn enum_system32_unsigned(out: &mut impl PagerOutput, detailed: bool) -> eyre::Result<()> {
     writeln!(out, "\n==== SUSPICIOUS FILES IN SYSTEM32")?;
 
