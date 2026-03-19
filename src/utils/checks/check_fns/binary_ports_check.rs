@@ -189,6 +189,13 @@ impl CheckStep<'_> for BinaryPortsCheck {
             Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
         };
 
+        if !self.run_local {
+            return Ok(CheckResult::not_run(
+                "Cannot check listening ports on a remote system",
+                serde_json::json!(null),
+            ));
+        }
+
         let ports = crate::utils::ports::list_ports()?;
 
         let mut ports = ports.into_iter().fold(
