@@ -384,7 +384,7 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
                 download_threads.push(std::thread::spawn(download_package));
             }
 
-            for beat in ["auditbeat", "filebeat", "packetbeat"] {
+            for beat in ["auditbeat", "filebeat", "packetbeat", "metricbeat"] {
                 let download_package = {
                     let url = format!(
                         "{}/{}/{}-{}-linux-x86_64.tar.gz",
@@ -1161,6 +1161,9 @@ fn translate_pipeline_elk_to_wazuh(
             } else {
                 community_id.insert("destination_port_field".into(), "destination.port".into());
             }
+
+            community_id.remove("icmp_type");
+            community_id.remove("icmp_code");
         }
 
         if let Some(V::Object(_)) = processor.get("uri_parts") {
@@ -1359,6 +1362,8 @@ fn import_direct_from_beats(
     args: &WazuhSubcommandArgs,
     wazuh_password: &str,
 ) -> eyre::Result<()> {
+    use reqwest::blocking::multipart::{Form, Part};
+
     println!("--- Importing beats configuration directly");
 
     let cert = std::fs::read_to_string("/etc/wazuh-indexer/certs/root-ca.pem")?;
@@ -1370,6 +1375,21 @@ fn import_direct_from_beats(
 
     let public_ip = get_public_ip(bb)?;
 
+    let settings_update_result = client
+        .put(format!("https://{public_ip}:9200/_cluster/settings"))
+        .basic_auth("admin", Some(wazuh_password))
+        .header("content-type", "application/json")
+        .body(r#"{
+    "persistent": {
+        "script.max_compilations_rate": "2000/1m"
+    }
+}"#)
+        .send()
+        .context("Could not update pipeline compilation limit (this will limit the effectiveness of Packetbeat TLS data)")?
+        .json::<serde_json::Value>()?;
+
+    println!("{settings_update_result}");
+
     for beat in [
         "auditbeat",
         "packetbeat",
@@ -1377,6 +1397,8 @@ fn import_direct_from_beats(
         "metricbeat",
         "winlogbeat",
     ] {
+        println!("  --- Importing {beat} configuration...");
+
         let (ingest_pipelines, fields) = if beat == "winlogbeat" {
             let zip = std::io::BufReader::new(
                 std::fs::OpenOptions::new()
@@ -1401,7 +1423,7 @@ fn import_direct_from_beats(
                 let mut file = match zip.by_index(i) {
                     Ok(v) => v,
                     Err(e) => {
-                        eprintln!("Could not search for winlogbeat ingest pipeline: {e}");
+                        eprintln!("  Could not search for winlogbeat ingest pipeline: {e}");
                         continue;
                     }
                 };
@@ -1447,7 +1469,7 @@ fn import_direct_from_beats(
                 let mut entry = match entry {
                     Ok(v) => v,
                     Err(e) => {
-                        eprintln!("Could not search for {beat} ingest pipeline: {e}");
+                        eprintln!("  Could not search for {beat} ingest pipeline: {e}");
                         continue;
                     }
                 };
@@ -1469,16 +1491,30 @@ fn import_direct_from_beats(
                 } else if path.contains("ingest") && path.ends_with(".yml") {
                     let mut pipeline_string = String::new();
                     if let Err(e) = entry.read_to_string(&mut pipeline_string) {
-                        eprintln!("Error reading ingest pipeline from archive: {e}");
+                        eprintln!("  Error reading ingest pipeline from archive: {e}");
                     } else {
                         let Some(pipeline_name) = path.strip_suffix(".yml") else {
                             continue;
                         };
-                        let Some(sep_idx) = pipeline_name.rfind("/") else {
+                        let mut parts = pipeline_name.rsplit('/');
+
+                        let Some(pipeline_name) = parts.next() else {
                             continue;
                         };
-                        ingest_pipelines
-                            .push((pipeline_name[sep_idx + 1..].to_string(), pipeline_string));
+                        let Some(_ingest) = parts.next() else {
+                            continue;
+                        };
+                        let Some(module2) = parts.next() else {
+                            continue;
+                        };
+                        let Some(module1) = parts.next() else {
+                            continue;
+                        };
+
+                        ingest_pipelines.push((
+                            format!("{module1}-{module2}-{pipeline_name}"),
+                            pipeline_string,
+                        ));
                     }
                 }
             }
@@ -1514,8 +1550,10 @@ fn import_direct_from_beats(
                 m.remove("metric_type");
                 m.remove("definition");
                 m.remove("release");
-                m.remove("formate");
                 m.remove("dimension");
+
+                // an ode to mispellings in official data
+                m.remove("formate");
                 m.remove("descriprtion");
                 m.remove("decsription");
 
@@ -1571,15 +1609,34 @@ fn import_direct_from_beats(
             .context("Could not parse response from opensearch")?;
 
         if let Some(e) = response.get("error") {
-            println!("{index_template_body}");
-
-            eyre::bail!("{e}");
+            eprintln!("  Could not import index template for {beat}: {e}");
+            continue;
         }
 
-        println!("Successfully imported {beat} index template!");
+        println!("  Successfully imported {beat} index template! Creating data stream...");
+
+        let response = client
+            .put(format!(
+                "https://{public_ip}:9200/_data_stream/{beat}-{}",
+                args.jj_elastic_version
+            ))
+            .basic_auth("admin", Some(&wazuh_password))
+            .send()
+            .context("Could not contact Wazuh opensearch server")?
+            .json::<serde_json::Value>()
+            .context("Could not parse response from opensearch")?;
+
+        if response.get("acknowledged") == Some(&(true.into())) {
+            println!("  Successfully uploaded data stream! Importing ingest pipelines...");
+        } else {
+            eprintln!("  Issues uploading data stream: {response}");
+            continue;
+        }
 
         for (name, ingest_pipeline) in ingest_pipelines {
-            let mut ingest_pipeline =
+            print!("    Importing pipeline {name}...");
+
+            let ingest_pipeline =
                 match serde_yaml_ng::from_str::<serde_json::Value>(&ingest_pipeline) {
                     Ok(v) => v,
                     Err(e) => {
@@ -1587,6 +1644,10 @@ fn import_direct_from_beats(
                         continue;
                     }
                 };
+
+            let serde_json::Value::Object(mut ingest_pipeline) = ingest_pipeline else {
+                continue;
+            };
 
             if let Some(serde_json::Value::Array(processors)) =
                 ingest_pipeline.get_mut("processors")
@@ -1603,7 +1664,70 @@ fn import_direct_from_beats(
                     }
                 }
             }
+
+            if translate_pipeline_elk_to_wazuh(&mut ingest_pipeline).is_err() {
+                continue;
+            }
+
+            let Ok(pipeline_json) = serde_json::to_string(&ingest_pipeline) else {
+                continue;
+            };
+
+            let name = format!("{beat}-{}-{name}", args.jj_elastic_version);
+
+            match client
+                .put(format!("https://{public_ip}:9200/_ingest/pipeline/{name}"))
+                .basic_auth("admin", Some(&wazuh_password))
+                .header("content-type", "application/json")
+                .body(pipeline_json)
+                .send()
+                .and_then(|r| r.json::<serde_json::Value>())
+            {
+                Ok(v) => {
+                    if let serde_json::Value::Object(ref o) = v
+                        && o.get("acknowledged") == Some(&(true.into()))
+                    {
+                        println!(" {}", "Success".green());
+                    } else {
+                        println!("\n      Failed to import pipeline {name}: {v}")
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "\n      Failed to contact wazuh server to import pipeline {name}: {e}"
+                    );
+                }
+            }
         }
+
+        println!("  Attempted imports of ingest pipelines; uploading data view...");
+
+        let data_view = super::elk::convert_fields_to_data_view(
+            &beat,
+            fields.clone(),
+            &args.jj_elastic_version,
+        )?;
+        let data_view_body = serde_json::to_string(&data_view)?;
+
+        let part = Part::bytes(data_view_body.as_bytes().to_owned()).file_name("input.ndjson");
+        let form = Form::new().part("file", part);
+
+        let response = client
+            .post(format!(
+                "https://{public_ip}/api/saved_objects/_import?overwrite=true"
+            ))
+            .basic_auth("admin", Some(&wazuh_password))
+            .header("osd-xsrf", "true")
+            .multipart(form)
+            .send()
+            .context("Could not contact Wazuh dashboard")?
+            .json::<serde_json::Value>()
+            .context("Could not parse response from Wazuh dashboard")?;
+
+        println!("{response}");
+
+        println!("  Successfully uploaded {beat} data view!");
+        println!("{}", format!("  --- {beat} successfully set up!").green());
     }
 
     println!(

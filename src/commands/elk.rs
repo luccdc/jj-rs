@@ -2416,9 +2416,9 @@ fn setup_winlogbeat(
         .context("Could not parse response from elasticsearch")?;
 
     if response.get("acknowledged") == Some(&(true.into())) {
-        println!("Successfully uploaded index template!");
+        println!("Successfully uploaded data stream!");
     } else {
-        eyre::bail!("Issues uploading index template: {response}");
+        eyre::bail!("Issues uploading data stream: {response}");
     }
 
     println!("Done creating data stream! Searching for ingest pipelines...");
