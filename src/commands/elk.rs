@@ -2107,17 +2107,29 @@ fn setup_winlogbeat(
                 _ => None,
             };
 
-            mappings.push(serde_json::json!({
+            let mut mapping = serde_json::json!({
                 "name": full_chain.clone(),
-                "type": mapped_field_type,
                 "count": m.get("count").and_then(V::as_i64).unwrap_or_default(),
                 "scripted": false,
-                "indexed": m.get("indexed").and_then(V::as_bool).unwrap_or_default() && mapped_field_type != Some("binary"),
-                "analyzed": m.get("analyzed").and_then(V::as_bool).unwrap_or_default() && mapped_field_type != Some("binary"),
-                "doc_values": m.get("doc_values").and_then(V::as_bool).unwrap_or(mapped_field_type != Some("binary")),
-                "searchable": m.get("searchable").and_then(V::as_bool).unwrap_or_default() && mapped_field_type != Some("binary"),
-                "aggregatable": m.get("aggregatable").and_then(V::as_bool).unwrap_or_default() && mapped_field_type != Some("binary") && field_type != "text",
-            }));
+                "indexed": m.get("indexed").and_then(V::as_bool).unwrap_or(true) && mapped_field_type != Some("binary"),
+                "analyzed": m.get("analyzed").and_then(V::as_bool).unwrap_or(false) && mapped_field_type != Some("binary"),
+                "doc_values": m.get("doc_values").and_then(V::as_bool).unwrap_or(true) && mapped_field_type != Some("binary"),
+                "searchable": m.get("searchable").and_then(V::as_bool).unwrap_or(true) && mapped_field_type != Some("binary"),
+                "aggregatable": m.get("aggregatable").and_then(V::as_bool).unwrap_or(true) && mapped_field_type != Some("binary") && field_type != "text",
+            });
+            if let Some(obj) = mapping.as_object_mut() {
+                if let Some(dt) = mapped_field_type {
+                    obj.insert("type".into(), dt.into());
+                }
+                if field_type == "object" {
+                    obj.insert(
+                        "enabled".into(),
+                        m.get("enabled").and_then(V::as_bool).unwrap_or(true).into(),
+                    );
+                }
+            }
+
+            mappings.push(mapping);
 
             let format = m.remove("format");
             let pattern = m.get("pattern");
@@ -2125,7 +2137,7 @@ fn setup_winlogbeat(
                 let mut format_obj = serde_json::Map::new();
 
                 if let Some(format) = format {
-                    format_obj["id"] = format.into();
+                    format_obj.insert("id".into(), format.into());
                 }
 
                 macro_rules! add_params {
@@ -2229,8 +2241,6 @@ fn setup_winlogbeat(
 
     let index_template_body = serde_json::to_string(&index_template)?;
 
-    println!("{}", &index_template_body);
-
     println!("Uploading index template...");
 
     let response = client
@@ -2251,8 +2261,6 @@ fn setup_winlogbeat(
     } else {
         eyre::bail!("Issues uploading index template: {response}");
     }
-
-    panic!();
 
     println!("Done uploading index template! Creating index pattern (data view)...");
 
@@ -2333,8 +2341,6 @@ fn setup_winlogbeat(
 
     let index_pattern_body = serde_json::to_string(&index_pattern)?;
 
-    println!("{}", index_pattern_body);
-
     println!("Uploading index pattern...");
 
     let part = Part::bytes(index_pattern_body.as_bytes().to_owned()).file_name("input.ndjson");
@@ -2344,7 +2350,6 @@ fn setup_winlogbeat(
         .post("https://localhost:5601/api/saved_objects/_import?overwrite=true")
         .basic_auth("elastic", Some(&es_password))
         .header("kbn-xsrf", "true")
-        .header("content-type", "application/ndjson")
         .multipart(form)
         .send()
         .context("Could not contact Kibana")?
