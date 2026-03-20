@@ -312,10 +312,6 @@ impl Elk {
             setup_kibana(&busybox, args)?;
         }
 
-        if let EC::Install(args) | EC::LoadKibanaDashboards(args) = &self.command {
-            load_kibana_dashboards(args, elastic_password)?;
-        }
-
         if let EC::Install(args) | EC::SetupLogstash(args) = &self.command {
             setup_logstash(&busybox, elastic_password, args)?;
         }
@@ -334,6 +330,10 @@ impl Elk {
 
         if let EC::Install(args) | EC::SetupWinlogbeat(args) = &self.command {
             setup_winlogbeat(&busybox, elastic_password, args)?;
+        }
+
+        if let EC::Install(args) | EC::LoadKibanaDashboards(args) = &self.command {
+            load_kibana_dashboards(args, elastic_password)?;
         }
 
         if let EC::Install(args) = &self.command {
