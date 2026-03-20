@@ -1309,6 +1309,7 @@ fn load_kibana_dashboards(
             .post("https://localhost:5601/api/saved_objects/_import?overwrite=true")
             .basic_auth("elastic", Some(elastic_password.clone()))
             .header("kbn-xsrf", "true")
+            .header("content-type", "application/ndjson")
             .multipart(form)
             .send()?;
     }
@@ -1851,6 +1852,8 @@ fn setup_winlogbeat(
     password: &mut Option<String>,
     args: &ElkSubcommandArgs,
 ) -> eyre::Result<()> {
+    use reqwest::blocking::multipart::{Form, Part};
+
     println!(
         "{}",
         "--- Prepping Elasticsearch for Winlogbeat data".green()
@@ -1872,9 +1875,12 @@ fn setup_winlogbeat(
     )?);
     let mut archive = zip::read::ZipArchive::new(winlogbeat_zip)?;
 
-    fn visit_fields(
+    fn visit_template_fields(
         mappings: &mut serde_json::Map<String, serde_json::Value>,
+        analyzer: &mut serde_json::Map<String, serde_json::Value>,
+        default_fields: &mut Vec<String>,
         object_chain: Option<&str>,
+        default_field: bool,
         field: serde_json::Value,
     ) {
         use serde_json::Value as V;
@@ -1890,6 +1896,22 @@ fn setup_winlogbeat(
                 let new_mapping = current_entry.or_insert(serde_json::json!({
                     "properties": {}
                 }));
+
+                {
+                    if new_mapping["properties"].is_null()
+                        && let Some(obj) = new_mapping.as_object_mut()
+                    {
+                        let obj_type = obj["type"].clone();
+                        obj.clear();
+                        obj.insert("properties".into(), serde_json::json!({}));
+                        if obj_type.as_str() == Some("nested") {
+                            obj.insert("type".into(), "nested".into());
+                        }
+                        if obj_type.as_str() == Some("object") {
+                            obj.insert("type".into(), "object".into());
+                        }
+                    }
+                }
 
                 current_entry = new_mapping
                     .as_object_mut()?
@@ -1909,14 +1931,86 @@ fn setup_winlogbeat(
         m.remove("description");
         m.remove("required");
         m.remove("example");
-        m.remove("default_field");
+        m.remove("object_type");
+        m.remove("object_type_mapping_type");
+        m.remove("format");
+        m.remove("input_format");
+        m.remove("output_format");
+        m.remove("output_precision");
 
-        let Some(field_type) = m.get("type").and_then(V::as_str) else {
+        if let Some(V::Array(multi_fields)) = m.remove("multi_fields") {
+            let fields = m.entry("fields").or_insert(serde_json::json!({}));
+
+            for props in multi_fields {
+                let V::Object(mut props) = props else {
+                    continue;
+                };
+                let Some(V::String(name)) = props.remove("name") else {
+                    continue;
+                };
+
+                props.remove("default_field");
+
+                fields[name] = props.into();
+            }
+        }
+
+        if let Some(V::Object(a)) = m.remove("analyzer")
+            && let Some((key, value)) = a.into_iter().next()
+        {
+            analyzer.insert(key.clone(), value);
+            m.insert("analyzer".to_string(), key.into());
+        }
+
+        if let Some(V::Object(a)) = m.remove("search_analyzer")
+            && let Some((key, value)) = a.into_iter().next()
+        {
+            analyzer.insert(key.clone(), value);
+            m.insert("search_analyzer".to_string(), key.into());
+        }
+
+        let name_option = m.remove("name");
+
+        let obj_default_field = m.remove("default_field").and_then(|v| v.as_bool());
+
+        let Some(V::String(field_type)) = m.get("type").cloned() else {
+            let Some(V::Array(fields)) = m.remove("fields") else {
+                return;
+            };
+
+            for field in fields {
+                visit_template_fields(
+                    mappings,
+                    analyzer,
+                    default_fields,
+                    object_chain,
+                    obj_default_field.unwrap_or(default_field),
+                    field,
+                );
+            }
+
             return;
         };
-        let Some(name) = m.get("name").and_then(V::as_str) else {
+
+        if field_type == "alias" {
+            return;
+        }
+
+        if field_type == "keyword" {
+            m.entry("ignore_above").or_insert(1024.into());
+        }
+
+        let Some(V::String(name)) = name_option else {
             return;
         };
+
+        if obj_default_field.unwrap_or(default_field)
+            && let "" | "keyword" | "text" | "match_only_text" | "wildcard" = &*field_type
+            && m.remove("index").and_then(|v| v.as_bool()).unwrap_or(true)
+        {
+            let new_chain = object_chain.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}"));
+            default_fields.push(new_chain);
+        }
 
         let Some(field_entry) = resolve_chain(
             mappings,
@@ -1940,14 +2034,126 @@ fn setup_winlogbeat(
             let new_chain = object_chain.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}"));
 
             for field in fields {
-                visit_fields(mappings, Some(&new_chain), field);
+                visit_template_fields(
+                    mappings,
+                    analyzer,
+                    default_fields,
+                    Some(&new_chain),
+                    obj_default_field.unwrap_or(default_field),
+                    field,
+                );
             }
         } else {
             field_entry.or_insert(m.into());
         }
     }
 
-    println!("Parsing index template...");
+    fn visit_pattern_fields(
+        mappings: &mut Vec<serde_json::Value>,
+        format_map: &mut serde_json::Map<String, serde_json::Value>,
+        object_chain: Option<&str>,
+        field: serde_json::Value,
+    ) {
+        use serde_json::Value as V;
+
+        let V::Object(mut m) = field else {
+            return;
+        };
+
+        let Some(V::String(field_type)) = m.remove("type") else {
+            let Some(V::Array(fields)) = m.remove("fields") else {
+                return;
+            };
+
+            for field in fields {
+                visit_pattern_fields(mappings, format_map, None, field);
+            }
+
+            return;
+        };
+
+        let Some(V::String(name)) = m.remove("name") else {
+            return;
+        };
+
+        let full_chain = object_chain.map_or(name.to_string(), |s| format!("{s}.{name}"));
+
+        if field_type == "group" {
+            let Some(V::Array(fields)) = m.remove("fields") else {
+                return;
+            };
+
+            for field in fields {
+                visit_pattern_fields(mappings, format_map, Some(&full_chain), field);
+            }
+        } else {
+            let mapped_field_type = match &*field_type {
+                "binary" => Some("binary"),
+                "half_float" => Some("number"),
+                "scaled_float" => Some("number"),
+                "float" => Some("number"),
+                "integer" => Some("number"),
+                "long" => Some("number"),
+                "short" => Some("number"),
+                "byte" => Some("number"),
+                "text" => Some("string"),
+                "keyword" => Some("string"),
+                "" => Some("string"),
+                "geo_point" => Some("geo_point"),
+                "date" => Some("date"),
+                "ip" => Some("ip"),
+                "ip_range" => Some("ip_range"),
+                "boolean" => Some("boolean"),
+                _ => None,
+            };
+
+            mappings.push(serde_json::json!({
+                "name": full_chain.clone(),
+                "type": mapped_field_type,
+                "count": m.get("count").and_then(V::as_i64).unwrap_or_default(),
+                "scripted": false,
+                "indexed": m.get("indexed").and_then(V::as_bool).unwrap_or_default() && mapped_field_type != Some("binary"),
+                "analyzed": m.get("analyzed").and_then(V::as_bool).unwrap_or_default() && mapped_field_type != Some("binary"),
+                "doc_values": m.get("doc_values").and_then(V::as_bool).unwrap_or(mapped_field_type != Some("binary")),
+                "searchable": m.get("searchable").and_then(V::as_bool).unwrap_or_default() && mapped_field_type != Some("binary"),
+                "aggregatable": m.get("aggregatable").and_then(V::as_bool).unwrap_or_default() && mapped_field_type != Some("binary") && field_type != "text",
+            }));
+
+            let format = m.remove("format");
+            let pattern = m.get("pattern");
+            if format.is_some() || pattern.is_some() {
+                let mut format_obj = serde_json::Map::new();
+
+                if let Some(format) = format {
+                    format_obj["id"] = format.into();
+                }
+
+                macro_rules! add_params {
+                    (($src:expr => $dest:expr) { $($src_key:ident => $dest_key:ident),+$(,)? }) => {{
+                        $(
+                            if let Some(v) = $src.remove(stringify!($src_key)) {
+                                let param_entry = $dest.entry("params").or_insert(serde_json::json!({}));
+                                param_entry[stringify!($dest_key)] = v.into();
+                            }
+                        )+
+                    }};
+                }
+
+                add_params!(
+                    (m => format_obj) {
+                        pattern => pattern,
+                        input_format => inputFormat,
+                        output_format => outputFormat,
+                        output_precision => outputPrecision,
+                    }
+                );
+
+                format_map.insert(full_chain, format_obj.into());
+            }
+        }
+    }
+
+    println!("Parsing Winlogbeat metadata...");
 
     let fields_file = archive.by_name(&format!(
         "winlogbeat-{}-windows-x86_64/fields.yml",
@@ -1955,36 +2161,75 @@ fn setup_winlogbeat(
     ))?;
 
     let mut mappings = serde_json::Map::new();
+    let mut default_fields = vec![];
+    let mut analyzer = serde_json::Map::default();
 
     let fields_parsed = serde_yaml_ng::from_reader::<_, serde_json::Value>(fields_file)
         .context("Could not parse basic winlogbeat fields mappings")?;
 
-    let transformed_fields = match fields_parsed {
+    println!("Transforming into index template...");
+
+    match fields_parsed.clone() {
         serde_json::Value::Array(a) => {
             for field in a {
-                visit_fields(&mut mappings, None, field);
+                visit_template_fields(
+                    &mut mappings,
+                    &mut analyzer,
+                    &mut default_fields,
+                    None,
+                    false,
+                    field,
+                );
             }
         }
         _ => {
             eyre::bail!("Could not parse field mappings file to prepare index template");
         }
-    };
+    }
+
+    default_fields.push("fields.*".into());
 
     let index_template = serde_json::json!({
-        "index_patterns": ["winlogbeat-*"],
+        "index_patterns": [format!("winlogbeat-{}", args.elastic_version)],
         "data_stream": {},
+        "priority": 150,
         "template": {
             "settings": {
-                "index.number_of_shards": 1,
-                "index.lifecycle.name": "winlogbeat"
+                "index": {
+                    "number_of_shards": 1,
+                    "lifecycle": {
+                        "name": "winlogbeat"
+                    },
+                    "mapping": {
+                        "total_fields": {
+                            "limit": 12500
+                        }
+                    },
+                    "max_docvalue_fields_search": 200,
+                    "refresh_interval": "5s",
+                    "query": {
+                        "default_field": default_fields.into_iter().map(serde_json::Value::from).collect::<serde_json::Value>()
+                    }
+                },
+                "analysis": {
+                    "analyzer": analyzer
+                },
             },
             "mappings": {
-                "properties": transformed_fields
+                "_meta": {
+                    "version": &args.elastic_version,
+                    "beat": "winlogbeat"
+                },
+                "date_detection": false,
+                "dynamic_templates": [],
+                "properties": mappings
             }
         }
     });
 
     let index_template_body = serde_json::to_string(&index_template)?;
+
+    println!("{}", &index_template_body);
 
     println!("Uploading index template...");
 
@@ -2007,7 +2252,108 @@ fn setup_winlogbeat(
         eyre::bail!("Issues uploading index template: {response}");
     }
 
-    println!("Done uploading index template! Creating data stream...");
+    panic!();
+
+    println!("Done uploading index template! Creating index pattern (data view)...");
+
+    let mut field_format_map = serde_json::Map::default();
+    let mut fields = Vec::new();
+
+    match fields_parsed {
+        serde_json::Value::Array(a) => {
+            for field in a {
+                visit_pattern_fields(&mut fields, &mut field_format_map, None, field);
+            }
+        }
+        _ => {
+            eyre::bail!("Could not parse field mappings file to prepare index template");
+        }
+    }
+
+    fields.push(serde_json::json!({
+        "name": "_id",
+        "type": "keyword",
+        "count": 0,
+        "scripted": false,
+        "indexed": false,
+        "analyzed": false,
+        "doc_values": false,
+        "searchable": false,
+        "aggregatable": false
+    }));
+    fields.push(serde_json::json!({
+        "name": "_type",
+        "type": "keyword",
+        "count": 0,
+        "scripted": false,
+        "indexed": false,
+        "analyzed": false,
+        "doc_values": false,
+        "searchable": true,
+        "aggregatable": true
+    }));
+    fields.push(serde_json::json!({
+        "name": "_index",
+        "type": "keyword",
+        "count": 0,
+        "scripted": false,
+        "indexed": false,
+        "analyzed": false,
+        "doc_values": false,
+        "searchable": false,
+        "aggregatable": false
+    }));
+    fields.push(serde_json::json!({
+        "name": "_score",
+        "type": "integer",
+        "count": 0,
+        "scripted": false,
+        "indexed": false,
+        "analyzed": false,
+        "doc_values": false,
+        "searchable": false,
+        "aggregatable": false
+    }));
+
+    let field_format_map =
+        serde_json::to_string(&field_format_map).context("Could not serialize fieldFormatMap")?;
+    let fields = serde_json::to_string(&fields).context("Could not serialize fields")?;
+
+    let index_pattern = serde_json::json!({
+        "id": "winlogbeat-*",
+        "type": "index-pattern",
+        "version": args.elastic_version,
+        "attributes": {
+            "fieldFormatMap": field_format_map,
+            "fields": fields,
+            "timeFieldName": "@timestamp",
+            "title": "winlogbeat-*"
+        }
+    });
+
+    let index_pattern_body = serde_json::to_string(&index_pattern)?;
+
+    println!("{}", index_pattern_body);
+
+    println!("Uploading index pattern...");
+
+    let part = Part::bytes(index_pattern_body.as_bytes().to_owned()).file_name("input.ndjson");
+    let form = Form::new().part("file", part);
+
+    let response = client
+        .post("https://localhost:5601/api/saved_objects/_import?overwrite=true")
+        .basic_auth("elastic", Some(&es_password))
+        .header("kbn-xsrf", "true")
+        .header("content-type", "application/ndjson")
+        .multipart(form)
+        .send()
+        .context("Could not contact Kibana")?
+        .json::<serde_json::Value>()
+        .context("Could not parse response from Kibana")?;
+
+    println!("{response}");
+
+    println!("Done uploading data view! Creating data stream...");
 
     let response = client
         .put(format!(
