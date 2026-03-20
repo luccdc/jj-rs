@@ -40,17 +40,17 @@ use crate::{
 // It includes all the ndjson files for kibana dashboards
 include!(concat!(env!("OUT_DIR"), "/kibana_dashboards.rs"));
 
-const FILEBEAT_YML: &str = include_str!("elk/filebeat.linux.yml");
-const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.linux.yml");
-const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.linux.yml");
-const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
-const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
-const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
-const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
-const AUDITBEAT_SERVICE: &str = include_str!("elk/auditbeat.service");
-const FILEBEAT_SERVICE: &str = include_str!("elk/filebeat.service");
-const PACKETBEAT_SERVICE: &str = include_str!("elk/packetbeat.service");
-const SURICATA_YAML: &str = include_str!("elk/suricata.yaml");
+pub const FILEBEAT_YML: &str = include_str!("elk/filebeat.linux.yml");
+pub const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.linux.yml");
+pub const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.linux.yml");
+pub const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
+pub const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
+pub const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
+pub const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
+pub const AUDITBEAT_SERVICE: &str = include_str!("elk/auditbeat.service");
+pub const FILEBEAT_SERVICE: &str = include_str!("elk/filebeat.service");
+pub const PACKETBEAT_SERVICE: &str = include_str!("elk/packetbeat.service");
+pub const SURICATA_YAML: &str = include_str!("elk/suricata.yaml");
 
 macro_rules! cpaths {
     ($base:expr, $($others:expr),*$(,)?) => {{
@@ -73,7 +73,7 @@ pub struct ElkSubcommandArgs {
     #[arg(long, default_value = "https://artifacts.elastic.co/downloads")]
     pub download_url: String,
 
-    /// URL to download Auditbeat, Filebeat, and Packetbeat from
+    /// URL to download Auditbeat, Filebeat, Packetbeat, Metricbeat, and Winlogbeat from
     #[arg(long, default_value = "https://artifacts.elastic.co/downloads/beats")]
     pub beats_download_url: String,
 
@@ -589,7 +589,7 @@ fn extract_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
     Ok(())
 }
 
-fn apply_selinux_labels(
+pub fn apply_selinux_labels_to_elastic_package(
     home: &Path,
     path_conf: &Path,
     path_bin: &Path,
@@ -691,7 +691,7 @@ fn setup_elasticsearch(
         ])
         .output()?;
 
-    apply_selinux_labels(
+    apply_selinux_labels_to_elastic_package(
         &es_home,
         &es_path_conf,
         &cpaths!(es_home, "bin"),
@@ -1072,7 +1072,7 @@ fn setup_kibana(bb: &Busybox, args: &ElkSubcommandArgs) -> eyre::Result<()> {
         ])
         .output()?;
 
-    apply_selinux_labels(
+    apply_selinux_labels_to_elastic_package(
         &kbn_home,
         &kbn_path_conf,
         &cpaths!(kbn_home, "bin"),
@@ -1365,7 +1365,7 @@ fn setup_logstash(
         ])
         .output()?;
 
-    apply_selinux_labels(
+    apply_selinux_labels_to_elastic_package(
         &ls_home,
         &ls_path_conf,
         &cpaths!(ls_home, "bin"),
@@ -1575,7 +1575,7 @@ fn setup_auditbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> e
 
     let ab_home = cpaths!(args.elastic_install_directory, "auditbeat");
 
-    apply_selinux_labels(
+    apply_selinux_labels_to_elastic_package(
         &ab_home,
         &cpaths!(ab_home, "auditbeat.yml"),
         &cpaths!(ab_home, "auditbeat"),
@@ -1653,7 +1653,7 @@ fn setup_filebeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> ey
 
     let fb_home = cpaths!(args.elastic_install_directory, "filebeat");
 
-    apply_selinux_labels(
+    apply_selinux_labels_to_elastic_package(
         &fb_home,
         &cpaths!(fb_home, "filebeat.yml"),
         &cpaths!(fb_home, "filebeat"),
@@ -1785,7 +1785,7 @@ fn setup_packetbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> 
 
     let pb_home = cpaths!(args.elastic_install_directory, "packetbeat");
 
-    apply_selinux_labels(
+    apply_selinux_labels_to_elastic_package(
         &pb_home,
         &cpaths!(pb_home, "packetbeat.yml"),
         &cpaths!(pb_home, "packetbeat"),
@@ -1847,42 +1847,26 @@ output.logstash:
     Ok(())
 }
 
-fn setup_winlogbeat(
-    bb: &Busybox,
-    password: &mut Option<String>,
-    args: &ElkSubcommandArgs,
-) -> eyre::Result<()> {
-    use reqwest::blocking::multipart::{Form, Part};
-
-    println!(
-        "{}",
-        "--- Prepping Elasticsearch for Winlogbeat data".green()
-    );
-
-    let es_password = get_elastic_password(password)?;
-
-    let cert = std::fs::read_to_string(cpaths!(args.elasticsearch_share_directory, "http_ca.crt"))?;
-    let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
-
-    let client = reqwest::blocking::Client::builder()
-        .add_root_certificate(cert)
-        .build()?;
-
-    let public_ip = get_public_ip(bb)?;
-
-    let winlogbeat_zip = std::io::BufReader::new(std::fs::OpenOptions::new().read(true).open(
-        cpaths!(args.elasticsearch_share_directory, "winlogbeat.zip"),
-    )?);
-    let mut archive = zip::read::ZipArchive::new(winlogbeat_zip)?;
-
-    fn visit_template_fields(
+pub fn convert_fields_to_index_template<F>(
+    beat_name: &str,
+    fields_parsed: serde_json::Value,
+    version: &str,
+    mut visit_field: F,
+) -> eyre::Result<serde_json::Value>
+where
+    F: FnMut(&str, &mut serde_json::Value) -> bool,
+{
+    fn visit_template_fields<F>(
+        visit_field: &mut F,
         mappings: &mut serde_json::Map<String, serde_json::Value>,
         analyzer: &mut serde_json::Map<String, serde_json::Value>,
         default_fields: &mut Vec<String>,
         object_chain: Option<&str>,
         default_field: bool,
         field: serde_json::Value,
-    ) {
+    ) where
+        F: FnMut(&str, &mut serde_json::Value) -> bool,
+    {
         use serde_json::Value as V;
 
         // only returns None when object_chain is an empty string or when internal corruption happens
@@ -1937,6 +1921,12 @@ fn setup_winlogbeat(
         m.remove("input_format");
         m.remove("output_format");
         m.remove("output_precision");
+        m.remove("pattern");
+        m.remove(r#"example""#);
+        m.remove("short");
+        m.remove("version");
+        m.remove("title");
+        m.remove("overwrite");
 
         if let Some(V::Array(multi_fields)) = m.remove("multi_fields") {
             let fields = m.entry("fields").or_insert(serde_json::json!({}));
@@ -1980,6 +1970,7 @@ fn setup_winlogbeat(
 
             for field in fields {
                 visit_template_fields(
+                    visit_field,
                     mappings,
                     analyzer,
                     default_fields,
@@ -2031,23 +2022,101 @@ fn setup_winlogbeat(
                 return;
             };
 
-            let new_chain = object_chain.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}"));
+            let new_chain = if name != "" {
+                Some(object_chain.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}")))
+            } else {
+                object_chain.map(str::to_owned)
+            };
 
             for field in fields {
                 visit_template_fields(
+                    visit_field,
                     mappings,
                     analyzer,
                     default_fields,
-                    Some(&new_chain),
+                    new_chain.as_deref(),
                     obj_default_field.unwrap_or(default_field),
                     field,
                 );
             }
         } else {
-            field_entry.or_insert(m.into());
+            let new_chain = object_chain.map_or_else(|| name.to_owned(), |s| format!("{s}.{name}"));
+            let mut obj = m.into();
+            if visit_field(&new_chain, &mut obj) {
+                field_entry.or_insert(obj);
+            }
         }
     }
 
+    let mut mappings = serde_json::Map::new();
+    let mut default_fields = vec![];
+    let mut analyzer = serde_json::Map::default();
+
+    match fields_parsed {
+        serde_json::Value::Array(a) => {
+            for field in a {
+                visit_template_fields(
+                    &mut visit_field,
+                    &mut mappings,
+                    &mut analyzer,
+                    &mut default_fields,
+                    None,
+                    false,
+                    field,
+                );
+            }
+        }
+        _ => {
+            eyre::bail!("Could not parse field mappings file to prepare index template");
+        }
+    }
+
+    default_fields.push("fields.*".into());
+
+    Ok(serde_json::json!({
+        "index_patterns": [format!("{beat_name}-{}", version)],
+        "data_stream": {},
+        "priority": 150,
+        "template": {
+            "settings": {
+                "index": {
+                    "number_of_shards": 1,
+                    "lifecycle": {
+                        "name": &beat_name
+                    },
+                    "mapping": {
+                        "total_fields": {
+                            "limit": 12500
+                        }
+                    },
+                    "max_docvalue_fields_search": 200,
+                    "refresh_interval": "5s",
+                    "query": {
+                        "default_field": default_fields.into_iter().map(serde_json::Value::from).collect::<serde_json::Value>()
+                    }
+                },
+                "analysis": {
+                    "analyzer": analyzer
+                },
+            },
+            "mappings": {
+                "_meta": {
+                    "version": &version,
+                    "beat": &beat_name
+                },
+                "date_detection": false,
+                "dynamic_templates": [],
+                "properties": mappings
+            }
+        }
+    }))
+}
+
+pub fn convert_fields_to_data_view(
+    beat_name: &str,
+    fields_parsed: serde_json::Value,
+    version: &str,
+) -> eyre::Result<serde_json::Value> {
     fn visit_pattern_fields(
         mappings: &mut Vec<serde_json::Value>,
         format_map: &mut serde_json::Map<String, serde_json::Value>,
@@ -2165,105 +2234,6 @@ fn setup_winlogbeat(
         }
     }
 
-    println!("Parsing Winlogbeat metadata...");
-
-    let fields_file = archive.by_name(&format!(
-        "winlogbeat-{}-windows-x86_64/fields.yml",
-        args.elastic_version
-    ))?;
-
-    let mut mappings = serde_json::Map::new();
-    let mut default_fields = vec![];
-    let mut analyzer = serde_json::Map::default();
-
-    let fields_parsed = serde_yaml_ng::from_reader::<_, serde_json::Value>(fields_file)
-        .context("Could not parse basic winlogbeat fields mappings")?;
-
-    println!("Transforming into index template...");
-
-    match fields_parsed.clone() {
-        serde_json::Value::Array(a) => {
-            for field in a {
-                visit_template_fields(
-                    &mut mappings,
-                    &mut analyzer,
-                    &mut default_fields,
-                    None,
-                    false,
-                    field,
-                );
-            }
-        }
-        _ => {
-            eyre::bail!("Could not parse field mappings file to prepare index template");
-        }
-    }
-
-    default_fields.push("fields.*".into());
-
-    let index_template = serde_json::json!({
-        "index_patterns": [format!("winlogbeat-{}", args.elastic_version)],
-        "data_stream": {},
-        "priority": 150,
-        "template": {
-            "settings": {
-                "index": {
-                    "number_of_shards": 1,
-                    "lifecycle": {
-                        "name": "winlogbeat"
-                    },
-                    "mapping": {
-                        "total_fields": {
-                            "limit": 12500
-                        }
-                    },
-                    "max_docvalue_fields_search": 200,
-                    "refresh_interval": "5s",
-                    "query": {
-                        "default_field": default_fields.into_iter().map(serde_json::Value::from).collect::<serde_json::Value>()
-                    }
-                },
-                "analysis": {
-                    "analyzer": analyzer
-                },
-            },
-            "mappings": {
-                "_meta": {
-                    "version": &args.elastic_version,
-                    "beat": "winlogbeat"
-                },
-                "date_detection": false,
-                "dynamic_templates": [],
-                "properties": mappings
-            }
-        }
-    });
-
-    let index_template_body = serde_json::to_string(&index_template)?;
-
-    println!("Uploading index template...");
-
-    let response = client
-        .post(format!(
-            "https://{public_ip}:10200/_index_template/winlogbeat-{}",
-            args.elastic_version
-        ))
-        .basic_auth("elastic", Some(&es_password))
-        .header("content-type", "application/json")
-        .body(index_template_body)
-        .send()
-        .context("Could not contact elasticsearch server")?
-        .json::<serde_json::Value>()
-        .context("Could not parse response from elasticsearch")?;
-
-    if response.get("acknowledged") == Some(&(true.into())) {
-        println!("Successfully uploaded index template!");
-    } else {
-        eyre::bail!("Issues uploading index template: {response}");
-    }
-
-    println!("Done uploading index template! Creating index pattern (data view)...");
-
     let mut field_format_map = serde_json::Map::default();
     let mut fields = Vec::new();
 
@@ -2327,18 +2297,92 @@ fn setup_winlogbeat(
         serde_json::to_string(&field_format_map).context("Could not serialize fieldFormatMap")?;
     let fields = serde_json::to_string(&fields).context("Could not serialize fields")?;
 
-    let index_pattern = serde_json::json!({
-        "id": "winlogbeat-*",
+    Ok(serde_json::json!({
+        "id": format!("{beat_name}-*"),
         "type": "index-pattern",
-        "version": args.elastic_version,
+        "version": version,
         "attributes": {
             "fieldFormatMap": field_format_map,
             "fields": fields,
             "timeFieldName": "@timestamp",
-            "title": "winlogbeat-*"
+            "title": format!("{beat_name}-*")
         }
-    });
+    }))
+}
 
+fn setup_winlogbeat(
+    bb: &Busybox,
+    password: &mut Option<String>,
+    args: &ElkSubcommandArgs,
+) -> eyre::Result<()> {
+    use reqwest::blocking::multipart::{Form, Part};
+
+    println!(
+        "{}",
+        "--- Prepping Elasticsearch for Winlogbeat data".green()
+    );
+
+    let es_password = get_elastic_password(password)?;
+
+    let cert = std::fs::read_to_string(cpaths!(args.elasticsearch_share_directory, "http_ca.crt"))?;
+    let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
+
+    let client = reqwest::blocking::Client::builder()
+        .add_root_certificate(cert)
+        .build()?;
+
+    let public_ip = get_public_ip(bb)?;
+
+    let winlogbeat_zip = std::io::BufReader::new(std::fs::OpenOptions::new().read(true).open(
+        cpaths!(args.elasticsearch_share_directory, "winlogbeat.zip"),
+    )?);
+    let mut archive = zip::read::ZipArchive::new(winlogbeat_zip)?;
+
+    println!("Parsing Winlogbeat metadata...");
+
+    let fields_file = archive.by_name(&format!(
+        "winlogbeat-{}-windows-x86_64/fields.yml",
+        args.elastic_version
+    ))?;
+
+    let fields_parsed = serde_yaml_ng::from_reader::<_, serde_json::Value>(fields_file)
+        .context("Could not parse basic winlogbeat fields mappings")?;
+
+    println!("Transforming into index template...");
+
+    let index_template = convert_fields_to_index_template(
+        "winlogbeat",
+        fields_parsed.clone(),
+        &args.elastic_version,
+        |_, _| true,
+    )?;
+    let index_template_body = serde_json::to_string(&index_template)?;
+
+    println!("Uploading index template...");
+
+    let response = client
+        .post(format!(
+            "https://{public_ip}:10200/_index_template/winlogbeat-{}",
+            args.elastic_version
+        ))
+        .basic_auth("elastic", Some(&es_password))
+        .header("content-type", "application/json")
+        .body(index_template_body)
+        .send()
+        .context("Could not contact elasticsearch server")?
+        .json::<serde_json::Value>()
+        .context("Could not parse response from elasticsearch")?;
+
+    if response.get("acknowledged") == Some(&(true.into())) {
+        println!("Successfully uploaded index template!");
+    } else {
+        eyre::bail!("Issues uploading index template: {response}");
+    }
+
+    println!("Done uploading index template! Creating index pattern (data view)...");
+
+    let index_pattern =
+        convert_fields_to_data_view("winlogbeat", fields_parsed, &args.elastic_version)?;
     let index_pattern_body = serde_json::to_string(&index_pattern)?;
 
     println!("Uploading index pattern...");
@@ -2589,7 +2633,7 @@ fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
     for pkg in ["filebeat", "auditbeat", "packetbeat"] {
         let dest_path = cpaths!(args.elastic_install_directory, pkg);
 
-        apply_selinux_labels(
+        apply_selinux_labels_to_elastic_package(
             &dest_path,
             &cpaths!(dest_path, &format!("{pkg}.yml")),
             &cpaths!(dest_path, pkg),
