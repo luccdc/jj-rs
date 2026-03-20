@@ -156,6 +156,10 @@ impl super::Command for SiemSetup {
                 use_download_shell: self.use_download_shell,
                 wazuh_version: self.wazuh_version,
                 working_dir: self.wazuh_working_dir,
+                independent_logstash_install: false,
+                beats_download_url: "https://artifacts.elastic.co/downloads/beats".into(),
+                download_url: "https://artifacts.elastic.co/downloads".into(),
+                public_nat_ip: self.nat_ip,
             }),
         }
         .execute_pipeline(&distro, &busybox, &wazuh_pass, &elastic_pass)?;

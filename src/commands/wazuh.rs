@@ -1,5 +1,5 @@
 use std::{
-    io::Write,
+    io::{Read, Write},
     net::Ipv4Addr,
     os::unix::fs::{PermissionsExt, chown},
     path::PathBuf,
@@ -40,6 +40,10 @@ pub struct WazuhSubcommandArgs {
     #[arg(long, short = 'I')]
     pub sneaky_ip: Option<Ipv4Addr>,
 
+    /// Install Logstash and download beats, but configure Logstash only to point towards Wazuh's opensearch. This will also attempt to set up all the ingest pipelines, index templates, and data views used by beats. This option will enable the Wazuh server to act like an ELK 9 compliant server
+    #[arg(long, short = 'i')]
+    pub independent_logstash_install: bool,
+
     /// Where will temporary files be downloaded and extracted
     #[arg(long, short = 'w', default_value = "/tmp/wazuh-working-dir")]
     pub working_dir: PathBuf,
@@ -55,6 +59,18 @@ pub struct WazuhSubcommandArgs {
     /// The version of ELK that this Wazuh setup is being designed to cooperate with
     #[arg(long, short = 'S', default_value = "9.3.0")]
     pub jj_elastic_version: String,
+
+    /// URL to download Logstash from; used when setting up independent logstash
+    #[arg(long, default_value = "https://artifacts.elastic.co/downloads")]
+    pub download_url: String,
+
+    /// URL to download Auditbeat, Filebeat, Packetbeat, Metricbeat, and Winlogbeat from; used when setting up independent logstash
+    #[arg(long, default_value = "https://artifacts.elastic.co/downloads/beats")]
+    pub beats_download_url: String,
+
+    /// Public NAT IP for Wazuh and Logstash
+    #[arg(long, short = 'N')]
+    pub public_nat_ip: Option<Ipv4Addr>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -107,7 +123,7 @@ pub enum WazuhCommands {
     #[command(visible_alias = "ip")]
     ImportPipelines(WazuhSubcommandArgs),
 
-    /// Configure jj-logstash to install the opensearch output plugin and copy data to Wazuh's opensearch instance
+    /// Configure jj-logstash to install the opensearch output plugin and copy data to Wazuh's opensearch instance. If `independent-logstash-install` is specified, this will install logstash configured only to point to Wazuh
     #[command(visible_alias = "fl")]
     ForwardJjLogstash(WazuhSubcommandArgs),
 }
@@ -169,15 +185,17 @@ impl super::Command for Wazuh {
 
         let mut elastic_pass = String::new();
 
-        if let WC::Install(_) | WC::ImportPipelines(_) = &self.command {
-            print!("Enter the password for the Elastic user (leave empty if not installed): ");
-            std::io::stdout()
-                .flush()
-                .context("Could not display password prompt")?;
-            std::io::stdin()
-                .read_line(&mut elastic_pass)
-                .context("Could not read password from user")?;
-            elastic_pass = elastic_pass.trim().to_string();
+        if let WC::Install(args) | WC::ImportPipelines(args) = &self.command {
+            if !args.independent_logstash_install {
+                print!("Enter the password for the Elastic user (leave empty if not installed): ");
+                std::io::stdout()
+                    .flush()
+                    .context("Could not display password prompt")?;
+                std::io::stdin()
+                    .read_line(&mut elastic_pass)
+                    .context("Could not read password from user")?;
+                elastic_pass = elastic_pass.trim().to_string();
+            }
         }
 
         self.execute_pipeline(&distro, &busybox, &new_pass, &elastic_pass)
@@ -201,7 +219,7 @@ impl Wazuh {
         }
 
         if let WC::Install(args) | WC::MakeWorkingDirectory(args) = &self.command {
-            make_working_dir(&args)?;
+            make_working_dirs(&args)?;
         }
 
         if let WC::Install(args) | WC::DownloadFiles(args) = &self.command {
@@ -237,11 +255,19 @@ impl Wazuh {
         }
 
         if let WC::Install(args) | WC::ImportPipelines(args) = &self.command {
-            import_pipelines(busybox, args, new_pass, elastic_pass)?;
+            if !args.independent_logstash_install {
+                import_pipelines(busybox, args, new_pass, elastic_pass)?;
+            } else {
+                import_direct_from_beats(busybox, args, new_pass)?;
+            }
         }
 
         if let WC::Install(args) | WC::ForwardJjLogstash(args) = &self.command {
-            forward_jj_logstash(busybox, args, new_pass)?;
+            if !args.independent_logstash_install {
+                forward_jj_logstash(busybox, args, new_pass)?;
+            } else {
+                install_jj_logstash(busybox, args, new_pass)?;
+            }
         }
 
         if let WC::Install(args) = &self.command {
@@ -281,8 +307,13 @@ fn setup_zram() -> eyre::Result<()> {
     Ok(())
 }
 
-fn make_working_dir(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
+fn make_working_dirs(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
     std::fs::create_dir_all(&args.working_dir)?;
+
+    if args.independent_logstash_install {
+        std::fs::create_dir_all(&args.jj_elastic_location)?;
+        std::fs::create_dir_all(&args.jj_elastic_share_location)?;
+    }
 
     println!("{}", "--- Working directory made".green());
 
@@ -327,6 +358,93 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
             .wait()
             .context("Could not wait for command to finish")?;
 
+        println!("{}", "--- Successfully downloaded Wazuh files!".green());
+
+        if args.independent_logstash_install {
+            println!("--- Downloading ELK packages... (Logstash + beats)");
+
+            let mut download_threads = vec![];
+
+            let download_package = {
+                let mut dest_path = args.jj_elastic_share_location.clone();
+                let url = format!(
+                    "{}/logstash/logstash-{}-linux-x86_64.tar.gz",
+                    args.download_url, args.jj_elastic_version
+                );
+                move || {
+                    dest_path.push(format!("logstash.tar.gz"));
+                    let res = download_file(&url, dest_path);
+                    println!("Done downloading logstash!");
+                    res
+                }
+            };
+            if args.use_download_shell {
+                download_package()?;
+            } else {
+                download_threads.push(std::thread::spawn(download_package));
+            }
+
+            for beat in ["auditbeat", "filebeat", "packetbeat"] {
+                let download_package = {
+                    let url = format!(
+                        "{}/{}/{}-{}-linux-x86_64.tar.gz",
+                        args.beats_download_url, beat, beat, args.jj_elastic_version
+                    );
+                    let mut dest_path = args.jj_elastic_share_location.clone();
+                    let beat = beat.to_string();
+
+                    move || {
+                        dest_path.push(format!("{beat}.tar.gz"));
+                        let res = download_file(&url, dest_path);
+                        println!("Done downloading {beat} for Linux!");
+                        res
+                    }
+                };
+                if args.use_download_shell {
+                    download_package()?;
+                } else {
+                    download_threads.push(std::thread::spawn(download_package));
+                }
+            }
+
+            for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+                let download_package = {
+                    let mut dest_path = args.jj_elastic_share_location.clone();
+                    let url = format!(
+                        "{}/{}/{}-{}-windows-x86_64.zip",
+                        args.beats_download_url, beat, beat, args.jj_elastic_version
+                    );
+                    let beat = beat.to_string();
+
+                    move || {
+                        dest_path.push(format!("{beat}.zip"));
+                        let res = download_file(&url, dest_path);
+                        println!("Done downloading {beat} for Windows!");
+                        res
+                    }
+                };
+                if args.use_download_shell {
+                    download_package()?;
+                } else {
+                    download_threads.push(std::thread::spawn(download_package));
+                }
+            }
+
+            for thread in download_threads {
+                match thread.join() {
+                    Ok(r) => r?,
+                    Err(_) => {
+                        eprintln!(
+                            "{}",
+                            "!!! Could not join download thread due to panic!".red()
+                        );
+                    }
+                }
+            }
+
+            println!("{}", "--- Successfully downloaded ELK packages!".green());
+        }
+
         Ok(())
     };
 
@@ -337,8 +455,6 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
     } else {
         download_files_internal()?;
     }
-
-    println!("{}", "--- Successfully downloaded Wazuh files!".green());
 
     Ok(())
 }
@@ -761,7 +877,8 @@ fn install_filebeat(args: &WazuhSubcommandArgs, distro: &Distro, bb: &Busybox) -
     let mut filebeat_config = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&filebeat_config)
         .context("Could not parse filebeat configuration")?;
 
-    if let Value::Mapping(top) = &mut filebeat_config
+    if !args.independent_logstash_install
+        && let Value::Mapping(top) = &mut filebeat_config
         && let Some(Value::Sequence(modules)) = top.get_mut("filebeat.modules")
         && let Some(Value::Mapping(wazuh)) = modules.get_mut(0)
         && let Some(Value::Mapping(archives)) = wazuh.get_mut("archives")
@@ -1003,6 +1120,111 @@ fn rotate_credentials(new_pass: &str) -> eyre::Result<()> {
     Ok(())
 }
 
+fn translate_pipeline_elk_to_wazuh(
+    pipeline: &mut serde_json::Map<String, serde_json::Value>,
+) -> eyre::Result<()> {
+    pipeline.remove("created_date_millis");
+    pipeline.remove("modified_date_millis");
+
+    let Some(serde_json::Value::Array(processors)) = pipeline.remove("processors") else {
+        eyre::bail!("Could not find processors");
+    };
+
+    fn handle_processor(processor: serde_json::Value) -> Option<serde_json::Value> {
+        use serde_json::Value as V;
+
+        let V::Object(mut processor) = processor else {
+            return Some(processor);
+        };
+
+        if let Some(V::Object(community_id)) = processor.get_mut("community_id") {
+            if let Some(source) = community_id.remove("source_ip") {
+                community_id.insert("source_ip_field".into(), source);
+            } else {
+                community_id.insert("source_ip_field".into(), "source.ip".into());
+            }
+
+            if let Some(source) = community_id.remove("source_port") {
+                community_id.insert("source_port_field".into(), source);
+            } else {
+                community_id.insert("source_port_field".into(), "source.port".into());
+            }
+
+            if let Some(destination) = community_id.remove("destination_ip") {
+                community_id.insert("destination_ip_field".into(), destination);
+            } else {
+                community_id.insert("destination_ip_field".into(), "destination.ip".into());
+            }
+
+            if let Some(destination) = community_id.remove("destination_port") {
+                community_id.insert("destination_port_field".into(), destination);
+            } else {
+                community_id.insert("destination_port_field".into(), "destination.port".into());
+            }
+        }
+
+        if let Some(V::Object(_)) = processor.get("uri_parts") {
+            return None;
+        }
+
+        if let Some(V::Object(m)) = processor.get("registered_domain") {
+            let field = m.get("field")?;
+            let target_field = m.get("target_field")?;
+
+            return Some(serde_json::json!({
+                "copy": {
+                    "source_field": field,
+                    "target_field": target_field,
+                    "ignore_missing": true
+                }
+            }));
+        }
+
+        if let Some(V::Object(set)) = processor.get("set")
+            && let Some(V::String(copy_from)) = set.get("copy_from")
+            && let Some(V::String(field)) = set.get("field")
+        {
+            let ignore_failure = set
+                .get("ignore_failure")
+                .and_then(V::as_bool)
+                .unwrap_or_default();
+
+            return Some(serde_json::json!({
+                "copy": {
+                    "source_field": copy_from,
+                    "target_field": field,
+                    "ignore_missing": ignore_failure
+                }
+            }));
+        }
+
+        for (_, proc_obj) in processor.iter_mut() {
+            if let V::Object(p) = proc_obj
+                && let Some(V::Array(on_failure)) = p.remove("on_failure")
+            {
+                p.insert(
+                    "on_failure".into(),
+                    on_failure
+                        .into_iter()
+                        .filter_map(handle_processor)
+                        .collect::<V>(),
+                );
+            }
+        }
+
+        Some(V::Object(processor))
+    }
+
+    let processors = processors
+        .into_iter()
+        .filter_map(handle_processor)
+        .collect::<serde_json::Value>();
+
+    pipeline.insert("processors".into(), processors);
+
+    Ok(())
+}
+
 fn import_pipelines(
     bb: &Busybox,
     args: &WazuhSubcommandArgs,
@@ -1096,104 +1318,9 @@ fn import_pipelines(
             continue;
         };
 
-        pipeline.remove("created_date_millis");
-        pipeline.remove("modified_date_millis");
-
-        let Some(serde_json::Value::Array(processors)) = pipeline.remove("processors") else {
+        if translate_pipeline_elk_to_wazuh(pipeline).is_err() {
             continue;
-        };
-
-        fn handle_processor(processor: serde_json::Value) -> Option<serde_json::Value> {
-            use serde_json::Value as V;
-
-            let V::Object(mut processor) = processor else {
-                return Some(processor);
-            };
-
-            if let Some(V::Object(community_id)) = processor.get_mut("community_id") {
-                if let Some(source) = community_id.remove("source_ip") {
-                    community_id.insert("source_ip_field".into(), source);
-                } else {
-                    community_id.insert("source_ip_field".into(), "source.ip".into());
-                }
-
-                if let Some(source) = community_id.remove("source_port") {
-                    community_id.insert("source_port_field".into(), source);
-                } else {
-                    community_id.insert("source_port_field".into(), "source.port".into());
-                }
-
-                if let Some(destination) = community_id.remove("destination_ip") {
-                    community_id.insert("destination_ip_field".into(), destination);
-                } else {
-                    community_id.insert("destination_ip_field".into(), "destination.ip".into());
-                }
-
-                if let Some(destination) = community_id.remove("destination_port") {
-                    community_id.insert("destination_port_field".into(), destination);
-                } else {
-                    community_id.insert("destination_port_field".into(), "destination.port".into());
-                }
-            }
-
-            if let Some(V::Object(_)) = processor.get("uri_parts") {
-                return None;
-            }
-
-            if let Some(V::Object(m)) = processor.get("registered_domain") {
-                let field = m.get("field")?;
-                let target_field = m.get("target_field")?;
-
-                return Some(serde_json::json!({
-                    "copy": {
-                        "source_field": field,
-                        "target_field": target_field,
-                        "ignore_missing": true
-                    }
-                }));
-            }
-
-            if let Some(V::Object(set)) = processor.get("set")
-                && let Some(V::String(copy_from)) = set.get("copy_from")
-                && let Some(V::String(field)) = set.get("field")
-            {
-                let ignore_failure = set
-                    .get("ignore_failure")
-                    .and_then(V::as_bool)
-                    .unwrap_or_default();
-
-                return Some(serde_json::json!({
-                    "copy": {
-                        "source_field": copy_from,
-                        "target_field": field,
-                        "ignore_missing": ignore_failure
-                    }
-                }));
-            }
-
-            for (_, proc_obj) in processor.iter_mut() {
-                if let V::Object(p) = proc_obj
-                    && let Some(V::Array(on_failure)) = p.remove("on_failure")
-                {
-                    p.insert(
-                        "on_failure".into(),
-                        on_failure
-                            .into_iter()
-                            .filter_map(handle_processor)
-                            .collect::<V>(),
-                    );
-                }
-            }
-
-            Some(V::Object(processor))
         }
-
-        let processors = processors
-            .into_iter()
-            .filter_map(handle_processor)
-            .collect::<serde_json::Value>();
-
-        pipeline.insert("processors".into(), processors);
 
         let Ok(pipeline_json) = serde_json::to_string(&pipeline) else {
             continue;
@@ -1223,6 +1350,266 @@ fn import_pipelines(
     }
 
     println!("{}", "--- Successfully imported pipelines!".green());
+
+    Ok(())
+}
+
+fn import_direct_from_beats(
+    bb: &Busybox,
+    args: &WazuhSubcommandArgs,
+    wazuh_password: &str,
+) -> eyre::Result<()> {
+    println!("--- Importing beats configuration directly");
+
+    let cert = std::fs::read_to_string("/etc/wazuh-indexer/certs/root-ca.pem")?;
+    let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
+
+    let client = reqwest::blocking::Client::builder()
+        .add_root_certificate(cert)
+        .build()?;
+
+    let public_ip = get_public_ip(bb)?;
+
+    for beat in [
+        "auditbeat",
+        "packetbeat",
+        "filebeat",
+        "metricbeat",
+        "winlogbeat",
+    ] {
+        let (ingest_pipelines, fields) = if beat == "winlogbeat" {
+            let zip = std::io::BufReader::new(
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .open(args.jj_elastic_share_location.join("winlogbeat.zip"))?,
+            );
+            let mut zip = zip::read::ZipArchive::new(zip)?;
+
+            let fields = {
+                let mut fields = zip.by_name(&format!(
+                    "winlogbeat-{}-windows-x86_64/fields.yml",
+                    args.jj_elastic_version
+                ))?;
+                let mut fields_string = String::new();
+                fields.read_to_string(&mut fields_string)?;
+                fields_string
+            };
+
+            let mut ingest_pipelines = vec![];
+
+            for i in 0..zip.len() {
+                let mut file = match zip.by_index(i) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Could not search for winlogbeat ingest pipeline: {e}");
+                        continue;
+                    }
+                };
+
+                if file.is_dir() {
+                    continue;
+                }
+
+                let file_name = file.name().to_owned();
+
+                if !file_name.ends_with(".yml") || !file_name.contains("ingest") {
+                    continue;
+                }
+
+                let Some(pipeline_name) = file_name.strip_suffix(".yml") else {
+                    continue;
+                };
+                let Some(sep_idx) = pipeline_name.rfind("/") else {
+                    continue;
+                };
+
+                let mut ingest_string = String::new();
+                file.read_to_string(&mut ingest_string)?;
+
+                ingest_pipelines.push((pipeline_name[sep_idx + 1..].to_string(), ingest_string));
+            }
+
+            (ingest_pipelines, fields)
+        } else {
+            let gzip = std::io::BufReader::new(
+                std::fs::OpenOptions::new().read(true).open(
+                    args.jj_elastic_share_location
+                        .join(format!("{beat}.tar.gz")),
+                )?,
+            );
+            let mut archive = tar::Archive::new(flate2::bufread::GzDecoder::new(gzip));
+
+            let mut ingest_pipelines = vec![];
+
+            let mut fields = None;
+
+            for entry in archive.entries()? {
+                let mut entry = match entry {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Could not search for {beat} ingest pipeline: {e}");
+                        continue;
+                    }
+                };
+
+                let Some(path) = entry
+                    .path()
+                    .ok()
+                    .and_then(|p| p.to_str().map(str::to_owned))
+                else {
+                    continue;
+                };
+
+                if path == format!("{beat}-{}-linux-x86_64/fields.yml", args.jj_elastic_version) {
+                    let mut fields_string = String::new();
+                    entry
+                        .read_to_string(&mut fields_string)
+                        .context("Could not read fields.yml from beat")?;
+                    fields = Some(fields_string);
+                } else if path.contains("ingest") && path.ends_with(".yml") {
+                    let mut pipeline_string = String::new();
+                    if let Err(e) = entry.read_to_string(&mut pipeline_string) {
+                        eprintln!("Error reading ingest pipeline from archive: {e}");
+                    } else {
+                        let Some(pipeline_name) = path.strip_suffix(".yml") else {
+                            continue;
+                        };
+                        let Some(sep_idx) = pipeline_name.rfind("/") else {
+                            continue;
+                        };
+                        ingest_pipelines
+                            .push((pipeline_name[sep_idx + 1..].to_string(), pipeline_string));
+                    }
+                }
+            }
+
+            (
+                ingest_pipelines,
+                fields.ok_or(eyre::eyre!("Did not find fields.yml for {beat}!"))?,
+            )
+        };
+
+        let fields = serde_yaml_ng::from_str::<serde_json::Value>(&fields)
+            .context(format!("Could not parse fields.yml for {beat}"))?;
+
+        let mut index_template = super::elk::convert_fields_to_index_template(
+            &beat,
+            fields.clone(),
+            &args.jj_elastic_version,
+            |p, m| {
+                if p.is_empty() {
+                    return false;
+                }
+
+                let serde_json::Value::Object(m) = m else {
+                    return false;
+                };
+
+                if m.get("deprecated").is_some() {
+                    return false;
+                }
+
+                m.remove("fields");
+                m.remove("unit");
+                m.remove("metric_type");
+                m.remove("definition");
+                m.remove("release");
+                m.remove("formate");
+                m.remove("dimension");
+                m.remove("descriprtion");
+                m.remove("decsription");
+
+                if m.get("type").and_then(serde_json::Value::as_str) == Some("flattened") {
+                    m.insert("type".into(), "object".into());
+                }
+                if m.get("type").and_then(serde_json::Value::as_str) == Some("constant_keyword") {
+                    m.insert("type".into(), "keyword".into());
+                }
+
+                if m.get("type").and_then(serde_json::Value::as_str) == Some("scaled_float")
+                    && m.get("scaling_factor").is_none()
+                {
+                    m.insert("scaling_factor".into(), 1000.into());
+                }
+
+                if m.get("type").and_then(serde_json::Value::as_str) == Some("array") {
+                    return false;
+                }
+
+                if !matches!(
+                    m.get("type").and_then(serde_json::Value::as_str),
+                    Some("keyword" | "text")
+                ) {
+                    m.remove("ignore_above");
+                }
+
+                true
+            },
+        )?;
+
+        if let Some(serde_json::Value::Object(m)) = index_template
+            .get_mut("template")
+            .and_then(|t| t.get_mut("settings"))
+            .and_then(|s| s.get_mut("index"))
+        {
+            m.remove("lifecycle");
+        }
+
+        let index_template_body = serde_json::to_string(&index_template)?;
+
+        let response = client
+            .post(format!(
+                "https://{public_ip}:9200/_index_template/{beat}-{}",
+                args.jj_elastic_version
+            ))
+            .basic_auth("admin", Some(&wazuh_password))
+            .header("content-type", "application/json")
+            .body(index_template_body.clone())
+            .send()
+            .context("Could not contact opensearch server")?
+            .json::<serde_json::Value>()
+            .context("Could not parse response from opensearch")?;
+
+        if let Some(e) = response.get("error") {
+            println!("{index_template_body}");
+
+            eyre::bail!("{e}");
+        }
+
+        println!("Successfully imported {beat} index template!");
+
+        for (name, ingest_pipeline) in ingest_pipelines {
+            let mut ingest_pipeline =
+                match serde_yaml_ng::from_str::<serde_json::Value>(&ingest_pipeline) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Could not process ingest pipeline for {beat}: {e}");
+                        continue;
+                    }
+                };
+
+            if let Some(serde_json::Value::Array(processors)) =
+                ingest_pipeline.get_mut("processors")
+            {
+                for processor in processors {
+                    if let Some(pipeline) = processor.get_mut("pipeline")
+                        && let Some(name) = pipeline.get_mut("name")
+                        && let serde_json::Value::String(name) = name
+                        && let Some(inner_name) = name
+                            .strip_suffix("\" >}")
+                            .and_then(|s| s.strip_prefix("{< IngestPipeline \""))
+                    {
+                        *name = format!("{beat}-{}-{inner_name}", args.jj_elastic_version);
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "{}",
+        "--- Successfully imported beats configuration!".green()
+    );
 
     Ok(())
 }
@@ -1343,6 +1730,14 @@ fn forward_jj_logstash(
         "--- Successfully configured logstash to duplicate records to Wazuh!".green()
     );
 
+    Ok(())
+}
+
+fn install_jj_logstash(
+    bb: &Busybox,
+    args: &WazuhSubcommandArgs,
+    wazuh_password: &str,
+) -> eyre::Result<()> {
     Ok(())
 }
 
