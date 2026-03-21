@@ -6,7 +6,7 @@ fn main() -> std::io::Result<()> {
         let mut dashboard_dir = current_dir()?;
         dashboard_dir.push("src/commands/elk/dashboards");
 
-        let include_macros = read_dir(&dashboard_dir)?
+        let mut include_macros = read_dir(&dashboard_dir)?
             .filter_map(Result::ok)
             .map(|d| {
                 let mut dashboard_file = dashboard_dir.clone();
@@ -14,6 +14,8 @@ fn main() -> std::io::Result<()> {
                 format!(r#"include_bytes!("{}")"#, dashboard_file.display())
             })
             .collect::<Vec<_>>();
+
+        include_macros.sort();
 
         std::fs::write(
             format!(
