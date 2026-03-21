@@ -230,6 +230,25 @@ pub fn scan_web_files(out: &mut impl PagerOutput, root: &str, extended_scan: boo
     let shell_regex = Regex::new(
     r"(?i)(?:[s$][^a-zA-Z0-9]{0,2}[h][^a-zA-Z0-9]{0,2}[e3][^a-zA-Z0-9]{0,2}[l1][^a-zA-Z0-9]{0,2}[l1]|p[^a-zA-Z0-9]{0,2}[o0][^a-zA-Z0-9]{0,2}ny|b374k|c99|r57|backd[o0]{2}r)"
     ).unwrap();
+
+    let exec_regex = Regex::new(
+    r"(?i)(system|exec|shell_exec|passthru|popen|proc_open)\s*\("
+    ).unwrap();
+
+    let input_regex = Regex::new(
+    r"(?i)\$_(GET|POST|REQUEST|COOKIE|SERVER)"
+    ).unwrap();
+
+// Strong indicator: execution using user input
+    let webshell_combo_regex = Regex::new(
+    r"(?i)(system|exec|shell_exec|passthru|popen|proc_open)\s*\([^)]*\$_(GET|POST|REQUEST|COOKIE|SERVER)"
+    ).unwrap();
+
+// Obfuscation / encoding tricks
+    let obfuscation_regex = Regex::new(
+    r"(?i)(base64_decode\s*\(|gzinflate\s*\(|str_rot13\s*\(|eval\s*\()"
+    ).unwrap();
+    
     // 3. Walk the directory
     for entry in WalkDir::new(clean_root).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
@@ -263,9 +282,25 @@ pub fn scan_web_files(out: &mut impl PagerOutput, root: &str, extended_scan: boo
 
                 // If the name isn't suspicious, but the -e flag is passed, scan the content
                 if !is_sus && extended_scan {
-                    // read_to_string ignores non-UTF8 binary files gracefully by returning an Err
                     if let Ok(content) = fs::read_to_string(path) {
-                        is_sus = content_sigs.iter().any(|&sig| content.contains(sig));
+                        let content_lower = content.to_lowercase();
+
+                        // 1. Strong direct match (best signal)
+                        if webshell_combo_regex.is_match(&content_lower) {
+                            is_sus = true;
+                        }
+                        // 2. Execution functions alone (medium signal)
+                        else if exec_regex.is_match(&content_lower) && input_regex.is_match(&content_lower) {
+                            is_sus = true;
+                        }
+                        // 3. Obfuscation patterns
+                        else if obfuscation_regex.is_match(&content_lower) {
+                            is_sus = true;
+                        }
+                        // 4. Fallback to your original signatures
+                        else {
+                            is_sus = content_sigs.iter().any(|&sig| content_lower.contains(sig));
+                        }
                     }
                 }
 
