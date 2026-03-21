@@ -1300,18 +1300,25 @@ fn load_kibana_dashboards(
     let client = Client::builder().add_root_certificate(root_cert).build()?;
 
     for (i, dash) in KIBANA_DASHBOARDS.iter().enumerate() {
-        println!("Importing dashboard {}...", i + 1);
+        print!("Importing dashboard {}...", i + 1);
 
         let part = Part::bytes(*dash).file_name("input.ndjson");
         let form = Form::new().part("file", part);
 
-        client
+        let response = client
             .post("https://localhost:5601/api/saved_objects/_import?overwrite=true")
             .basic_auth("elastic", Some(elastic_password.clone()))
             .header("kbn-xsrf", "true")
-            .header("content-type", "application/ndjson")
             .multipart(form)
-            .send()?;
+            .send()?
+            .json::<serde_json::Value>()?;
+
+        if response.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+            println!(" {}", "Success".green());
+        } else {
+            println!(" Error importing dashboard!");
+            dbg!(response);
+        }
     }
 
     println!("{}", "--- Kibana dashboards loaded!".green());
