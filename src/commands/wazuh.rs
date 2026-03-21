@@ -1,4 +1,5 @@
 use std::{
+    fs::Permissions,
     io::{Read, Write},
     net::Ipv4Addr,
     os::unix::fs::{PermissionsExt, chown},
@@ -71,6 +72,10 @@ pub struct WazuhSubcommandArgs {
     /// Public NAT IP for Wazuh and Logstash
     #[arg(long, short = 'N')]
     pub public_nat_ip: Option<Ipv4Addr>,
+
+    /// Don't install Suricata when installing beats
+    #[arg(long, short = 'S')]
+    pub dont_install_suricata: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -126,6 +131,10 @@ pub enum WazuhCommands {
     /// Configure jj-logstash to install the opensearch output plugin and copy data to Wazuh's opensearch instance. If `independent-logstash-install` is specified, this will install logstash configured only to point to Wazuh
     #[command(visible_alias = "fl")]
     ForwardJjLogstash(WazuhSubcommandArgs),
+
+    /// Install jj beats to forward to local logstash. Only works and is run with `independent-logstash-install` explicitly set
+    #[command(visible_alias = "beat")]
+    InstallBeats(WazuhSubcommandArgs),
 }
 
 /// Install, configure, and manage Wazuh on this server
@@ -263,11 +272,20 @@ impl Wazuh {
         }
 
         if let WC::Install(args) | WC::ForwardJjLogstash(args) = &self.command {
-            if !args.independent_logstash_install {
-                forward_jj_logstash(busybox, args, new_pass)?;
-            } else {
-                install_jj_logstash(busybox, args, new_pass)?;
+            if args.independent_logstash_install {
+                install_jj_logstash(busybox, args)?;
             }
+            forward_jj_logstash(busybox, args, new_pass)?;
+        }
+
+        if let WC::Install(args) = &self.command
+            && args.independent_logstash_install
+        {
+            install_beats(busybox, args)?;
+        }
+
+        if let WC::InstallBeats(args) = &self.command {
+            install_beats(busybox, args)?;
         }
 
         if let WC::Install(args) = &self.command {
@@ -1591,6 +1609,7 @@ fn import_direct_from_beats(
             .and_then(|s| s.get_mut("index"))
         {
             m.remove("lifecycle");
+            m.insert("max_docvalue_fields_search".into(), 1000.into());
         }
 
         let index_template_body = serde_json::to_string(&index_template)?;
@@ -1645,6 +1664,14 @@ fn import_direct_from_beats(
                     }
                 };
 
+            let module_name = {
+                let mut name_parts = name.rsplit('-');
+                name_parts.next();
+                let mut module_name = name_parts.collect::<Vec<_>>();
+                module_name.reverse();
+                module_name.join("-")
+            };
+
             let serde_json::Value::Object(mut ingest_pipeline) = ingest_pipeline else {
                 continue;
             };
@@ -1660,7 +1687,14 @@ fn import_direct_from_beats(
                             .strip_suffix("\" >}")
                             .and_then(|s| s.strip_prefix("{< IngestPipeline \""))
                     {
-                        *name = format!("{beat}-{}-{inner_name}", args.jj_elastic_version);
+                        if module_name.is_empty() {
+                            *name = format!("{beat}-{}-{inner_name}", args.jj_elastic_version);
+                        } else {
+                            *name = format!(
+                                "{beat}-{}-{module_name}-{inner_name}",
+                                args.jj_elastic_version
+                            );
+                        }
                     }
                 }
             }
@@ -1857,11 +1891,349 @@ fn forward_jj_logstash(
     Ok(())
 }
 
-fn install_jj_logstash(
-    bb: &Busybox,
-    args: &WazuhSubcommandArgs,
-    wazuh_password: &str,
-) -> eyre::Result<()> {
+fn install_jj_logstash(bb: &Busybox, args: &WazuhSubcommandArgs) -> eyre::Result<()> {
+    println!("--- Installing and configuring logstash...");
+
+    let public_ip = get_public_ip(bb)?;
+
+    super::elk::untar_package(
+        args.jj_elastic_share_location.join("logstash.tar.gz"),
+        format!("logstash-{}", args.jj_elastic_version),
+        args.jj_elastic_location.join("logstash"),
+    )?;
+
+    println!("Extracted package");
+
+    let ls_home = args.jj_elastic_location.join("logstash");
+    let ls_path_conf = ls_home.join("config");
+
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-logstash.service",
+        super::elk::LOGSTASH_SERVICE
+            .replace("$LS_HOME", &format!("{}", ls_home.display()))
+            .replace("$LS_PATH_CONF", &format!("{}", ls_path_conf.display())),
+    )
+    .context("Could not write systemd service for logstash")?;
+
+    println!("Creating user and group...");
+
+    bb.command("addgroup")
+        .args(["-S", "jj-logstash"])
+        .output()?;
+
+    bb.command("adduser")
+        .args([
+            "-h",
+            "/nonexistent",
+            "-G",
+            "jj-logstash",
+            "-S",
+            "-H",
+            "-D",
+            "jj-logstash",
+        ])
+        .output()?;
+
+    super::elk::apply_selinux_labels_to_elastic_package(
+        &ls_home,
+        &ls_path_conf,
+        &ls_home.join("bin"),
+        &ls_home.join("data"),
+    )?;
+
+    println!("Configuring TLS for Logstash...");
+    let (ca_crt, ls_crt, ls_privkey) = {
+        use rcgen::{
+            BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, PKCS_ECDSA_P256_SHA256,
+        };
+
+        let ca_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
+        let ls_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
+
+        let ips = Some(public_ip.to_string())
+            .into_iter()
+            .chain(args.public_nat_ip.as_ref().map(Ipv4Addr::to_string))
+            .collect::<Vec<_>>();
+
+        let mut ca_params = CertificateParams::new(ips.clone())?;
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+
+        let ca_crt = ca_params.self_signed(&ca_pair)?;
+
+        let ls_params = CertificateParams::new(ips)?;
+        let ls_cert = ls_params.signed_by(&ls_pair, &Issuer::new(ca_params, ca_pair))?;
+
+        (ca_crt.pem(), ls_cert.pem(), ls_pair.serialize_pem())
+    };
+
+    std::fs::write(args.jj_elastic_share_location.join("http_ca.crt"), ca_crt)?;
+    std::fs::write(ls_path_conf.join("logstash.crt"), ls_crt)?;
+    std::fs::write(ls_path_conf.join("logstash.key"), ls_privkey)?;
+
+    let logstash_user = passwd::load_users("jj-logstash")
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .map(|v| v.uid)
+        .map(|v| v.into());
+    let logstash_group = passwd::load_groups("jj-logstash")
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .map(|v| v.gid)
+        .map(|v| v.into());
+
+    let dir_perms: Permissions = PermissionsExt::from_mode(0o700);
+    let file_perms: Permissions = PermissionsExt::from_mode(0o700);
+
+    for entry in walkdir::WalkDir::new(&ls_home) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+
+        if entry.file_type().is_dir() {
+            let _ = std::fs::set_permissions(entry.path(), dir_perms.clone());
+            let _ = chown(entry.path(), logstash_user, logstash_group);
+        } else {
+            let _ = std::fs::set_permissions(entry.path(), file_perms.clone());
+            let _ = chown(entry.path(), logstash_user, logstash_group);
+        }
+    }
+
+    std::fs::create_dir_all(ls_path_conf.join("conf.d"))?;
+    std::fs::write(
+        ls_path_conf.join("logstash.yml"),
+        format!(
+            "api.enabled: false\npath.data: {}\npath.logs: {}\n",
+            ls_home.join("data").display(),
+            ls_home.join("logs").display(),
+        ),
+    )?;
+    std::fs::write(
+        ls_path_conf.join("pipelines.yml"),
+        serde_yaml_ng::to_string(&serde_json::json!([
+            {
+                "pipeline.id": "main",
+                "path.config": format!("{}/*.conf", ls_path_conf.join("conf.d").display()),
+                "pipeline.ecs_compatibility": "disabled"
+            }
+        ]))?,
+    )?;
+    std::fs::write(
+        ls_path_conf.join("conf.d").join("pipeline.conf"),
+        format!(
+            r#"
+input {{
+    beats {{
+        port => 5044
+        ssl_enabled => true
+        ssl_certificate => "{0}/logstash.crt"
+        ssl_key => "{0}/logstash.key"
+    }}
+}}
+"#,
+            ls_path_conf.display()
+        ),
+    )?;
+
+    system("systemctl daemon-reload")?;
+    system("systemctl enable jj-logstash")?;
+    system("systemctl restart jj-logstash")?;
+
+    println!("{}", "--- Base logstash configured!".green());
+
+    Ok(())
+}
+
+fn install_beats(bb: &Busybox, args: &WazuhSubcommandArgs) -> eyre::Result<()> {
+    println!("--- Installing beats...");
+
+    let public_ip = get_public_ip(bb)?;
+
+    let mut threads = Vec::new();
+
+    for pkg in ["filebeat", "auditbeat", "packetbeat"] {
+        let src_path = args.jj_elastic_share_location.join(format!("{pkg}.tar.gz"));
+        let dest_path = args.jj_elastic_location.join(pkg);
+
+        threads.push(std::thread::spawn(move || -> eyre::Result<()> {
+            super::elk::untar_beat(src_path, dest_path)?;
+            println!("Unpacked {pkg}!");
+
+            Ok(())
+        }));
+    }
+
+    for thread in threads {
+        match thread.join() {
+            Ok(r) => r?,
+            Err(_) => {
+                eprintln!(
+                    "{}",
+                    "!!! Could not join extract thread due to panic!".red()
+                );
+            }
+        }
+    }
+
+    for pkg in ["filebeat", "auditbeat", "packetbeat"] {
+        let dest_path = args.jj_elastic_location.join(pkg);
+
+        super::elk::apply_selinux_labels_to_elastic_package(
+            &dest_path,
+            &dest_path.join(format!("{pkg}.yml")),
+            &dest_path.join(pkg),
+            &dest_path.join("data"),
+        )?;
+    }
+
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-auditbeat.service",
+        super::elk::AUDITBEAT_SERVICE.replace(
+            "$AB_HOME",
+            &format!("{}/auditbeat", args.jj_elastic_location.display()),
+        ),
+    )
+    .context("Could not write systemd service for auditbeat")?;
+
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-filebeat.service",
+        super::elk::FILEBEAT_SERVICE.replace(
+            "$FB_HOME",
+            &format!("{}/filebeat", args.jj_elastic_location.display()),
+        ),
+    )
+    .context("Could not write systemd service for filebeat")?;
+
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-packetbeat.service",
+        super::elk::PACKETBEAT_SERVICE.replace(
+            "$PB_HOME",
+            &format!("{}/packetbeat", args.jj_elastic_location.display()),
+        ),
+    )
+    .context("Could not write systemd service for packetbeat")?;
+
+    println!(
+        "{}",
+        "--- Done installing beats! Configuring now...".green()
+    );
+
+    std::fs::write(
+        args.jj_elastic_location
+            .join("auditbeat")
+            .join("auditbeat.yml"),
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            super::elk::AUDITBEAT_YML,
+            &public_ip,
+            args.jj_elastic_share_location.display()
+        ),
+    )?;
+
+    std::fs::write(
+        args.jj_elastic_location
+            .join("filebeat")
+            .join("filebeat.yml"),
+        format!(
+            r#"
+{}
+
+  - module: netflow
+    log:
+      enabled: true
+      var:
+        netflow_host: 0.0.0.0
+        netflow_port: 2055
+        internal_networks:
+          - private
+
+  - module: panw
+    panos:
+      enabled: true
+      var.syslog_host: 0.0.0.0
+      var.syslog_port: 9001
+      var.log_level: 5
+
+  - module: cisco
+    ftd:
+      enabled: true
+      var.syslog_host: 0.0.0.0
+      var.syslog_port: 9002
+      var.log_level: 5
+
+output.logstash:
+  hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            super::elk::FILEBEAT_YML,
+            &public_ip,
+            args.jj_elastic_share_location.display()
+        )
+        .replace(
+            "$FILEBEAT_PATH",
+            &format!("{}/filebeat", args.jj_elastic_location.display()),
+        ),
+    )?;
+
+    std::fs::write(
+        args.jj_elastic_location
+            .join("packetbeat")
+            .join("packetbeat.yml"),
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            super::elk::PACKETBEAT_YML,
+            &public_ip,
+            args.jj_elastic_share_location.display()
+        ),
+    )?;
+
+    println!("{}", "--- Done configuring beats!".green());
+
+    if let Err(e) = super::elk::disable_auditd() {
+        eprintln!("Could not disable auditd: {e}");
+    }
+
+    println!("{}", "--- Verifying output".green());
+
+    for beat in ["auditbeat", "packetbeat", "filebeat"] {
+        Command::new(args.jj_elastic_location.join(beat).join(beat))
+            .current_dir(args.jj_elastic_location.join(beat))
+            .args(["test", "output"])
+            .spawn()?
+            .wait()?;
+        system(&format!("systemctl enable jj-{beat}"))?;
+        system(&format!("systemctl restart jj-{beat}"))?;
+    }
+
+    println!("--- All set up!");
+
+    if !args.dont_install_suricata {
+        super::elk::install_suricata(
+            bb,
+            &super::elk::SuricataInstallArgs {
+                use_download_shell: args.use_download_shell,
+                sneaky_ip: args.sneaky_ip,
+            },
+        )?;
+    }
+
     Ok(())
 }
 
@@ -1869,6 +2241,10 @@ fn cleanup(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
     println!("--- Performing cleanup of Wazuh installation directory");
 
     std::fs::remove_dir_all(&args.working_dir)?;
+
+    if args.independent_logstash_install {
+        let _ = std::fs::remove_file(args.jj_elastic_share_location.join("logstash.tar.gz"));
+    }
 
     println!(
         "{}",

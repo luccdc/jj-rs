@@ -96,6 +96,7 @@ nix = { version = "0.30.1", features = [
   "user",
 ] }
 pcap = { version = "2.3.0", features = ["capture-stream"] }
+rcgen = "0.14.7"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [

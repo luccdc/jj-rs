@@ -147,11 +147,11 @@ pub struct ElkBeatsArgs {
 pub struct SuricataInstallArgs {
     /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
-    use_download_shell: bool,
+    pub use_download_shell: bool,
 
     /// Use a specific IP address for source NAT when downloading through the container
     #[arg(long, short = 'I')]
-    sneaky_ip: Option<Ipv4Addr>,
+    pub sneaky_ip: Option<Ipv4Addr>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -519,7 +519,7 @@ fn download_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
     Ok(())
 }
 
-fn untar_package(
+pub fn untar_package(
     src_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
     sub_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
     dest_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
@@ -1530,7 +1530,7 @@ Environment="ES_API_KEY={}:{}"
 
 // auditbeat gracefully degrades if it can't hook into the audit socket, but we can
 // explicitly disable auditd
-fn disable_auditd() -> eyre::Result<()> {
+pub fn disable_auditd() -> eyre::Result<()> {
     println!("--- Disabling auditd");
 
     let auditd_service = crate::utils::systemd::get_service_info("auditd")
@@ -2510,7 +2510,7 @@ fn setup_winlogbeat(
     Ok(())
 }
 
-fn untar_beat(
+pub fn untar_beat(
     src_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
     dest_path: impl AsRef<Path> + AsRef<std::ffi::OsStr> + std::fmt::Debug,
 ) -> eyre::Result<()> {
@@ -2768,7 +2768,7 @@ output.logstash:
     Ok(())
 }
 
-fn install_suricata(bb: &Busybox, args: &SuricataInstallArgs) -> eyre::Result<()> {
+pub fn install_suricata(bb: &Busybox, args: &SuricataInstallArgs) -> eyre::Result<()> {
     println!("{}", "--- Installing Suricata...".green());
 
     if qx("getenforce")?.1.contains("Enforcing") {
