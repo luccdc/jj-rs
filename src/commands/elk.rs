@@ -1282,16 +1282,16 @@ fn load_kibana_dashboards(
     args: &ElkSubcommandArgs,
     password: &mut Option<String>,
 ) -> eyre::Result<()> {
+    use reqwest::blocking::{
+        Client,
+        multipart::{Form, Part},
+    };
+
     let elastic_password = get_elastic_password(password)?;
 
     let es_path_conf = cpaths!(args.elastic_install_directory, "elasticsearch", "config");
 
     println!("{}", "--- Importing Kibana dashboards...".green());
-
-    use reqwest::blocking::{
-        Client,
-        multipart::{Form, Part},
-    };
 
     let root_cert = reqwest::Certificate::from_pem(
         std::fs::read_to_string(cpaths!(&es_path_conf, "certs", "http_ca.crt"))?.as_bytes(),

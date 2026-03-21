@@ -161,6 +161,7 @@ impl super::Command for SiemSetup {
                 download_url: "https://artifacts.elastic.co/downloads".into(),
                 public_nat_ip: self.nat_ip,
                 dont_install_suricata: false,
+                max_compilations_rate: 10_000,
             }),
         }
         .execute_pipeline(&distro, &busybox, &wazuh_pass, &elastic_pass)?;

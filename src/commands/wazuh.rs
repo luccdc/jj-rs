@@ -24,6 +24,10 @@ use crate::{
     },
 };
 
+// Defines a variable called WAZUH_DASHBOARDS of type &'static [&'static str]
+// It includes all the ndjson files for wazuh dashboards
+include!(concat!(env!("OUT_DIR"), "/wazuh_dashboards.rs"));
+
 const LOGSTASH_WAZUH_CONF: &str = include_str!("elk/pipeline-wazuh.conf");
 
 #[derive(Parser, Debug)]
@@ -76,6 +80,10 @@ pub struct WazuhSubcommandArgs {
     /// Don't install Suricata when installing beats
     #[arg(long, short = 's')]
     pub dont_install_suricata: bool,
+
+    /// Wazuh doesn't have the same performance hacks as Elasticsearch; tweak the ceiling for script compilations
+    #[arg(long, short = 'M', default_value = "10000")]
+    pub max_compilations_rate: u32,
 }
 
 #[derive(Parser, Debug)]
@@ -168,6 +176,14 @@ pub enum WazuhCommands {
     #[command(visible_alias = "ib")]
     InstallBeats(WazuhSubcommandArgs),
 
+    /// Load built in JJ dashboards to Wazuh
+    #[command(visible_alias = "wb")]
+    LoadWazuhDashboards,
+
+    /// Tweak the max script compilation rate that Wazuh uses
+    #[command(visible_alias = "ts")]
+    TweakSctiptCompilationLimit(WazuhSubcommandArgs),
+
     /// Install and configure agents and beats on an endpoint
     #[command(visible_alias = "agents")]
     InstallAgents(WazuhAgentCommandArgs),
@@ -220,7 +236,9 @@ impl super::Command for Wazuh {
         if let WC::Install(_)
         | WC::RotateCredentials
         | WC::ImportPipelines(_)
-        | WC::ForwardJjLogstash(_) = &self.command
+        | WC::ForwardJjLogstash(_)
+        | WC::LoadWazuhDashboards
+        | WC::TweakSctiptCompilationLimit(_) = &self.command
         {
             const PASSWORD_RULES: &[fn(&str) -> bool] = &[
                 |s| s.len() > 8 && s.len() < 64,
@@ -346,6 +364,14 @@ impl Wazuh {
 
         if let WC::InstallBeats(args) = &self.command {
             install_beats(busybox, args)?;
+        }
+
+        if let WC::Install(_) | WC::LoadWazuhDashboards = &self.command {
+            load_wazuh_dashboards(busybox, new_pass)?;
+        }
+
+        if let WC::TweakSctiptCompilationLimit(args) = &self.command {
+            tweak_max_compilations_rate(busybox, new_pass, args.max_compilations_rate)?;
         }
 
         if let WC::Install(args) = &self.command {
@@ -1500,7 +1526,7 @@ fn import_pipelines(
         .header("content-type", "application/json")
         .body(r#"{
     "persistent": {
-        "script.max_compilations_rate": "2000/1m"
+        "script.max_compilations_rate": "10000/1m"
     }
 }"#)
         .send()
@@ -1585,7 +1611,7 @@ fn import_direct_from_beats(
         .header("content-type", "application/json")
         .body(r#"{
     "persistent": {
-        "script.max_compilations_rate": "2000/1m"
+        "script.max_compilations_rate": "10000/1m"
     }
 }"#)
         .send()
@@ -2408,7 +2434,7 @@ output.logstash:
         system(&format!("systemctl restart jj-{beat}"))?;
     }
 
-    println!("--- All set up!");
+    println!("--- Beats all set up!");
 
     if !args.dont_install_suricata {
         super::elk::install_suricata(
@@ -2420,6 +2446,76 @@ output.logstash:
         )?;
     }
 
+    Ok(())
+}
+
+fn load_wazuh_dashboards(bb: &Busybox, wazuh_password: &str) -> eyre::Result<()> {
+    use reqwest::blocking::multipart::{Form, Part};
+
+    println!("--- Loading Wazuh dashboards...");
+
+    let public_ip = get_public_ip(bb)?;
+
+    let root_cert = reqwest::Certificate::from_pem(
+        std::fs::read_to_string("/etc/wazuh-indexer/certs/root-ca.pem")?.as_bytes(),
+    )?;
+
+    let client = reqwest::blocking::Client::builder()
+        .add_root_certificate(root_cert)
+        .build()?;
+
+    for (i, dash) in WAZUH_DASHBOARDS.iter().enumerate() {
+        print!("Importing dashboard {}...", i + 1);
+
+        let part = Part::bytes(*dash).file_name("input.ndjson");
+        let form = Form::new().part("file", part);
+
+        let response = client
+            .post(format!(
+                "https://{public_ip}/api/saved_objects/_import?overwrite=true"
+            ))
+            .basic_auth("admin", Some(&wazuh_password))
+            .header("osd-xsrf", "true")
+            .multipart(form)
+            .send()?
+            .json::<serde_json::Value>()?;
+
+        if response.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+            println!(" {}", "Success".green());
+        } else {
+            println!(" Error importing dashboard!");
+            dbg!(response);
+        }
+    }
+
+    println!("{}", "--- Successfully loaded Wazuh dashboards".green());
+
+    Ok(())
+}
+
+fn tweak_max_compilations_rate(bb: &Busybox, wazuh_password: &str, rate: u32) -> eyre::Result<()> {
+    let cert = std::fs::read_to_string("/etc/wazuh-indexer/certs/root-ca.pem")?;
+    let cert = reqwest::Certificate::from_pem(cert.as_bytes())?;
+    let wazuh_client = reqwest::blocking::Client::builder()
+        .add_root_certificate(cert)
+        .build()?;
+
+    let public_ip = get_public_ip(bb)?;
+
+    let response = wazuh_client
+        .put(format!("https://{public_ip}:9200/_cluster/settings"))
+        .basic_auth("admin", Some(wazuh_password))
+        .header("content-type", "application/json")
+        .body(format!(r#"{{
+    "persistent": {{
+        "script.max_compilations_rate": "{rate}/1m"
+    }}
+}}"#))
+        .send()
+        .context("Could not update pipeline compilation limit (this will limit the effectiveness of Packetbeat TLS data)")?
+        .json::<serde_json::Value>()?;
+
+    println!("{response}");
     Ok(())
 }
 
