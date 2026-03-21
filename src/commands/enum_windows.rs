@@ -58,15 +58,12 @@ impl super::Command for Enum {
     fn execute(self) -> eyre::Result<()> {
         let mut ob = pager::get_pager_output(true);
 
-        // Always run Hostname enumeration
         enum_hostname(&mut ob)?;
 
         match self.subcommand {
-            // Run a specific subsystem if a subcommand is provided
             Some(EnumSubcommands::Ports(ports)) => enum_ports(&mut ob, ports)?,
             Some(EnumSubcommands::WslDocker) => enum_wsl_docker(&mut ob)?,
             
-            // Pass the extended flag here
             Some(EnumSubcommands::IisSites { extended }) => enum_iis_sites(&mut ob, self.extended || extended)?,
             
             Some(EnumSubcommands::PythonSites) => enum_python_sites(&mut ob)?,
@@ -76,21 +73,16 @@ impl super::Command for Enum {
                 enum_system32_unsigned(&mut ob, self.detailed || detailed)?
             }
             
-            // Default behavior: Run all enumerations if no subcommand is given
             None => {
-                // Standard Enumeration
                 enum_ports(&mut ob, super::ports::Ports::default())?; 
                 
-                // Security & Environment
                 enum_wsl_docker(&mut ob)?;
                 
-                // Web & Services - Pass the global extended flag here
                 enum_iis_sites(&mut ob, self.extended)?;
                 
                 enum_python_sites(&mut ob)?;
                 enum_ftp_sites(&mut ob)?;
                 
-                // Persistence & Files
                 enum_startup_items(&mut ob)?;
                 enum_system32_unsigned(&mut ob, self.detailed)?;
             }
@@ -120,7 +112,6 @@ fn enum_hostname(out: &mut impl PagerOutput) -> eyre::Result<()> {
 
 // Check if a tool exists in the user's path
 fn tool_exists(tool: &str) -> bool {
-    // Check if the executable exists in any folder listed in the PATH environment variable
     if let Ok(path) = std::env::var("PATH") {
         for p in std::env::split_paths(&path) {
             let p_str = p.join(format!("{}.exe", tool));
@@ -136,14 +127,12 @@ fn tool_exists(tool: &str) -> bool {
 fn enum_wsl_docker(out: &mut impl PagerOutput) -> eyre::Result<()> {
     writeln!(out, "\n==== WSL / DOCKER")?;
 
-    // WSL Check
     if std::path::Path::new(r#"C:\Windows\System32\wsl.exe"#).exists() {
         writeln!(out, "WSL Feature is installed")?;
     } else {
         writeln!(out, "WSL not found or is not in your PATH")?;
     }
 
-    // Docker Check using our new helper
     if tool_exists("docker") {
         writeln!(out, "Docker is installed")?;
     } else {
@@ -154,10 +143,8 @@ fn enum_wsl_docker(out: &mut impl PagerOutput) -> eyre::Result<()> {
 }
 
 // Enumerate IIS sites, listing out where they are being hosted and ports
-// Enumerate IIS sites, listing out where they are being hosted and ports
 fn enum_iis_sites(out: &mut impl PagerOutput, extended_scan: bool) -> eyre::Result<()> {
     writeln!(out, "\n==== IIS SITES")?;
-    // We build the PowerShell script as a single string
     let script = "Import-Module WebAdministration; Get-Website | ForEach-Object { $_.PhysicalPath }";
     let output = std::process::Command::new("powershell.exe")
         .args(&[
@@ -167,7 +154,7 @@ fn enum_iis_sites(out: &mut impl PagerOutput, extended_scan: bool) -> eyre::Resu
             "-Command",
             script,
         ])
-        .output()?; // .output() waits for the process to finish and captures stdout
+        .output()?; 
 
     if output.status.success() {
         let result = String::from_utf8_lossy(&output.stdout);
@@ -181,7 +168,6 @@ fn enum_iis_sites(out: &mut impl PagerOutput, extended_scan: bool) -> eyre::Resu
                 if !path.is_empty() && path.contains(':') {
                     writeln!(out, "Found Site Path: {}", path)?;
                     
-                    // PASS THE FLAG HERE!
                     scan_web_files(out, path, extended_scan)?;
                 }
             }
@@ -198,11 +184,7 @@ use colored::*;
 use regex::Regex;
 use std::fs;
 
-// Assuming PagerOutput is a custom trait in your codebase that implements standard formatting.
-// If it's standard IO, you can replace `impl PagerOutput` with `impl std::fmt::Write` or `impl std::io::Write`.
-
 pub fn scan_web_files(out: &mut impl PagerOutput, root: &str, extended_scan: bool) -> eyre::Result<()> {
-    // 1. Clean the path
     let clean_root = root.trim_matches(|c| c == '\"' || c == ' ');
     
     if !std::path::Path::new(clean_root).exists() {
@@ -211,112 +193,81 @@ pub fn scan_web_files(out: &mut impl PagerOutput, root: &str, extended_scan: boo
 
     writeln!(out, "Scanning directory: {}", clean_root)?;
 
-    // 2. Define target extensions and signatures
+    // 1. Config & Counters
     let danger_exts = ["php", "aspx", "asp", "jsp", "jspx", "cfm", "ashx", "asax", "html"];
     let pii_exts = ["csv", "txt", "xls", "xlsx"];
+    let mut web_file_count = 0;
+    let max_display = 5;
+    const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; 
+
+    // 2. Optimized Regex Patterns
+    let shell_regex = Regex::new(r"(?i)(?:[s$][^a-zA-Z0-9]{0,2}[h][^a-zA-Z0-9]{0,2}[e3][^a-zA-Z0-9]{0,2}[l1][^a-zA-Z0-9]{0,2}[l1]|p[^a-zA-Z0-9]{0,2}[o0][^a-zA-Z0-9]{0,2}ny|b374k|c99|r57|backd[o0]{2}r)").unwrap();
+    let webshell_combo_regex = Regex::new(r"(?i)(system|exec|shell_exec|passthru|popen|proc_open)\s*\([^)]*\$_(GET|POST|REQUEST|COOKIE|SERVER)").unwrap();
+    let obfuscation_regex = Regex::new(r"(?i)(base64_decode\s*\(|gzinflate\s*\(|str_rot13\s*\(|eval\s*\()").unwrap();
     
-    // Signatures for extended content scanning
-    let content_sigs = [
-        "eval(", 
-        "base64_decode(", 
-        "System.Diagnostics.Process", 
-        "cmd.exe", 
-        "WScript.Shell",
-        "xp_cmdshell"
-    ];
-
-    // Compile regex outside the loop for performance.
-    // This catches variations like sh3ll, $hell, p0ny, b374k, etc.
-    let shell_regex = Regex::new(
-    r"(?i)(?:[s$][^a-zA-Z0-9]{0,2}[h][^a-zA-Z0-9]{0,2}[e3][^a-zA-Z0-9]{0,2}[l1][^a-zA-Z0-9]{0,2}[l1]|p[^a-zA-Z0-9]{0,2}[o0][^a-zA-Z0-9]{0,2}ny|b374k|c99|r57|backd[o0]{2}r)"
-    ).unwrap();
-
-    let exec_regex = Regex::new(
-    r"(?i)(system|exec|shell_exec|passthru|popen|proc_open)\s*\("
-    ).unwrap();
-
-    let input_regex = Regex::new(
-    r"(?i)\$_(GET|POST|REQUEST|COOKIE|SERVER)"
-    ).unwrap();
-
-// Strong indicator: execution using user input
-    let webshell_combo_regex = Regex::new(
-    r"(?i)(system|exec|shell_exec|passthru|popen|proc_open)\s*\([^)]*\$_(GET|POST|REQUEST|COOKIE|SERVER)"
-    ).unwrap();
-
-// Obfuscation / encoding tricks
-    let obfuscation_regex = Regex::new(
-    r"(?i)(base64_decode\s*\(|gzinflate\s*\(|str_rot13\s*\(|eval\s*\()"
-    ).unwrap();
-    
-    // 3. Walk the directory
+    // 3. Execution
     for entry in WalkDir::new(clean_root).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
-        
-        // Skip directories, we only want to evaluate files
-        if !path.is_file() {
-            continue;
-        }
+        if !path.is_file() { continue; }
         
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             let ext_lower = ext.to_lowercase();
             
-            // --- FEATURE 3: Check for PII Files ---
+            // FEATURE: PII Check (Always Show)
             if pii_exts.contains(&ext_lower.as_str()) {
-                writeln!(
-                    out, 
-                    "{}", 
-                    format!("  [$] Potential PII file: {}", path.display()).green()
-                )?;
+                writeln!(out, "{}", format!("  [$] Potential PII file: {}", path.display()).green())?;
                 continue; 
             }
 
-            // --- FEATURE 1 & 2: Check for Web Shells ---
             if danger_exts.contains(&ext_lower.as_str()) {
-                let file_name = path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy();
+                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+                let mut is_sus = false;
+                let mut reason = "";
 
-                // Check against regex for obfuscated names
-                let mut is_sus = shell_regex.is_match(&file_name);
+                // Check Filename Pattern
+                if shell_regex.is_match(&file_name) {
+                    is_sus = true;
+                    reason = "Suspicious Filename";
+                }
 
-                // If the name isn't suspicious, but the -e flag is passed, scan the content
+                // Check Content (-e flag)
                 if !is_sus && extended_scan {
-                    if let Ok(content) = fs::read_to_string(path) {
-                        let content_lower = content.to_lowercase();
-
-                        // 1. Strong direct match (best signal)
-                        if webshell_combo_regex.is_match(&content_lower) {
-                            is_sus = true;
-                        }
-                        // 2. Execution functions alone (medium signal)
-                        else if exec_regex.is_match(&content_lower) && input_regex.is_match(&content_lower) {
-                            is_sus = true;
-                        }
-                        // 3. Obfuscation patterns
-                        else if obfuscation_regex.is_match(&content_lower) {
-                            is_sus = true;
-                        }
-                        // 4. Fallback to your original signatures
-                        else {
-                            is_sus = content_sigs.iter().any(|&sig| content_lower.contains(sig));
+                    if let Ok(metadata) = fs::metadata(path) {
+                        if metadata.len() <= MAX_FILE_SIZE {
+                            if let Ok(content) = fs::read_to_string(path) {
+                                let c_low = content.to_lowercase();
+                                if webshell_combo_regex.is_match(&c_low) {
+                                    is_sus = true;
+                                    reason = "Exploit Combo Pattern";
+                                } else if obfuscation_regex.is_match(&c_low) {
+                                    is_sus = true;
+                                    reason = "Obfuscation Detected";
+                                }
+                            }
                         }
                     }
                 }
 
+                // Logic for printing
                 if is_sus {
-                    writeln!(
-                        out, 
-                        "{}", 
-                        format!("!!! POSSIBLE WEB SHELL: {}", path.display()).red().bold()
-                    )?;
+                    // Backdoors ALWAYS get printed
+                    writeln!(out, "{}", format!("!!! POSSIBLE WEB SHELL: {} [{}]", path.display(), reason).red().bold())?;
                 } else if ext_lower == "php" || ext_lower == "aspx" {
-                    // Just list normal web files so you know the scanner is working
-                    writeln!(out, "  [+] Web file: {}", path.display())?;
+                    // Normal files obey the "Max 5" rule
+                    web_file_count += 1;
+                    if web_file_count <= max_display {
+                        writeln!(out, "  [+] Web file: {}", path.display())?;
+                    }
                 }
             }
         }
     }
+
+    // 4. Per-site Summary
+    if web_file_count > max_display {
+        writeln!(out, "  [...] and {} more web files in this directory.", web_file_count - max_display)?;
+    }
+
     Ok(())
 }
 
@@ -430,7 +381,6 @@ fn enum_ftp_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
             found = true;
         } 
         else if line.starts_with("FZ_FTP_PATH:") {
-            // No more "temporary value dropped" error here
             let path_owned = line.replace("FZ_FTP_PATH:", "");
             writeln!(out, "[!] FileZilla FTP Root Found: {}", path_owned.trim())?;
             found = true;
@@ -448,7 +398,6 @@ fn enum_ftp_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
 fn enum_system32_unsigned(out: &mut impl PagerOutput, detailed: bool) -> eyre::Result<()> {
     writeln!(out, "\n==== SUSPICIOUS FILES IN SYSTEM32")?;
 
-    // Determine extensions based on the -d flag
     let extensions = if detailed {
         "@('*.exe', '*.dll', '*.bat', '*.ps1')"
     } else {
