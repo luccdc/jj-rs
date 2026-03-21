@@ -74,7 +74,7 @@ pub struct WazuhSubcommandArgs {
     pub public_nat_ip: Option<Ipv4Addr>,
 
     /// Don't install Suricata when installing beats
-    #[arg(long, short = 'S')]
+    #[arg(long, short = 's')]
     pub dont_install_suricata: bool,
 }
 
@@ -132,8 +132,8 @@ pub enum WazuhCommands {
     #[command(visible_alias = "fl")]
     ForwardJjLogstash(WazuhSubcommandArgs),
 
-    /// Install jj beats to forward to local logstash. Only works and is run with `independent-logstash-install` explicitly set
-    #[command(visible_alias = "beat")]
+    /// Install jj beats to forward to local logstash. Only works when `independent-logstash-install` explicitly set
+    #[command(visible_alias = "ib")]
     InstallBeats(WazuhSubcommandArgs),
 }
 
@@ -182,14 +182,34 @@ impl super::Command for Wazuh {
         | WC::ImportPipelines(_)
         | WC::ForwardJjLogstash(_) = &self.command
         {
-            print!("Enter the password for the admin user: ");
-            std::io::stdout()
-                .flush()
-                .context("Could not display password prompt")?;
-            std::io::stdin()
-                .read_line(&mut new_pass)
-                .context("Could not read password from user")?;
-            new_pass = new_pass.trim().to_string();
+            const PASSWORD_RULES: &[fn(&str) -> bool] = &[
+                |s| s.len() > 8 && s.len() < 64,
+                |s| s.chars().any(char::is_uppercase),
+                |s| s.chars().any(char::is_lowercase),
+                |s| s.chars().any(char::is_numeric),
+                |s| s.contains(|c| matches!(c, '.' | '*' | '+' | '?' | '-')),
+            ];
+
+            loop {
+                if !new_pass.is_empty() {
+                    println!(
+                        "Password must have a length between 8 and 64 characters and contain at least one upper and lower case letter, a letter and a symbol(.*+?-)"
+                    );
+                }
+
+                print!("Enter the password for the admin user: ");
+                std::io::stdout()
+                    .flush()
+                    .context("Could not display password prompt")?;
+                std::io::stdin()
+                    .read_line(&mut new_pass)
+                    .context("Could not read password from user")?;
+                new_pass = new_pass.trim().to_string();
+
+                if PASSWORD_RULES.iter().all(|rule| (rule)(&new_pass)) {
+                    break;
+                }
+            }
         }
 
         let mut elastic_pass = String::new();
@@ -260,7 +280,7 @@ impl Wazuh {
         }
 
         if let WC::Install(_) | WC::RotateCredentials = &self.command {
-            rotate_credentials(new_pass)?;
+            rotate_credentials(busybox, new_pass)?;
         }
 
         if let WC::Install(args) | WC::ImportPipelines(args) = &self.command {
@@ -330,8 +350,10 @@ fn make_working_dirs(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
 
     if args.independent_logstash_install {
         std::fs::create_dir_all(&args.jj_elastic_location)?;
-        std::fs::create_dir_all(&args.jj_elastic_share_location)?;
     }
+
+    // Piggyback off of the share location to also store agent installers
+    std::fs::create_dir_all(&args.jj_elastic_share_location)?;
 
     println!("{}", "--- Working directory made".green());
 
@@ -375,6 +397,92 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
             .context("Could not spawn sh")?
             .wait()
             .context("Could not wait for command to finish")?;
+
+        println!("--- Done running download script, downloading agent installers");
+
+        let gzip = std::io::BufReader::new(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .open(args.working_dir.join("wazuh-offline.tar.gz"))?,
+        );
+        let mut archive = tar::Archive::new(flate2::bufread::GzDecoder::new(gzip));
+        let wazuh_package_full = archive
+            .entries()?
+            .find_map(|e| {
+                e.as_ref().ok().and_then(|e| {
+                    e.path()
+                        .ok()
+                        .and_then(|p| p.file_name().and_then(|p| p.to_str()).map(str::to_string))
+                        .filter(|p| p.starts_with("wazuh-manager"))
+                })
+            })
+            .ok_or_else(|| {
+                eyre::eyre!("Could not find wazuh-manager package to determine version")
+            })?;
+
+        let version_regex =
+            regex::Regex::new(r"wazuh-manager[-_]([-_.0-9]+)(_amd64\.deb|\.x86_64\.rpm)")
+                .expect("static regex testing failed");
+
+        let (_, [wazuh_version, _]) = version_regex
+            .captures(&wazuh_package_full)
+            .ok_or_else(|| eyre::eyre!("Could not match wazuh manager package to extract version"))?
+            .extract();
+
+        let Some(major_version) = wazuh_version.chars().next() else {
+            eyre::bail!("Wazuh version matched is an empty string!");
+        };
+
+        println!("Downloading for version {wazuh_version}");
+
+        let mut download_threads = vec![];
+        for (file_name, url) in [
+            (
+                "wazuh-agent.msi",
+                format!(
+                    "https://packages.wazuh.com/{major_version}.x/windows/wazuh-agent-{wazuh_version}.msi"
+                ),
+            ),
+            (
+                "wazuh-agent.rpm",
+                format!(
+                    "https://packages.wazuh.com/{major_version}.x/yum/wazuh-agent-{wazuh_version}.x86_64.rpm"
+                ),
+            ),
+            (
+                "wazuh-agent.deb",
+                format!(
+                    "https://packages.wazuh.com/{major_version}.x/apt/pool/main/w/wazuh-agent/wazuh-agent_{wazuh_version}_amd64.deb"
+                ),
+            ),
+        ] {
+            let download_package = {
+                let mut dest_path = args.jj_elastic_share_location.clone();
+                move || {
+                    dest_path.push(&file_name);
+                    let res = download_file(&url, dest_path);
+                    println!("Done downloading {file_name}");
+                    res
+                }
+            };
+
+            if args.use_download_shell {
+                download_package()?;
+            } else {
+                download_threads.push(std::thread::spawn(download_package));
+            }
+        }
+        for thread in download_threads {
+            match thread.join() {
+                Ok(r) => r?,
+                Err(_) => {
+                    eprintln!(
+                        "{}",
+                        "!!! Could not join download thread due to panic!".red()
+                    );
+                }
+            }
+        }
 
         println!("{}", "--- Successfully downloaded Wazuh files!".green());
 
@@ -1117,7 +1225,7 @@ fn install_dashboard(
     Ok(())
 }
 
-fn rotate_credentials(new_pass: &str) -> eyre::Result<()> {
+fn rotate_credentials(bb: &Busybox, new_pass: &str) -> eyre::Result<()> {
     println!("--- Rotating server credentials");
 
     system(
@@ -1134,6 +1242,44 @@ fn rotate_credentials(new_pass: &str) -> eyre::Result<()> {
     system("systemctl restart wazuh-dashboard")?;
 
     println!("{}", "--- Successfully reset credentials!".green());
+
+    let public_ip = get_public_ip(bb)?;
+
+    {
+        use reqwest::blocking::Client;
+
+        let root_cert = reqwest::Certificate::from_pem(
+            std::fs::read_to_string("/etc/wazuh-indexer/certs/root-ca.pem")?.as_bytes(),
+        )?;
+
+        let client = Client::builder().add_root_certificate(root_cert).build()?;
+
+        let mut i = 0;
+        loop {
+            i += 1;
+            if i % 10 == 0 {
+                println!("Waiting for Dashboards {i}...");
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+
+            let Ok(res) = client
+                .get(format!("https://{public_ip}:443/api/status"))
+                .basic_auth("admin", Some(&new_pass))
+                .send()
+            else {
+                continue;
+            };
+            let Ok(json) = res.json::<serde_json::Value>() else {
+                continue;
+            };
+
+            if json["status"]["overall"]["state"].as_str() == Some("green") {
+                break;
+            }
+        }
+    }
+
+    println!("Waiting for services to be back up...");
 
     Ok(())
 }

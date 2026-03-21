@@ -177,7 +177,7 @@ impl QuickSetup {
         }
 
         if let Some(elk_ip) = self.elk_ip {
-            writeln!(ob, "        #### ELK ####")?;
+            writeln!(ob, "        #### ELK/Wazuh ####")?;
             writeln!(
                 ob,
                 "        ip daddr {elk_ip} tcp dport 5601 ct state new accept"
@@ -189,6 +189,18 @@ impl QuickSetup {
             writeln!(
                 ob,
                 "        ip daddr {elk_ip} tcp dport 5044 ct state new accept"
+            )?;
+            writeln!(
+                ob,
+                "        ip daddr {elk_ip} tcp dport 1514 ct state new accept"
+            )?;
+            writeln!(
+                ob,
+                "        ip daddr {elk_ip} tcp dport 1515 ct state new accept"
+            )?;
+            writeln!(
+                ob,
+                "        ip daddr {elk_ip} tcp dport 443 ct state new accept"
             )?;
             writeln!(ob)?;
         }
