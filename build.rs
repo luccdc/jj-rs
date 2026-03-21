@@ -31,6 +31,36 @@ fn main() -> std::io::Result<()> {
         println!("cargo:rerun-if-changed=src/commands/elk/dashboards");
     }
 
+    // bundle Wazuh dashboards
+    {
+        let mut dashboard_dir = current_dir()?;
+        dashboard_dir.push("src/commands/wazuh/dashboards");
+
+        let mut include_macros = read_dir(&dashboard_dir)?
+            .filter_map(Result::ok)
+            .map(|d| {
+                let mut dashboard_file = dashboard_dir.clone();
+                dashboard_file.push(d.path());
+                format!(r#"include_bytes!("{}")"#, dashboard_file.display())
+            })
+            .collect::<Vec<_>>();
+
+        include_macros.sort();
+
+        std::fs::write(
+            format!(
+                "{}/wazuh_dashboards.rs",
+                std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
+            ),
+            format!(
+                "const WAZUH_DASHBOARDS: &[&[u8]] = &[{}];",
+                include_macros.join(",")
+            ),
+        )?;
+
+        println!("cargo:rerun-if-changed=src/commands/wazuh/dashboards");
+    }
+
     // bundle OWASP ModSecurity Core Ruleset
     {
         let mut rules_dir = PathBuf::from(

@@ -29,6 +29,7 @@ define_commands! {
         [unix] Elk => elk::Elk,
         [windows] Elk => elk_winbeats::WinBeats,
         [unix] Wazuh, wz => wazuh::Wazuh,
+        [windows] Wazuh, wz => wazuh_winagent::WinAgents,
         [unix] SiemSetup => siem::SiemSetup,
         Proxy, pr => proxy::Proxy,
 
