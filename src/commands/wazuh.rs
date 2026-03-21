@@ -17,7 +17,7 @@ use crate::{
     utils::{
         busybox::Busybox,
         download_container::DownloadContainer,
-        get_public_ip,
+        download_file, get_public_ip,
         os_version::{Distro, get_distro},
         packages::{install_apt_packages, install_dnf_packages},
         passwd, qx, system,
@@ -78,6 +78,38 @@ pub struct WazuhSubcommandArgs {
     pub dont_install_suricata: bool,
 }
 
+#[derive(Parser, Debug)]
+#[command(about)]
+pub struct WazuhAgentCommandArgs {
+    /// The IP address of the Wazuh server to download resources from and send logs to
+    #[arg(long, short = 'i', default_value = "127.0.0.1")]
+    wazuh_ip: Ipv4Addr,
+
+    /// The port of the share on the Wazuh server to download agents from
+    #[arg(long, short = 'p', default_value_t = 8080)]
+    wazuh_share_port: u16,
+
+    /// Use the download container when downloading files to circumvent the host based firewall
+    #[arg(long, short = 'd')]
+    use_download_shell: bool,
+
+    /// Use a specific IP address for source NAT when downloading through the container
+    #[arg(long, short = 'I')]
+    sneaky_ip: Option<Ipv4Addr>,
+
+    /// Where to install and configure all the beats
+    #[arg(long, short = 'e', default_value = "/opt/jj-es")]
+    elastic_install_directory: PathBuf,
+
+    /// Don't install beats alongside Wazuh agent
+    #[arg(long, short = 'B')]
+    dont_install_beats: bool,
+
+    /// Don't install Suricata alongside beats and agent
+    #[arg(long, short = 'S')]
+    dont_install_suricata: bool,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum WazuhCommands {
     /// Install Wazuh completely
@@ -135,6 +167,10 @@ pub enum WazuhCommands {
     /// Install jj beats to forward to local logstash. Only works when `independent-logstash-install` explicitly set
     #[command(visible_alias = "ib")]
     InstallBeats(WazuhSubcommandArgs),
+
+    /// Install and configure agents and beats on an endpoint
+    #[command(visible_alias = "agents")]
+    InstallAgents(WazuhAgentCommandArgs),
 }
 
 /// Install, configure, and manage Wazuh on this server
@@ -164,6 +200,12 @@ impl super::Command for Wazuh {
             return Ok(());
         }
 
+        let busybox = Busybox::new()?;
+
+        if let WC::InstallAgents(args) = &self.command {
+            return install_agents(&busybox, &distro, args);
+        }
+
         let hostname = qx("hostnamectl")?.1;
         if pcre!(&hostname =~ qr/r"Static\+hostname:\s\(unset\)"/xms) {
             eprintln!(
@@ -172,8 +214,6 @@ impl super::Command for Wazuh {
             );
             return Ok(());
         }
-
-        let busybox = Busybox::new()?;
 
         let mut new_pass = String::new();
 
@@ -2370,6 +2410,103 @@ output.logstash:
 
     println!("--- All set up!");
 
+    if !args.dont_install_suricata {
+        super::elk::install_suricata(
+            bb,
+            &super::elk::SuricataInstallArgs {
+                use_download_shell: args.use_download_shell,
+                sneaky_ip: args.sneaky_ip,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+fn install_agents(bb: &Busybox, distro: &Distro, args: &WazuhAgentCommandArgs) -> eyre::Result<()> {
+    println!("--- Downloading Wazuh agent installer...");
+
+    let package = if distro.is_rhel_based() {
+        "wazuh-agent.rpm"
+    } else {
+        "wazuh-agent.deb"
+    };
+
+    if args.use_download_shell {
+        let container = DownloadContainer::new(None, args.sneaky_ip)?;
+
+        container.run(|| {
+            download_file(
+                &format!(
+                    "http://{}:{}/{package}",
+                    args.wazuh_ip, args.wazuh_share_port
+                ),
+                format!("/tmp/{package}"),
+            )
+        })??;
+    } else {
+        download_file(
+            &format!(
+                "http://{}:{}/{package}",
+                args.wazuh_ip, args.wazuh_share_port
+            ),
+            format!("/tmp/{package}"),
+        )?;
+    }
+
+    let hostname = std::fs::read_to_string("/etc/hostname")?;
+    let hostname = hostname.trim();
+
+    if distro.is_rhel_based() {
+        Command::new("rpm")
+            .args(["-ivh", "/tmp/wazuh-agent.rpm"])
+            .env("WAZUH_MANAGER", format!("{}", args.wazuh_ip))
+            .env("WAZUH_AGENT_NAME", hostname)
+            .spawn()?
+            .wait()?;
+    } else {
+        Command::new("dpkg")
+            .args(["-i", "/tmp/wazuh-agent.deb"])
+            .env("WAZUH_MANAGER", format!("{}", args.wazuh_ip))
+            .env("WAZUH_AGENT_NAME", hostname)
+            .spawn()?
+            .wait()?;
+    }
+
+    println!("Wazuh agent installed! Starting...");
+
+    Command::new("/bin/sh")
+        .args(["-c", "systemctl daemon-reload"])
+        .spawn()?
+        .wait()?;
+
+    Command::new("/bin/sh")
+        .args(["-c", "systemctl enable wazuh-agent"])
+        .spawn()?
+        .wait()?;
+
+    Command::new("/bin/sh")
+        .args(["-c", "systemctl start wazuh-agent"])
+        .spawn()?
+        .wait()?;
+
+    println!("{}", "--- Wazuh agent installed and enabled!".green());
+
+    if !args.dont_install_beats {
+        super::elk::install_beats(
+            bb,
+            &super::elk::ElkBeatsArgs {
+                dont_install_suricata: true, // we do that ourselves later, don't do it twice
+                elastic_install_directory: args.elastic_install_directory.clone(),
+                elk_ip: args.wazuh_ip,
+                elk_share_port: args.wazuh_share_port,
+                sneaky_ip: args.sneaky_ip,
+                use_download_shell: args.use_download_shell,
+            },
+        )?;
+    }
+
+    // check outside of dont_install_beats; what if we want to install the agent and suricata, but not beats?
     if !args.dont_install_suricata {
         super::elk::install_suricata(
             bb,

@@ -119,27 +119,27 @@ pub struct ElkSubcommandArgs {
 pub struct ElkBeatsArgs {
     /// The IP address of the ELK server to download resources from and send logs to
     #[arg(long, short = 'i', default_value = "127.0.0.1")]
-    elk_ip: Ipv4Addr,
+    pub elk_ip: Ipv4Addr,
 
     /// The port of the share on the ELK server
     #[arg(long, short = 'p', default_value_t = 8080)]
-    elk_share_port: u16,
+    pub elk_share_port: u16,
 
     /// Use the download container when downloading files to circumvent the host based firewall
     #[arg(long, short = 'd')]
-    use_download_shell: bool,
+    pub use_download_shell: bool,
 
     /// Use a specific IP address for source NAT when downloading through the container
     #[arg(long, short = 'I')]
-    sneaky_ip: Option<Ipv4Addr>,
+    pub sneaky_ip: Option<Ipv4Addr>,
 
     /// Where to install and configure all the beats
     #[arg(long, short = 'e', default_value = "/opt/jj-es")]
-    elastic_install_directory: PathBuf,
+    pub elastic_install_directory: PathBuf,
 
     /// Don't install Suricata alongside beats
     #[arg(long, short = 'S')]
-    dont_install_suricata: bool,
+    pub dont_install_suricata: bool,
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -2598,7 +2598,7 @@ fn download_beats(download_shell: bool, args: &ElkBeatsArgs) -> eyre::Result<()>
     Ok(())
 }
 
-fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
+pub fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
     std::fs::create_dir_all(&args.elastic_install_directory)?;
 
     if args.use_download_shell {
