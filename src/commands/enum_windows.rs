@@ -14,10 +14,14 @@ use crate::utils::{
 pub struct Enum {
     #[arg(short, long)]
     pub output: Option<String>,
-
+    
     /// Search for DLLs, BATs, and PS1s in addition to EXEs
     #[arg(short = 'd', long)]
     pub detailed: bool,
+
+    /// Perform an extended scan (e.g., read file contents for web shells)
+    #[arg(short = 'e', long)]
+    pub extended: bool,
 
     #[command(subcommand)]
     pub subcommand: Option<EnumSubcommands>,
@@ -28,11 +32,14 @@ pub enum EnumSubcommands {
     /// Current network ports and listening services
     #[command(visible_alias("p"))]
     Ports(super::ports::Ports),
-
     /// Check WSL and Docker status
     WslDocker,
     /// Enumerate IIS sites and scan for potential web shells
-    IisSites,
+    IisSites {
+        /// Perform an extended content scan for web shells
+        #[arg(short = 'e', long)]
+        extended: bool,
+    },
     /// Check for python web servers
     PythonSites,
     /// Enumerate FTP servers (IIS and FileZilla)
@@ -58,7 +65,10 @@ impl super::Command for Enum {
             // Run a specific subsystem if a subcommand is provided
             Some(EnumSubcommands::Ports(ports)) => enum_ports(&mut ob, ports)?,
             Some(EnumSubcommands::WslDocker) => enum_wsl_docker(&mut ob)?,
-            Some(EnumSubcommands::IisSites) => enum_iis_sites(&mut ob)?,
+            
+            // Pass the extended flag here
+            Some(EnumSubcommands::IisSites { extended }) => enum_iis_sites(&mut ob, self.extended || extended)?,
+            
             Some(EnumSubcommands::PythonSites) => enum_python_sites(&mut ob)?,
             Some(EnumSubcommands::FtpSites) => enum_ftp_sites(&mut ob)?,
             Some(EnumSubcommands::Autoruns) => enum_startup_items(&mut ob)?,
@@ -74,8 +84,9 @@ impl super::Command for Enum {
                 // Security & Environment
                 enum_wsl_docker(&mut ob)?;
                 
-                // Web & Services
-                enum_iis_sites(&mut ob)?;
+                // Web & Services - Pass the global extended flag here
+                enum_iis_sites(&mut ob, self.extended)?;
+                
                 enum_python_sites(&mut ob)?;
                 enum_ftp_sites(&mut ob)?;
                 
@@ -143,12 +154,11 @@ fn enum_wsl_docker(out: &mut impl PagerOutput) -> eyre::Result<()> {
 }
 
 // Enumerate IIS sites, listing out where they are being hosted and ports
-fn enum_iis_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
+// Enumerate IIS sites, listing out where they are being hosted and ports
+fn enum_iis_sites(out: &mut impl PagerOutput, extended_scan: bool) -> eyre::Result<()> {
     writeln!(out, "\n==== IIS SITES")?;
-
     // We build the PowerShell script as a single string
     let script = "Import-Module WebAdministration; Get-Website | ForEach-Object { $_.PhysicalPath }";
-
     let output = std::process::Command::new("powershell.exe")
         .args(&[
             "-NoProfile",
@@ -162,7 +172,6 @@ fn enum_iis_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
     if output.status.success() {
         let result = String::from_utf8_lossy(&output.stdout);
         let trimmed = result.trim();
-
         if trimmed.is_empty() {
             writeln!(out, "No IIS sites found.")?;
         } else {
@@ -171,7 +180,9 @@ fn enum_iis_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
                 // Ensure it's a valid looking path before scanning
                 if !path.is_empty() && path.contains(':') {
                     writeln!(out, "Found Site Path: {}", path)?;
-                    scan_web_files(out, path)?;
+                    
+                    // PASS THE FLAG HERE!
+                    scan_web_files(out, path, extended_scan)?;
                 }
             }
         }
@@ -179,16 +190,19 @@ fn enum_iis_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
         let err = String::from_utf8_lossy(&output.stderr);
         writeln!(out, "PowerShell Error: {}", err)?;
     }
-
     Ok(())
 }
 
 use walkdir::WalkDir;
 use colored::*;
+use regex::Regex;
+use std::fs;
 
-// List out possible shells in website directories
-fn scan_web_files(out: &mut impl PagerOutput, root: &str) -> eyre::Result<()> {
-    // 1. Clean the path (remove quotes or trailing spaces from PowerShell/appcmd)
+// Assuming PagerOutput is a custom trait in your codebase that implements standard formatting.
+// If it's standard IO, you can replace `impl PagerOutput` with `impl std::fmt::Write` or `impl std::io::Write`.
+
+pub fn scan_web_files(out: &mut impl PagerOutput, root: &str, extended_scan: bool) -> eyre::Result<()> {
+    // 1. Clean the path
     let clean_root = root.trim_matches(|c| c == '\"' || c == ' ');
     
     if !std::path::Path::new(clean_root).exists() {
@@ -197,25 +211,63 @@ fn scan_web_files(out: &mut impl PagerOutput, root: &str) -> eyre::Result<()> {
 
     writeln!(out, "Scanning directory: {}", clean_root)?;
 
-    // List of common web shell extensions
+    // 2. Define target extensions and signatures
     let danger_exts = ["php", "aspx", "asp", "jsp", "jspx", "cfm", "ashx", "asax", "html"];
-    // List of common web shell names/keywords
-    let danger_names = ["shell", "pony", "b374k", "c99", "r57", "cmd", "backdoor", "tunnel"];
+    let pii_exts = ["csv", "txt", "xls", "xlsx"];
+    
+    // Signatures for extended content scanning
+    let content_sigs = [
+        "eval(", 
+        "base64_decode(", 
+        "System.Diagnostics.Process", 
+        "cmd.exe", 
+        "WScript.Shell",
+        "xp_cmdshell"
+    ];
 
+    // Compile regex outside the loop for performance.
+    // This catches variations like sh3ll, $hell, p0ny, b374k, etc.
+    let shell_regex = Regex::new(
+    r"(?i)(?:[s$][^a-zA-Z0-9]{0,2}[h][^a-zA-Z0-9]{0,2}[e3][^a-zA-Z0-9]{0,2}[l1][^a-zA-Z0-9]{0,2}[l1]|p[^a-zA-Z0-9]{0,2}[o0][^a-zA-Z0-9]{0,2}ny|b374k|c99|r57|backd[o0]{2}r)"
+    ).unwrap();
+    // 3. Walk the directory
     for entry in WalkDir::new(clean_root).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
+        
+        // Skip directories, we only want to evaluate files
+        if !path.is_file() {
+            continue;
+        }
         
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             let ext_lower = ext.to_lowercase();
             
-            if danger_exts.contains(&ext_lower.as_str()) {
-                let name_lower = path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_lowercase();
+            // --- FEATURE 3: Check for PII Files ---
+            if pii_exts.contains(&ext_lower.as_str()) {
+                writeln!(
+                    out, 
+                    "{}", 
+                    format!("  [$] Potential PII file: {}", path.display()).green()
+                )?;
+                continue; 
+            }
 
-                // Check if filename contains any dangerous keywords
-                let is_sus = danger_names.iter().any(|&word| name_lower.contains(word));
+            // --- FEATURE 1 & 2: Check for Web Shells ---
+            if danger_exts.contains(&ext_lower.as_str()) {
+                let file_name = path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+
+                // Check against regex for obfuscated names
+                let mut is_sus = shell_regex.is_match(&file_name);
+
+                // If the name isn't suspicious, but the -e flag is passed, scan the content
+                if !is_sus && extended_scan {
+                    // read_to_string ignores non-UTF8 binary files gracefully by returning an Err
+                    if let Ok(content) = fs::read_to_string(path) {
+                        is_sus = content_sigs.iter().any(|&sig| content.contains(sig));
+                    }
+                }
 
                 if is_sus {
                     writeln!(
