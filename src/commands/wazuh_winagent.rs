@@ -83,12 +83,17 @@ impl super::Command for WinAgents {
         println!("{}", "--- Wazuh agent installed!".green());
 
         if !args.dont_install_beats {
-            super::elk_winbeats::install_winbeats(super::elk_winbeats::ElkBeatsArgs {
-                elk_ip: args.wazuh_ip,
-                elk_share_port: args.wazuh_share_port,
-                elastic_install_directory: args.elastic_install_directory,
-            })?;
+            super::elk_winbeats::install_winbeats(
+                super::elk_winbeats::ElkBeatsArgs {
+                    elk_ip: args.wazuh_ip,
+                    elk_share_port: args.wazuh_share_port,
+                    elastic_install_directory: args.elastic_install_directory,
+                },
+                false,
+            )?;
         }
+
+        super::elk_winbeats::enable_scriptblock_logging()?;
 
         Ok(())
     }
