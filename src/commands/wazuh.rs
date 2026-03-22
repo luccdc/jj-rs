@@ -1982,10 +1982,8 @@ fn import_direct_from_beats(
                 };
 
                 if p == "url.original" {
-                    dbg!(&m);
                     m.insert("type".into(), "string".into());
                     m.insert("aggregatable".into(), true.into());
-                    dbg!(&m);
 
                     return true;
                 } else if p.starts_with("url.original") {
@@ -2506,8 +2504,8 @@ fn load_wazuh_dashboards(bb: &Busybox, wazuh_password: &str) -> eyre::Result<()>
         .add_root_certificate(root_cert)
         .build()?;
 
-    for (i, dash) in WAZUH_DASHBOARDS.iter().enumerate() {
-        print!("Importing dashboard {}...", i + 1);
+    for (i, (name, dash)) in WAZUH_DASHBOARDS.iter().enumerate() {
+        print!("Importing object {}, '{name}'...", i + 1);
 
         let part = Part::bytes(*dash).file_name("input.ndjson");
         let form = Form::new().part("file", part);
@@ -2526,7 +2524,7 @@ fn load_wazuh_dashboards(bb: &Busybox, wazuh_password: &str) -> eyre::Result<()>
             println!(" {}", "Success".green());
         } else {
             println!(" Error importing dashboard!");
-            dbg!(response);
+            println!("{response}");
         }
     }
 
