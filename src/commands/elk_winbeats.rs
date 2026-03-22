@@ -8,6 +8,7 @@ use crate::utils::download_file;
 const FILEBEAT_YML: &str = include_str!("elk/filebeat.windows.yml");
 const WINLOGBEAT_YML: &str = include_str!("elk/winlogbeat.windows.yml");
 const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.windows.yml");
+const METRICBEAT_YML: &str = include_str!("elk/metricbeat.yml");
 
 #[derive(Parser, Clone, Debug)]
 #[command(version, about)]
@@ -71,7 +72,7 @@ pub fn install_winbeats(args: ElkBeatsArgs, enable_powershell_logging: bool) -> 
 
     let mut download_threads = vec![];
 
-    for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+    for beat in ["winlogbeat", "filebeat", "packetbeat", "metricbeat"] {
         let args = args.clone();
         download_threads.push(std::thread::spawn(move || {
             let res = download_file(
@@ -99,7 +100,7 @@ pub fn install_winbeats(args: ElkBeatsArgs, enable_powershell_logging: bool) -> 
 
     let mut unpack_threads = vec![];
 
-    for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+    for beat in ["winlogbeat", "filebeat", "packetbeat", "metricbeat"] {
         let args = args.clone();
         unpack_threads.push(std::thread::spawn(move || -> eyre::Result<()> {
             let beat_zip = std::io::BufReader::new(
@@ -194,9 +195,35 @@ output.logstash:
         ),
     )?;
 
+    std::fs::write(
+        args.elastic_install_directory
+            .join("metricbeat")
+            .join("metricbeat.yml"),
+        format!(
+            r#"
+{METRICBEAT_YML}
+
+output.logstash:
+  hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}\\http_ca.crt"]
+"#,
+            args.elk_ip,
+            format!("{}", args.elastic_install_directory.display()).replace("\\", "\\\\")
+        )
+        .replace(
+            "$METRICBEAT_PATH",
+            &format!(
+                "{}",
+                args.elastic_install_directory.join("metricbeat").display()
+            ),
+        ),
+    )?;
+
     println!("--- Configured beats! Installing as services...");
 
-    for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+    for beat in ["winlogbeat", "filebeat", "packetbeat", "metricbeat"] {
         Command::new("powershell.exe")
             .args(&[
                 "-NoProfile",
@@ -220,7 +247,7 @@ output.logstash:
 
     println!("--- Testing output...");
 
-    for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+    for beat in ["winlogbeat", "filebeat", "packetbeat", "metricbeat"] {
         Command::new(format!(
             "{}\\{beat}\\{beat}.exe",
             args.elastic_install_directory.display()
@@ -233,7 +260,7 @@ output.logstash:
 
     println!("--- Starting beats...");
 
-    for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+    for beat in ["winlogbeat", "filebeat", "packetbeat", "metricbeat"] {
         Command::new("sc.exe")
             .args(&["start", beat])
             .spawn()?

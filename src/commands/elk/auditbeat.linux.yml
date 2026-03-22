@@ -32,6 +32,9 @@ auditbeat.modules:
     # Kernel module loads
     -a always,exit -F arch=b64 -S init_module,finit_module -k module_load
 
+    # Template for watching a directory for changes
+    # -a exit,always -F dir=/var/www/html -F perm=wa -F key=dir_changes
+
 - module: file_integrity
   paths:
   - /bin

@@ -43,6 +43,7 @@ include!(concat!(env!("OUT_DIR"), "/kibana_dashboards.rs"));
 pub const FILEBEAT_YML: &str = include_str!("elk/filebeat.linux.yml");
 pub const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.linux.yml");
 pub const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.linux.yml");
+pub const METRICBEAT_YML: &str = include_str!("elk/metricbeat.yml");
 pub const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
 pub const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
 pub const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
@@ -50,6 +51,7 @@ pub const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
 pub const AUDITBEAT_SERVICE: &str = include_str!("elk/auditbeat.service");
 pub const FILEBEAT_SERVICE: &str = include_str!("elk/filebeat.service");
 pub const PACKETBEAT_SERVICE: &str = include_str!("elk/packetbeat.service");
+pub const METRICBEAT_SERVICE: &str = include_str!("elk/metricbeat.service");
 pub const SURICATA_YAML: &str = include_str!("elk/suricata.yaml");
 
 macro_rules! cpaths {
@@ -199,6 +201,10 @@ pub enum ElkCommands {
     #[command(visible_alias = "fb")]
     SetupFilebeat(ElkSubcommandArgs),
 
+    /// Configure metricbeat locally and optimize Elasticsearch to handle metricbeat logs
+    #[command(visible_alias = "fb")]
+    SetupMetricbeat(ElkSubcommandArgs),
+
     /// Optimize Elasticsearch to handle winlogbeat logs
     #[command(visible_alias = "wb")]
     SetupWinlogbeat(ElkSubcommandArgs),
@@ -328,6 +334,10 @@ impl Elk {
             setup_packetbeat(elastic_password, args)?;
         }
 
+        if let EC::Install(args) | EC::SetupMetricbeat(args) = &self.command {
+            setup_metricbeat(elastic_password, args)?;
+        }
+
         if let EC::Install(args) | EC::SetupWinlogbeat(args) = &self.command {
             setup_winlogbeat(&busybox, elastic_password, args)?;
         }
@@ -436,7 +446,7 @@ fn download_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
             }
         }
 
-        for beat in ["auditbeat", "filebeat", "packetbeat"] {
+        for beat in ["auditbeat", "filebeat", "packetbeat", "metricbeat"] {
             let download_package = {
                 let args = args.clone();
                 let beat = beat.to_string();
@@ -462,7 +472,7 @@ fn download_packages(args: &ElkSubcommandArgs) -> eyre::Result<()> {
             }
         }
 
-        for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+        for beat in ["winlogbeat", "filebeat", "packetbeat", "metricbeat"] {
             let download_package = {
                 let args = args.clone();
                 let beat = beat.to_string();
@@ -1854,6 +1864,92 @@ output.logstash:
     Ok(())
 }
 
+fn setup_metricbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> eyre::Result<()> {
+    println!("{}", "--- Setting up metricbeat".green());
+
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-metricbeat.service",
+        METRICBEAT_SERVICE.replace(
+            "$FB_HOME",
+            &format!("{}/metricbeat", args.elastic_install_directory.display()),
+        ),
+    )
+    .context("Could not write systemd service for metricbeat")?;
+
+    let es_password = get_elastic_password(password)?;
+
+    let fb_home = cpaths!(args.elastic_install_directory, "metricbeat");
+
+    apply_selinux_labels_to_elastic_package(
+        &fb_home,
+        &cpaths!(fb_home, "metricbeat.yml"),
+        &cpaths!(fb_home, "metricbeat"),
+        &cpaths!(fb_home, "data"),
+    )?;
+
+    std::fs::write(
+        cpaths!(fb_home, "metricbeat.yml"),
+        format!(
+            r#"
+{METRICBEAT_YML}
+
+setup.kibana:
+  host: "localhost:5601"
+  protocol: https
+  ssl:
+    enabled: true
+    certificate_authorities: ["{0}/http_ca.crt"]
+
+output.elasticsearch:
+  hosts: ["https://localhost:10200"]
+  transport: https
+  username: elastic
+  password: "{es_password}"
+  ssl:
+    enabled: true
+    certificate_authorities: "{0}/http_ca.crt"
+"#,
+            args.elasticsearch_share_directory.display(),
+        )
+        .replace(
+            "$METRICBEAT_PATH",
+            &format!("{}/metricbeat", args.elastic_install_directory.display()),
+        ),
+    )?;
+
+    system(&format!(
+        "{0}/metricbeat --path.home {0} --path.config {0} --path.data {0}/data --path.logs {0}/logs setup --modules iis,mysql,apache,nginx",
+        fb_home.display()
+    ))?;
+
+    std::fs::write(
+        cpaths!(fb_home, "metricbeat.yml"),
+        format!(
+            r#"
+{METRICBEAT_YML}
+
+output.logstash:
+  hosts: ["localhost:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            args.elasticsearch_share_directory.display()
+        )
+        .replace(
+            "$METRICBEAT_PATH",
+            &format!("{}/metricbeat", args.elastic_install_directory.display()),
+        ),
+    )?;
+
+    system("systemctl enable jj-metricbeat")?;
+    system("systemctl restart jj-metricbeat")?;
+
+    println!("{}", "--- Metricbeat is set up".green());
+
+    Ok(())
+}
+
 pub fn convert_fields_to_index_template<F>(
     beat_name: &str,
     fields_parsed: serde_json::Value,
@@ -2566,7 +2662,7 @@ fn download_beats(download_shell: bool, args: &ElkBeatsArgs) -> eyre::Result<()>
 
     let mut download_threads = vec![];
 
-    for beat in ["auditbeat", "filebeat", "packetbeat"] {
+    for beat in ["auditbeat", "filebeat", "packetbeat", "metricbeat"] {
         let args = args.clone();
         let download_package = move || {
             let res = download_file(
@@ -2632,7 +2728,7 @@ pub fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
 
     let mut threads = Vec::new();
 
-    for pkg in ["filebeat", "auditbeat", "packetbeat"] {
+    for pkg in ["filebeat", "auditbeat", "packetbeat", "metricbeat"] {
         let src_path = cpaths!("/tmp", format!("{pkg}.tar.gz"));
         let dest_path = cpaths!(args.elastic_install_directory, pkg);
 
@@ -2693,6 +2789,15 @@ pub fn install_beats(bb: &Busybox, args: &ElkBeatsArgs) -> eyre::Result<()> {
         ),
     )
     .context("Could not write systemd service for packetbeat")?;
+
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-metricbeat.service",
+        METRICBEAT_SERVICE.replace(
+            "$PB_HOME",
+            &format!("{}/metricbeat", args.elastic_install_directory.display()),
+        ),
+    )
+    .context("Could not write systemd service for metricbeat")?;
 
     println!(
         "{}",
@@ -2758,6 +2863,32 @@ output.logstash:
             PACKETBEAT_YML,
             args.elk_ip,
             args.elastic_install_directory.display()
+        ),
+    )?;
+
+    std::fs::write(
+        cpaths!(
+            args.elastic_install_directory,
+            "metricbeat",
+            "metricbeat.yml"
+        ),
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            METRICBEAT_YML,
+            args.elk_ip,
+            args.elastic_install_directory.display()
+        )
+        .replace(
+            "$METRICBEAT_PATH",
+            &format!("{}/metricbeat", args.elastic_install_directory.display()),
         ),
     )?;
 

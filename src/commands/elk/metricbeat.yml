@@ -1,0 +1,5 @@
+metricbeat.config.modules.path: $METRICBEAT_PATH/modules.d/*.yml
+
+processors:
+  - add_host_metadata: ~
+  - add_docker_metadata: ~
