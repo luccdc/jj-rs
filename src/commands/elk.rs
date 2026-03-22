@@ -230,7 +230,7 @@ impl super::Command for Elk {
 
         if let EC::ExportDashboards = self.command {
             let mut out = std::io::stdout().lock();
-            for dash in KIBANA_DASHBOARDS {
+            for (_, dash) in KIBANA_DASHBOARDS {
                 out.write_all(dash)?;
             }
             return Ok(());
@@ -1299,8 +1299,8 @@ fn load_kibana_dashboards(
 
     let client = Client::builder().add_root_certificate(root_cert).build()?;
 
-    for (i, dash) in KIBANA_DASHBOARDS.iter().enumerate() {
-        print!("Importing dashboard {}...", i + 1);
+    for (i, (name, dash)) in KIBANA_DASHBOARDS.iter().enumerate() {
+        print!("Importing object {}, '{name}'...", i + 1);
 
         let part = Part::bytes(*dash).file_name("input.ndjson");
         let form = Form::new().part("file", part);
@@ -1317,7 +1317,7 @@ fn load_kibana_dashboards(
             println!(" {}", "Success".green());
         } else {
             println!(" Error importing dashboard!");
-            dbg!(response);
+            println!("{response}");
         }
     }
 

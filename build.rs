@@ -11,7 +11,11 @@ fn main() -> std::io::Result<()> {
             .map(|d| {
                 let mut dashboard_file = dashboard_dir.clone();
                 dashboard_file.push(d.path());
-                format!(r#"include_bytes!("{}")"#, dashboard_file.display())
+                format!(
+                    r#"("{}", include_bytes!("{}"))"#,
+                    d.file_name().to_string_lossy(),
+                    dashboard_file.display()
+                )
             })
             .collect::<Vec<_>>();
 
@@ -23,7 +27,7 @@ fn main() -> std::io::Result<()> {
                 std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
             ),
             format!(
-                "const KIBANA_DASHBOARDS: &[&[u8]] = &[{}];",
+                "const KIBANA_DASHBOARDS: &[(&str, &[u8])] = &[{}];",
                 include_macros.join(",")
             ),
         )?;
@@ -41,7 +45,11 @@ fn main() -> std::io::Result<()> {
             .map(|d| {
                 let mut dashboard_file = dashboard_dir.clone();
                 dashboard_file.push(d.path());
-                format!(r#"include_bytes!("{}")"#, dashboard_file.display())
+                format!(
+                    r#"("{}", include_bytes!("{}"))"#,
+                    d.file_name().to_string_lossy(),
+                    dashboard_file.display()
+                )
             })
             .collect::<Vec<_>>();
 
@@ -53,7 +61,7 @@ fn main() -> std::io::Result<()> {
                 std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
             ),
             format!(
-                "const WAZUH_DASHBOARDS: &[&[u8]] = &[{}];",
+                "const WAZUH_DASHBOARDS: &[(&str, &[u8])] = &[{}];",
                 include_macros.join(",")
             ),
         )?;
