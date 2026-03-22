@@ -599,7 +599,7 @@ fn download_files(args: &WazuhSubcommandArgs, os: &Distro) -> eyre::Result<()> {
                 }
             }
 
-            for beat in ["winlogbeat", "filebeat", "packetbeat"] {
+            for beat in ["winlogbeat", "filebeat", "packetbeat", "metricbeat"] {
                 let download_package = {
                     let mut dest_path = args.jj_elastic_share_location.clone();
                     let url = format!(
