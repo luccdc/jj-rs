@@ -43,11 +43,11 @@ pub struct WinBeats {
 impl super::Command for WinBeats {
     fn execute(self) -> eyre::Result<()> {
         let ElkCommands::InstallBeats(args) = self.command;
-        install_winbeats(args)
+        install_winbeats(args, true)
     }
 }
 
-pub fn install_winbeats(args: ElkBeatsArgs) -> eyre::Result<()> {
+pub fn install_winbeats(args: ElkBeatsArgs, enable_powershell_logging: bool) -> eyre::Result<()> {
     println!("{}", "--- Downloading beats...".green());
 
     std::fs::create_dir_all(&args.elastic_install_directory)?;
@@ -228,7 +228,55 @@ output.logstash:
             .wait()?;
     }
 
+    if enable_powershell_logging {
+        enable_scriptblock_logging()?;
+    }
+
     println!("{}", "--- Installed beats!".green());
+
+    Ok(())
+}
+
+pub fn enable_scriptblock_logging() -> eyre::Result<()> {
+    use windows::{
+        Win32::System::Registry::{
+            HKEY, HKEY_LOCAL_MACHINE, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, RegCloseKey,
+            RegCreateKeyExW, RegSetValueExW,
+        },
+        core::{PCWSTR, Result, w},
+    };
+
+    print!("--- Enabling scriptblock logging for PowerShell...");
+
+    unsafe {
+        let sub_key = w!(r"Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging");
+        let value_name = w!("EnableScriptBlockLogging");
+
+        let mut hkey = HKEY::default();
+
+        RegCreateKeyExW(
+            HKEY_LOCAL_MACHINE,
+            sub_key,
+            None,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            None,
+            &mut hkey,
+            None,
+        )
+        .ok()?;
+
+        let value_data = 1u32.to_ne_bytes();
+
+        let result = RegSetValueExW(hkey, value_name, None, REG_DWORD, Some(&value_data)).ok();
+
+        let _ = RegCloseKey(hkey);
+
+        result?;
+
+        println!(" Done");
+    }
 
     Ok(())
 }
