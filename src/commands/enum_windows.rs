@@ -52,6 +52,9 @@ pub enum EnumSubcommands {
         #[arg(short = 'd', long)]
         detailed: bool,
     },
+    Winrm,
+    /// Enumerate local administrators and privileged local accounts
+    LocalAdmins,
 }
 
 impl super::Command for Enum {
@@ -72,6 +75,8 @@ impl super::Command for Enum {
             Some(EnumSubcommands::System32Unsigned { detailed }) => {
                 enum_system32_unsigned(&mut ob, self.detailed || detailed)?
             }
+            Some(EnumSubcommands::Winrm) => enum_winrm(&mut ob)?,
+            Some(EnumSubcommands::LocalAdmins) => enum_local_admins(&mut ob)?,
             
             None => {
                 enum_ports(&mut ob, super::ports::Ports::default())?; 
@@ -85,6 +90,9 @@ impl super::Command for Enum {
                 
                 enum_startup_items(&mut ob)?;
                 enum_system32_unsigned(&mut ob, self.detailed)?;
+
+                enum_winrm(&mut ob)?;
+                enum_local_admins(&mut ob)?;
             }
         }
 
@@ -295,37 +303,75 @@ fn enum_python_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
 
 // Check startup items, similar to autoruns. Ignore Microsoft ones
 fn enum_startup_items(out: &mut impl PagerOutput) -> eyre::Result<()> {
-    writeln!(out, "\n==== SUSPICIOUS STARTUP ITEMS")?;
-
+    writeln!(out, "\n==== SUSPICIOUS STARTUP ITEMS (SIGNATURE CHECK)")?;
     let script = r#"
         $locations = @(
             "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
             "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
             "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
-            "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce",
-            "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache"
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce",
+            "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache"
         )
+        
         foreach ($loc in $locations) {
-            Get-ItemProperty $loc -ErrorAction SilentlyContinue | Get-Member -MemberType NoteProperty | ForEach-Object {
+            $items = Get-ItemProperty $loc -ErrorAction SilentlyContinue
+            if (-not $items) { continue }
+            
+            $items.PSObject.Properties | Where-Object { $_.Name -notin @("PSPath", "PSParentPath", "PSChildName", "PSDrive", "PSProvider") } | ForEach-Object {
                 $name = $_.Name
-                $val = (Get-ItemProperty $loc).$name
-                if ($val -notlike "*Microsoft*" -and $val -match '\.(exe|dll|bat|ps1|py)') {
-                    "Registry ($loc): $name -> $val"
+                $val = $_.Value
+                
+                # Regex to extract the executable path from the command line string
+                $path = ""
+                if ($val -match '^"([^"]+)"') {
+                    $path = $matches[1]
+                } elseif ($val -match '^([^ ]+\.(exe|dll|bat|ps1|py|vbs))') {
+                    $path = $matches[1]
+                } else {
+                    $path = $val -replace ' -.*','' # Rough fallback
+                }
+
+                if (Test-Path $path -PathType Leaf) {
+                    $sig = Get-AuthenticodeSignature $path
+                    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+                        "Registry ($loc): $name"
+                        "  -> Value: $val"
+                        "  -> Status: $($sig.Status) | Signer: $($sig.SignerCertificate.Subject)"
+                        ""
+                    }
+                } elseif ($val -match '\.(exe|dll|bat|ps1|py)') {
+                    # Path was either unresolvable or had complex args, but it looks like a binary/script
+                    "Unresolved Registry Path ($loc): $name"
+                    "  -> Value: $val"
+                    ""
                 }
             }
         }
+        
         # Check Startup Folders
         $folders = @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp", "$env:AppData\Microsoft\Windows\Start Menu\Programs\Startup")
         foreach ($f in $folders) {
-            Get-ChildItem $f -File | ForEach-Object { "Folder ($f): $($_.Name)" }
+            Get-ChildItem $f -File -ErrorAction SilentlyContinue | ForEach-Object { 
+                $path = $_.FullName
+                $sig = Get-AuthenticodeSignature $path
+                if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+                    "Folder ($f): $($_.Name)"
+                    "  -> Status: $($sig.Status) | Signer: $($sig.SignerCertificate.Subject)"
+                    ""
+                }
+            }
         }
     "#;
-
     let output = std::process::Command::new("powershell.exe")
         .args(&["-NoProfile", "-Command", script])
         .output()?;
     
-    writeln!(out, "{}", String::from_utf8_lossy(&output.stdout).trim())?;
+    let res = String::from_utf8_lossy(&output.stdout);
+    if res.trim().is_empty() {
+        writeln!(out, "No unsigned or non-Microsoft startup items found.")?;
+    } else {
+        writeln!(out, "{}", res.trim())?;
+    }
     Ok(())
 }
 
@@ -439,5 +485,55 @@ fn enum_system32_unsigned(out: &mut impl PagerOutput, detailed: bool) -> eyre::R
         writeln!(out, "PowerShell Error: {}", String::from_utf8_lossy(&output.stderr))?;
     }
 
+    Ok(())
+}
+
+fn enum_winrm(out: &mut impl PagerOutput) -> eyre::Result<()> {
+    writeln!(out, "\n==== WINRM LISTENERS")?;
+    let script = r#"
+        $listeners = Get-WSManInstance -ResourceURI winrm/config/listener -Enumerate -ErrorAction SilentlyContinue
+        if ($listeners) {
+            foreach ($l in $listeners) {
+                "Address: $($l.Address) | Transport: $($l.Transport) | Port: $($l.Port)"
+            }
+        } else {
+            "No WinRM listeners found or WinRM is not configured."
+        }
+    "#;
+    let output = std::process::Command::new("powershell.exe")
+        .args(&["-NoProfile", "-Command", script])
+        .output()?;
+    let result = String::from_utf8_lossy(&output.stdout);
+    writeln!(out, "{}", result.trim())?;
+    Ok(())
+}
+
+// Enumerate Local Admins and Privileged Accounts
+fn enum_local_admins(out: &mut impl PagerOutput) -> eyre::Result<()> {
+    writeln!(out, "\n==== LOCAL ADMINS & PRIVILEGED ACCOUNTS")?;
+    let script = r#"
+        $privilegedGroups = @("Administrators", "Remote Management Users", "Remote Desktop Users")
+        foreach ($group in $privilegedGroups) {
+            $members = Get-LocalGroupMember -Group $group -ErrorAction SilentlyContinue
+            if ($members) {
+                "Group: $group"
+                foreach ($m in $members) {
+                    # Filter for Local accounts (ignoring ActiveDirectory source if possible)
+                    if ($m.PrincipalSource -eq 'Local') {
+                        "  - $($m.Name) ($($m.ObjectClass))"
+                    }
+                }
+            }
+        }
+    "#;
+    let output = std::process::Command::new("powershell.exe")
+        .args(&["-NoProfile", "-Command", script])
+        .output()?;
+    let result = String::from_utf8_lossy(&output.stdout);
+    if result.trim().is_empty() {
+        writeln!(out, "No local privileged accounts found (or script ran without sufficient permissions).")?;
+    } else {
+        writeln!(out, "{}", result.trim())?;
+    }
     Ok(())
 }
