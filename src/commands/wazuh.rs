@@ -1396,8 +1396,16 @@ fn translate_pipeline_elk_to_wazuh(
             community_id.remove("icmp_code");
         }
 
-        if let Some(V::Object(_)) = processor.get("uri_parts") {
-            return None;
+        if let Some(V::Object(m)) = processor.get("uri_parts") {
+            let field = m.get("field").and_then(V::as_str)?;
+
+            return Some(serde_json::json!({
+                "copy": {
+                    "source_field": field,
+                    "target_field": "url.original",
+                    "ignore_missing": true
+                }
+            }));
         }
 
         if let Some(V::Object(m)) = processor.get("registered_domain") {
@@ -1775,7 +1783,6 @@ fn import_direct_from_beats(
                     return false;
                 }
 
-                m.remove("fields");
                 m.remove("unit");
                 m.remove("metric_type");
                 m.remove("definition");
@@ -1810,6 +1817,17 @@ fn import_direct_from_beats(
                 ) {
                     m.remove("ignore_above");
                 }
+
+                if m.get("type").and_then(serde_json::Value::as_str) == Some("wildcard")
+                    && let Some(fields) = m.get("fields").and_then(serde_json::Value::as_object)
+                    && let Some((entry, value)) = (&fields).into_iter().next()
+                    && entry == "text"
+                    && value.get("type").and_then(serde_json::Value::as_str)
+                        == Some("match_only_text")
+                {
+                    m.insert("type".into(), "keyword".into());
+                }
+                m.remove("fields");
 
                 true
             },
@@ -1859,9 +1877,13 @@ fn import_direct_from_beats(
 
         if response.get("acknowledged") == Some(&(true.into())) {
             println!("  Successfully uploaded data stream! Importing ingest pipelines...");
-        } else {
+        } else if &response["error"]["type"]
+            != &serde_json::Value::String("resource_already_exists_exception".to_string())
+        {
             eprintln!("  Issues uploading data stream: {response}");
             continue;
+        } else {
+            eprintln!("  Data stream already exists; moving on...");
         }
 
         for (name, ingest_pipeline) in ingest_pipelines {
@@ -1952,6 +1974,26 @@ fn import_direct_from_beats(
             &beat,
             fields.clone(),
             &args.jj_elastic_version,
+            |p, m| {
+                use serde_json::Value as V;
+
+                let V::Object(m) = m else {
+                    return false;
+                };
+
+                if p == "url.original" {
+                    dbg!(&m);
+                    m.insert("type".into(), "string".into());
+                    m.insert("aggregatable".into(), true.into());
+                    dbg!(&m);
+
+                    return true;
+                } else if p.starts_with("url.original") {
+                    return false;
+                }
+
+                true
+            },
         )?;
         let data_view_body = serde_json::to_string(&data_view)?;
 
