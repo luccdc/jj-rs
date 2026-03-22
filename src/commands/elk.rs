@@ -2119,17 +2119,24 @@ where
     }))
 }
 
-pub fn convert_fields_to_data_view(
+pub fn convert_fields_to_data_view<F>(
     beat_name: &str,
     fields_parsed: serde_json::Value,
     version: &str,
-) -> eyre::Result<serde_json::Value> {
-    fn visit_pattern_fields(
+    mut visit_field: F,
+) -> eyre::Result<serde_json::Value>
+where
+    F: FnMut(&str, &mut serde_json::Value) -> bool,
+{
+    fn visit_pattern_fields<F>(
+        visit_field: &mut F,
         mappings: &mut Vec<serde_json::Value>,
         format_map: &mut serde_json::Map<String, serde_json::Value>,
         object_chain: Option<&str>,
         field: serde_json::Value,
-    ) {
+    ) where
+        F: FnMut(&str, &mut serde_json::Value) -> bool,
+    {
         use serde_json::Value as V;
 
         let V::Object(mut m) = field else {
@@ -2142,7 +2149,7 @@ pub fn convert_fields_to_data_view(
             };
 
             for field in fields {
-                visit_pattern_fields(mappings, format_map, None, field);
+                visit_pattern_fields(visit_field, mappings, format_map, None, field);
             }
 
             return;
@@ -2160,7 +2167,7 @@ pub fn convert_fields_to_data_view(
             };
 
             for field in fields {
-                visit_pattern_fields(mappings, format_map, Some(&full_chain), field);
+                visit_pattern_fields(visit_field, mappings, format_map, Some(&full_chain), field);
             }
         } else {
             let mapped_field_type = match &*field_type {
@@ -2205,18 +2212,19 @@ pub fn convert_fields_to_data_view(
                 }
             }
 
-            mappings.push(mapping);
+            if visit_field(&full_chain, &mut mapping) {
+                mappings.push(mapping);
 
-            let format = m.remove("format");
-            let pattern = m.get("pattern");
-            if format.is_some() || pattern.is_some() {
-                let mut format_obj = serde_json::Map::new();
+                let format = m.remove("format");
+                let pattern = m.get("pattern");
+                if format.is_some() || pattern.is_some() {
+                    let mut format_obj = serde_json::Map::new();
 
-                if let Some(format) = format {
-                    format_obj.insert("id".into(), format.into());
-                }
+                    if let Some(format) = format {
+                        format_obj.insert("id".into(), format.into());
+                    }
 
-                macro_rules! add_params {
+                    macro_rules! add_params {
                     (($src:expr => $dest:expr) { $($src_key:ident => $dest_key:ident),+$(,)? }) => {{
                         $(
                             if let Some(v) = $src.remove(stringify!($src_key)) {
@@ -2227,16 +2235,17 @@ pub fn convert_fields_to_data_view(
                     }};
                 }
 
-                add_params!(
-                    (m => format_obj) {
-                        pattern => pattern,
-                        input_format => inputFormat,
-                        output_format => outputFormat,
-                        output_precision => outputPrecision,
-                    }
-                );
+                    add_params!(
+                        (m => format_obj) {
+                            pattern => pattern,
+                            input_format => inputFormat,
+                            output_format => outputFormat,
+                            output_precision => outputPrecision,
+                        }
+                    );
 
-                format_map.insert(full_chain, format_obj.into());
+                    format_map.insert(full_chain, format_obj.into());
+                }
             }
         }
     }
@@ -2247,7 +2256,13 @@ pub fn convert_fields_to_data_view(
     match fields_parsed {
         serde_json::Value::Array(a) => {
             for field in a {
-                visit_pattern_fields(&mut fields, &mut field_format_map, None, field);
+                visit_pattern_fields(
+                    &mut visit_field,
+                    &mut fields,
+                    &mut field_format_map,
+                    None,
+                    field,
+                );
             }
         }
         _ => {
@@ -2388,8 +2403,12 @@ fn setup_winlogbeat(
 
     println!("Done uploading index template! Creating index pattern (data view)...");
 
-    let index_pattern =
-        convert_fields_to_data_view("winlogbeat", fields_parsed, &args.elastic_version)?;
+    let index_pattern = convert_fields_to_data_view(
+        "winlogbeat",
+        fields_parsed,
+        &args.elastic_version,
+        |_, _| true,
+    )?;
     let index_pattern_body = serde_json::to_string(&index_pattern)?;
 
     println!("Uploading index pattern...");
