@@ -24,6 +24,18 @@ pub struct WazuhAgentsArgs {
     /// Skip installing Beats
     #[arg(long, short = 'B')]
     dont_install_beats: bool,
+
+    /// Path to search for Sysmon. If it's a URL, it will download Sysmon. If it's a zip file, it will search for Sysmon64.exe and extract it. Otherwise, it should be a path to Sysmon64.exe
+    #[arg(
+        long,
+        short = 'P',
+        default_value = "https://live.sysinternals.com/Sysmon64.exe"
+    )]
+    sysmon_path: String,
+
+    /// Don't install sysmon. Current configuration logs process executions and network connections
+    #[arg(long, short = 'S')]
+    dont_install_sysmon: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -88,12 +100,18 @@ impl super::Command for WinAgents {
                     elk_ip: args.wazuh_ip,
                     elk_share_port: args.wazuh_share_port,
                     elastic_install_directory: args.elastic_install_directory,
+                    sysmon_path: "".into(),
+                    dont_install_sysmon: true,
                 },
                 false,
             )?;
         }
 
         super::elk_winbeats::enable_scriptblock_logging()?;
+
+        if !args.dont_install_sysmon {
+            super::elk_winbeats::install_configure_sysmon(args.sysmon_path)?;
+        }
 
         Ok(())
     }

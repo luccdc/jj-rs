@@ -23,6 +23,18 @@ pub struct ElkBeatsArgs {
     /// Where to install and configure all the beats
     #[arg(long, short = 'e', default_value = r"C:\Program Files\Elastic")]
     pub elastic_install_directory: PathBuf,
+
+    /// Path to search for Sysmon. If it's a URL, it will download Sysmon. If it's a zip file, it will search for Sysmon64.exe and extract it. Otherwise, it should be a path to Sysmon64.exe
+    #[arg(
+        long,
+        short = 'P',
+        default_value = "https://live.sysinternals.com/Sysmon64.exe"
+    )]
+    pub sysmon_path: String,
+
+    /// Don't install sysmon. Current configuration logs process executions and network connections
+    #[arg(long, short = 'S')]
+    pub dont_install_sysmon: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -232,6 +244,10 @@ output.logstash:
         enable_scriptblock_logging()?;
     }
 
+    if !args.dont_install_sysmon {
+        install_configure_sysmon(args.sysmon_path)?;
+    }
+
     println!("{}", "--- Installed beats!".green());
 
     Ok(())
@@ -277,6 +293,54 @@ pub fn enable_scriptblock_logging() -> eyre::Result<()> {
 
         println!(" Done");
     }
+
+    Ok(())
+}
+
+pub fn install_configure_sysmon(sysmon_path: String) -> eyre::Result<()> {
+    let path = if let Ok(p) = reqwest::Url::parse(&sysmon_path)
+        && (p.scheme() == "http" || p.scheme() == "https")
+    {
+        let target_path = std::env::temp_dir().join("Sysmon64.exe");
+        crate::utils::download_file(&sysmon_path, &target_path)?;
+        target_path
+    } else if sysmon_path.ends_with(".zip") {
+        let archive =
+            std::io::BufReader::new(std::fs::OpenOptions::new().read(true).open(&sysmon_path)?);
+        let mut archive = zip::read::ZipArchive::new(archive)?;
+
+        let file_name = {
+            archive
+                .file_names()
+                .find(|f| {
+                    f.to_ascii_uppercase().ends_with("SYSMON64.EXE")
+                        || f.to_ascii_uppercase().ends_with("SYSMON.EXE")
+                })
+                .ok_or_else(|| eyre::eyre!("Could not find Sysmon64.exe in zip file provided"))?
+                .to_owned()
+        };
+
+        let target_path = std::env::temp_dir().join("Sysmon64.exe");
+        std::io::copy(
+            &mut archive.by_name(&file_name)?,
+            &mut std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&target_path)?,
+        )?;
+        target_path
+    } else if sysmon_path.ends_with(".exe") {
+        PathBuf::from(sysmon_path)
+    } else {
+        eyre::bail!(
+            "Did not provide a valid path to install sysmon from! Expected a URL to download Sysmon, a zip file to search for Sysmon64.exe, or the path to an extracted Sysmon64.exe"
+        );
+    };
+
+    Command::new(path)
+        .args(["-i", "-n", "-l", "-p", "-accepteula"])
+        .spawn()?
+        .wait()?;
 
     Ok(())
 }
