@@ -62,7 +62,7 @@ mod tui;
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct CheckId(Arc<str>, Arc<str>);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TroubleshooterResult {
     timestamp: chrono::DateTime<chrono::Utc>,
     check_id: CheckId,
@@ -84,6 +84,18 @@ impl Serialize for TroubleshooterResult {
             &format!("{}.{}", self.check_id.0, self.check_id.1),
         )?;
         map.serialize_entry("overall_result", &self.overall_result)?;
+        if let Err(e) = map.serialize_entry(
+            "overall_result_int",
+            match &self.overall_result {
+                CheckResultType::Success => &1i32,
+                CheckResultType::Failure => &-1i32,
+                CheckResultType::Warning => &0i32,
+                CheckResultType::NotRun => &0i32,
+            },
+        ) {
+            eprintln!("Error: {e}");
+            return Err(e);
+        };
 
         for (i, (step_id, result)) in self.steps.iter().enumerate() {
             let mut inner_map = HashMap::new();
@@ -183,7 +195,12 @@ impl<'de> serde::Deserialize<'de> for TroubleshooterResult {
                         key if key.starts_with("step_") => {
                             checks.push(map.next_value()?);
                         }
-                        _ => {}
+                        "overall_result_int" => {
+                            map.next_value::<i32>()?;
+                        }
+                        _ => {
+                            map.next_value::<serde_json::Value>()?;
+                        }
                     }
                 }
 

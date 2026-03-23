@@ -22,7 +22,7 @@ impl LogConfig {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[non_exhaustive]
 pub enum LogEvent {
     Result(TroubleshooterResult),
@@ -115,6 +115,7 @@ pub async fn log_handler_thread(
 
             log_buffer[..bytes]
                 .split(|b| *b == 0x0A)
+                .filter(|sl| !sl.is_empty())
                 .filter_map(|sl| serde_json::from_slice(sl).ok())
                 .collect::<Vec<_>>()
         };
