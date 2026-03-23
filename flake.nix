@@ -182,6 +182,7 @@
             fileset = lib.fileset.unions [
               (craneLib.fileset.commonCargoSources ./.)
               ./src/commands/elk
+              ./src/commands/wazuh
               ./src/utils/curl.h
               ./src/commands/proxy/core_ruleset.conf
             ];
