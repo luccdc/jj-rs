@@ -29,6 +29,7 @@ use crate::{
 include!(concat!(env!("OUT_DIR"), "/wazuh_dashboards.rs"));
 
 const LOGSTASH_WAZUH_CONF: &str = include_str!("elk/pipeline-wazuh.conf");
+const CLAMAV_CONF: &str = include_str!("wazuh/clamav.linux.conf");
 
 #[derive(Parser, Debug)]
 #[command(about)]
@@ -81,9 +82,17 @@ pub struct WazuhSubcommandArgs {
     #[arg(long, short = 's')]
     pub dont_install_suricata: bool,
 
+    /// Don't install ClamAV when installing beats
+    #[arg(long, short = 'c')]
+    pub dont_install_clamav: bool,
+
     /// Wazuh doesn't have the same performance hacks as Elasticsearch; tweak the ceiling for script compilations
     #[arg(long, short = 'M', default_value = "10000")]
     pub max_compilations_rate: u32,
+
+    /// The size of the zram swap area, in gigabytes
+    #[arg(long, short, default_value = "8")]
+    pub zram_size: u8,
 }
 
 #[derive(Parser, Debug)]
@@ -116,6 +125,10 @@ pub struct WazuhAgentCommandArgs {
     /// Don't install Suricata alongside beats and agent
     #[arg(long, short = 'S')]
     dont_install_suricata: bool,
+
+    /// Don't install ClamAV alongside beats and agent
+    #[arg(long, short = 'C')]
+    dont_install_clamav: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -126,7 +139,7 @@ pub enum WazuhCommands {
 
     /// Setup ZRAM to provide 4G of swap based on compressed RAM
     #[command(visible_alias = "zr")]
-    SetupZram,
+    SetupZram(WazuhSubcommandArgs),
 
     /// Make working directory for later steps
     #[command(visible_alias = "mw")]
@@ -299,8 +312,8 @@ impl Wazuh {
     ) -> eyre::Result<()> {
         use WazuhCommands as WC;
 
-        if let WC::Install(_) | WC::SetupZram = &self.command
-            && let Err(e) = setup_zram()
+        if let WC::Install(args) | WC::SetupZram(args) = &self.command
+            && let Err(e) = setup_zram(args)
         {
             eprintln!("{}{e}", "??? Could not set up zram: ".yellow());
         }
@@ -382,7 +395,7 @@ impl Wazuh {
     }
 }
 
-fn setup_zram() -> eyre::Result<()> {
+fn setup_zram(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
     let mods = qx("lsmod")?.1;
 
     if pcre!(&mods =~ qr/"zram"/xms) {
@@ -394,7 +407,10 @@ fn setup_zram() -> eyre::Result<()> {
         eyre::bail!("Could not load zram!");
     }
 
-    if !qx("zramctl /dev/zram0 --size=4G")?.0.success() {
+    if !qx(&format!("zramctl /dev/zram0 --size={}G", args.zram_size))?
+        .0
+        .success()
+    {
         eyre::bail!("Could not initialize zram device");
     }
 
@@ -1311,7 +1327,7 @@ fn install_dashboard(
                 println!("{v}");
                 println!("--- Enabled dark mode in wazuh dashboards");
             }
-            Err(e) => {
+            Err(_) => {
                 eprintln!("Could not set dark mode in Wazuh dashboards!");
             }
         }
@@ -2331,7 +2347,7 @@ fn install_beats(bb: &Busybox, args: &WazuhSubcommandArgs) -> eyre::Result<()> {
 
     let mut threads = Vec::new();
 
-    for pkg in ["filebeat", "auditbeat", "packetbeat"] {
+    for pkg in ["filebeat", "auditbeat", "packetbeat", "metricbeat"] {
         let src_path = args.jj_elastic_share_location.join(format!("{pkg}.tar.gz"));
         let dest_path = args.jj_elastic_location.join(pkg);
 
@@ -2355,7 +2371,7 @@ fn install_beats(bb: &Busybox, args: &WazuhSubcommandArgs) -> eyre::Result<()> {
         }
     }
 
-    for pkg in ["filebeat", "auditbeat", "packetbeat"] {
+    for pkg in ["filebeat", "auditbeat", "packetbeat", "metricbeat"] {
         let dest_path = args.jj_elastic_location.join(pkg);
 
         super::elk::apply_selinux_labels_to_elastic_package(
@@ -2392,6 +2408,15 @@ fn install_beats(bb: &Busybox, args: &WazuhSubcommandArgs) -> eyre::Result<()> {
         ),
     )
     .context("Could not write systemd service for packetbeat")?;
+
+    std::fs::write(
+        "/usr/lib/systemd/system/jj-metricbeat.service",
+        super::elk::METRICBEAT_SERVICE.replace(
+            "$FB_HOME",
+            &format!("{}/metricbeat", args.jj_elastic_location.display()),
+        ),
+    )
+    .context("Could not write systemd service for metricbeat")?;
 
     println!(
         "{}",
@@ -2485,6 +2510,30 @@ output.logstash:
         ),
     )?;
 
+    std::fs::write(
+        args.jj_elastic_location
+            .join("metricbeat")
+            .join("metricbeat.yml"),
+        format!(
+            r#"
+{}
+
+output.logstash:
+  hosts: ["{}:5044"]
+  ssl:
+    enabled: true
+    certificate_authorities: ["{}/http_ca.crt"]
+"#,
+            super::elk::METRICBEAT_YML,
+            &public_ip,
+            args.jj_elastic_share_location.display()
+        )
+        .replace(
+            "$METRICBEAT_PATH",
+            &format!("{}/metricbeat", args.jj_elastic_location.display()),
+        ),
+    )?;
+
     println!("{}", "--- Done configuring beats!".green());
 
     if let Err(e) = super::elk::disable_auditd() {
@@ -2513,6 +2562,12 @@ output.logstash:
                 sneaky_ip: args.sneaky_ip,
             },
         )?;
+    }
+
+    if !args.dont_install_clamav {
+        let distro = get_distro()?;
+
+        install_clamav(&distro, args.use_download_shell, args.sneaky_ip)?;
     }
 
     Ok(())
@@ -2680,6 +2735,51 @@ fn install_agents(bb: &Busybox, distro: &Distro, args: &WazuhAgentCommandArgs) -
                 sneaky_ip: args.sneaky_ip,
             },
         )?;
+    }
+
+    if !args.dont_install_clamav {
+        install_clamav(&distro, args.use_download_shell, args.sneaky_ip)?;
+    }
+
+    Ok(())
+}
+
+fn install_clamav(
+    distro: &Distro,
+    download_shell: bool,
+    sneaky_ip: Option<Ipv4Addr>,
+) -> eyre::Result<()> {
+    use super::Command;
+
+    super::clamav::ClamAv {
+        cmd: super::clamav::ClamAvCmd::Update {
+            use_download_shell: download_shell,
+            sneaky_ip: sneaky_ip,
+        },
+    }
+    .execute()?;
+
+    if distro.is_rhel_based() {
+        std::fs::write("/etc/clamd.d/scan.conf", CLAMAV_CONF)?;
+        std::fs::write("/var/log/clamd.log", "")?;
+
+        std::fs::set_permissions("/var/log/clamd.log", PermissionsExt::from_mode(0o640))?;
+
+        if let Ok(user) = passwd::load_users("clamscan")
+            && let Some(user) = user.get(0)
+        {
+            chown("/var/log/clamd.log", Some(user.uid), None)?;
+        }
+
+        system("systemctl enable --now clamd@scan")?;
+    } else {
+        let config = std::fs::read_to_string("/etc/clamav/clamd.conf")?;
+
+        let config = crate::pcre!(
+            &config =~ s/r"LogSyslog [^\n]+"/r"LogSyslog yes"/xms
+        );
+
+        std::fs::write("/etc/clamav/clamd.conf", config)?;
     }
 
     Ok(())

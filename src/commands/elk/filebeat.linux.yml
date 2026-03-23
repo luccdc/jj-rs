@@ -14,6 +14,12 @@ filebeat.inputs:
     - ndjson:
         target: check
 
+- type: filestream
+  id: clamav
+  paths:
+    - "/var/log/clamd.log"
+    - "/var/log/clamav/clamav.log"
+
 processors:
   - add_host_metadata:
       when.not.contains.tags: forwarded
