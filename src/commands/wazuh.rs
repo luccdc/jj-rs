@@ -1288,6 +1288,35 @@ fn install_dashboard(
         "--- Successfully installed and configured wazuh dashboards!".green()
     );
 
+    println!("--- Enabling dark mode in wazuh dashboards...");
+
+    {
+        use reqwest::blocking::Client;
+
+        let root_cert = reqwest::Certificate::from_pem(
+            std::fs::read_to_string("/etc/wazuh-indexer/certs/root-ca.pem")?.as_bytes(),
+        )?;
+
+        let client = Client::builder().add_root_certificate(root_cert).build()?;
+
+        let response = client
+            .get(format!("https://{public_ip}:443/api/status"))
+            .basic_auth("admin", Some("admin"))
+            .send()
+            .map_err(eyre::Report::from)
+            .and_then(|r| r.json::<serde_json::Value>().map_err(eyre::Report::from));
+
+        match response {
+            Ok(v) => {
+                println!("{v}");
+                println!("--- Enabled dark mode in wazuh dashboards");
+            }
+            Err(e) => {
+                eprintln!("Could not set dark mode in Wazuh dashboards!");
+            }
+        }
+    }
+
     Ok(())
 }
 
