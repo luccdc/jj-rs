@@ -6,6 +6,9 @@ use eyre::Context;
 
 use crate::utils::download_file;
 
+const CLAMAV_CONF: &str = include_str!("wazuh/clamav.windows.conf");
+const FRESHCLAM_CONF: &str = include_str!("wazuh/freshclam.windows.conf");
+
 #[derive(Parser, Clone, Debug)]
 #[command(version, about)]
 pub struct WazuhAgentsArgs {
@@ -36,6 +39,17 @@ pub struct WazuhAgentsArgs {
     /// Don't install sysmon. Current configuration logs process executions and network connections
     #[arg(long, short = 'S')]
     dont_install_sysmon: bool,
+
+    /// URL to download ClamAV from
+    #[arg(
+        long,
+        default_value = "https://www.clamav.net/downloads/production/clamav-1.5.2.win.x64.zip"
+    )]
+    clamav_url: String,
+
+    /// Don't download and install ClamAV
+    #[arg(long, short = 'C')]
+    dont_install_clamav: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -113,6 +127,46 @@ impl super::Command for WinAgents {
             super::elk_winbeats::install_configure_sysmon(args.sysmon_path)?;
         }
 
+        if !args.dont_install_clamav {
+            install_clamav(args.clamav_url)?;
+        }
+
         Ok(())
     }
+}
+
+fn install_clamav(clamav_url: String) -> eyre::Result<()> {
+    let working_dir = std::env::temp_dir();
+    let target_path = working_dir.join("clamav.zip");
+    download_file(&clamav_url, &target_path)?;
+
+    let archive =
+        std::io::BufReader::new(std::fs::OpenOptions::new().read(true).open(target_path)?);
+    let mut archive = zip::read::ZipArchive::new(archive)?;
+
+    archive.extract_unwrapped_root_dir(
+        r"C:\Program Files\ClamAV",
+        zip::read::root_dir_common_filter,
+    )?;
+
+    std::fs::write(r"C:\Program Files\ClamAV\freshclam.conf", FRESHCLAM_CONF)?;
+    std::fs::write(r"C:\Program Files\ClamAV\clamav.conf", CLAMAV_CONF)?;
+
+    Command::new(r"C:\Program Files\ClamAV\clamd.exe")
+        .arg("--install")
+        .current_dir(r"C:\Program Files\ClamAV")
+        .spawn()?
+        .wait()?;
+
+    Command::new(r"C:\Program Files\ClamAV\freshclam.exe")
+        .current_dir(r"C:\Program Files\ClamAV")
+        .spawn()?
+        .wait()?;
+
+    Command::new("net")
+        .args(["start", "clamd"])
+        .spawn()?
+        .wait()?;
+
+    Ok(())
 }

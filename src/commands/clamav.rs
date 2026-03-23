@@ -6,15 +6,14 @@ use eyre::Context;
 use crate::utils::{
     download_container::DownloadContainer,
     os_version::get_distro,
-    packages::{install_apt_packages, install_dnf_packages, DownloadSettings},
-    qx,
-    system,
+    packages::{DownloadSettings, install_apt_packages, install_dnf_packages},
+    qx, system,
 };
 
 #[derive(Parser, Debug)]
 pub struct ClamAv {
     #[command(subcommand)]
-    cmd: ClamAvCmd,
+    pub cmd: ClamAvCmd,
 }
 
 #[derive(Subcommand, Debug)]
@@ -54,7 +53,10 @@ fn make_download_settings(
     sneaky_ip: Option<Ipv4Addr>,
 ) -> DownloadSettings {
     if use_download_shell {
-        DownloadSettings::Container { name: None, sneaky_ip }
+        DownloadSettings::Container {
+            name: None,
+            sneaky_ip,
+        }
     } else {
         DownloadSettings::NoContainer
     }
@@ -117,7 +119,7 @@ fn maybe_enable_epel(settings: &DownloadSettings) -> eyre::Result<()> {
 
 fn install_clamav_dnf(settings: &DownloadSettings) -> eyre::Result<()> {
     dnf_makecache(settings)?;
-    install_dnf_packages(settings.clone(), &["clamav", "clamav-freshclam"])
+    install_dnf_packages(settings.clone(), &["clamav", "clamav-freshclam", "clamd"])
         .context("Failed to install ClamAV via dnf")
 }
 
@@ -169,7 +171,7 @@ fn install_clamav(settings: DownloadSettings, enable_epel: bool) -> eyre::Result
 
     // Debian-family path
     if is_deb || has_cmd("apt") || has_cmd("apt-get") {
-        return install_apt_packages(settings, &["clamav", "clamav-daemon"])
+        return install_apt_packages(settings, &["clamav", "clamav-daemon", "clamdscan"])
             .context("Failed to install ClamAV via apt");
     }
 

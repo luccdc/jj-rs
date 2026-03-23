@@ -162,6 +162,8 @@ impl super::Command for SiemSetup {
                 public_nat_ip: self.nat_ip,
                 dont_install_suricata: false,
                 max_compilations_rate: 10_000,
+                dont_install_clamav: false,
+                zram_size: 8,
             }),
         }
         .execute_pipeline(&distro, &busybox, &wazuh_pass, &elastic_pass)?;

@@ -7,6 +7,11 @@ filebeat.inputs:
     - ndjson:
         target: check
 
+- type: filestream
+  id: clamav
+  paths:
+    - "C:\\Program Files\\ClamAV\\clamd.log"
+
 processors:
   - add_host_metadata:
       when.not.contains.tags: forwarded
