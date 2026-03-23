@@ -149,6 +149,24 @@ impl Dns {
                             "system_logs": logs,
                         }),
                     )
+                } else if output.contains("Invalid") {
+                    CheckResult::fail(
+                        format!("DNS query for {domain} failed (Invalid Query / Syntax)"),
+                        serde_json::json!({
+                            "command": cmd,
+                            "output": output,
+                            "system_logs": logs,
+                        }),
+                    )
+                } else if output.contains("time") {
+                    CheckResult::fail(
+                        format!("DNS query for {domain} failed (timed out)"),
+                        serde_json::json!({
+                            "command": cmd,
+                            "output": output,
+                            "system_logs": logs,
+                        }),
+                    )
                 } else {
                     CheckResult::succeed(
                         format!("DNS query for {domain} succeeded"),
