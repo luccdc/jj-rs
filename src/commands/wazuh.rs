@@ -2591,7 +2591,7 @@ fn load_wazuh_dashboards(bb: &Busybox, wazuh_password: &str) -> eyre::Result<()>
     for (i, (name, dash)) in WAZUH_DASHBOARDS.iter().enumerate() {
         print!("Importing object {}, '{name}'...", i + 1);
 
-        let part = Part::bytes(*dash).file_name("input.ndjson");
+        let part = Part::bytes(dash.as_bytes()).file_name("input.ndjson");
         let form = Form::new().part("file", part);
 
         let response = client

@@ -46,7 +46,7 @@ fn main() -> std::io::Result<()> {
                 let mut dashboard_file = dashboard_dir.clone();
                 dashboard_file.push(d.path());
                 format!(
-                    r#"("{}", include_bytes!("{}"))"#,
+                    r#"("{}", include_str!("{}"))"#,
                     d.file_name().to_string_lossy(),
                     dashboard_file.display()
                 )
@@ -61,7 +61,7 @@ fn main() -> std::io::Result<()> {
                 std::env::var("OUT_DIR").expect("could not find OUT_DIR variable")
             ),
             format!(
-                "const WAZUH_DASHBOARDS: &[(&str, &[u8])] = &[{}];",
+                "const WAZUH_DASHBOARDS: &[(&str, &str)] = &[{}];",
                 include_macros.join(",")
             ),
         )?;
