@@ -71,7 +71,7 @@ impl PassiveTcpdumpCheck {
             let l4_packet = &ip_packet[ihl * 4..];
 
             let src_ip =
-                Ipv4Addr::from_octets([ip_packet[12], ip_packet[13], ip_packet[14], ip_packet[15]]);
+                Ipv4Addr::from([ip_packet[12], ip_packet[13], ip_packet[14], ip_packet[15]]);
             let src_port = u16::from_be_bytes([l4_packet[0], l4_packet[1]]);
             let dst_port = u16::from_be_bytes([l4_packet[2], l4_packet[3]]);
 
@@ -113,7 +113,7 @@ impl PassiveTcpdumpCheck {
             let l4_packet = &ip_packet[ihl * 4..];
 
             let dst_ip =
-                Ipv4Addr::from_octets([ip_packet[16], ip_packet[17], ip_packet[18], ip_packet[19]]);
+                Ipv4Addr::from([ip_packet[16], ip_packet[17], ip_packet[18], ip_packet[19]]);
             let src_port = u16::from_be_bytes([l4_packet[0], l4_packet[1]]);
             let dst_port = u16::from_be_bytes([l4_packet[2], l4_packet[3]]);
 

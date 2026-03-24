@@ -237,7 +237,7 @@ impl VerifyHashes {
                             continue;
                         };
 
-                        if new_target == old_target {
+                        if new_target == PathBuf::from(&old_target) {
                             if !self.quiet {
                                 println!("[{}] {disp}", "s".cyan());
                             }

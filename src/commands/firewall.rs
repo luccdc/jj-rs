@@ -72,7 +72,7 @@ impl QuickSetup {
     fn execute(self) -> eyre::Result<()> {
         let mut ob: Box<dyn Write> = match self.output_file {
             None => Box::new(stdout()),
-            Some(p) if *p == *"-" => Box::new(stdout()),
+            Some(p) if *p == PathBuf::from("-") => Box::new(stdout()),
             Some(p) => Box::new(
                 OpenOptions::new()
                     .write(true)

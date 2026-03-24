@@ -49,7 +49,7 @@ impl super::Command for Get {
             path
         };
 
-        let mut output: Box<dyn std::io::Write> = if &*path == "-" {
+        let mut output: Box<dyn std::io::Write> = if &*path == PathBuf::from("-") {
             Box::new(std::io::stdout())
         } else {
             Box::new(

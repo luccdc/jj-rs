@@ -160,7 +160,7 @@
           zsh-gzipped = gzip-binary "zsh" "${pkgsStatic.zsh}/bin/zsh";
 
           craneLib = (crane.mkLib pkgs).overrideToolchain (p:
-            p.rust-bin.nightly.latest.default.override {
+            p.rust-bin.stable.latest.default.override {
               extensions = [ "rust-src" ];
               targets = [ "x86_64-unknown-linux-musl" ];
             });

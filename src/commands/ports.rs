@@ -655,7 +655,7 @@ fn reduce_port_list(
             cmd,
             state: match record.state() {
                 st if record.socket_type() == SocketType::Tcp => st,
-                st if record.socket_type() == SocketType::Udp => SocketState::Listen,
+                _ if record.socket_type() == SocketType::Udp => SocketState::Listen,
                 st => st,
             },
             socket_type: vec![record.socket_type()].into_iter().collect(),

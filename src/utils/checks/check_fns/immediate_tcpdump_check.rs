@@ -151,7 +151,7 @@ impl ImmediateTcpdumpCheck {
 
             if packet[offset..] == self.connection_test {
                 *source_port = Some(u16::from_be_bytes([packet[34], packet[35]]));
-                *source_addr = Some(Ipv4Addr::from_octets([
+                *source_addr = Some(Ipv4Addr::from([
                     packet[26], packet[27], packet[28], packet[29],
                 ]));
             }
@@ -198,7 +198,7 @@ impl ImmediateTcpdumpCheck {
 
             if packet[offset..] == self.connection_test {
                 *source_port = Some(u16::from_be_bytes([packet[34], packet[35]]));
-                *source_addr = Some(Ipv4Addr::from_octets([
+                *source_addr = Some(Ipv4Addr::from([
                     packet[26], packet[27], packet[28], packet[29],
                 ]));
             }
