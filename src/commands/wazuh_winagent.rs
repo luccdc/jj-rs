@@ -150,7 +150,7 @@ fn install_clamav(clamav_url: String) -> eyre::Result<()> {
     )?;
 
     std::fs::write(r"C:\Program Files\ClamAV\freshclam.conf", FRESHCLAM_CONF)?;
-    std::fs::write(r"C:\Program Files\ClamAV\clamav.conf", CLAMAV_CONF)?;
+    std::fs::write(r"C:\Program Files\ClamAV\clamd.conf", CLAMAV_CONF)?;
 
     Command::new(r"C:\Program Files\ClamAV\clamd.exe")
         .arg("--install")
