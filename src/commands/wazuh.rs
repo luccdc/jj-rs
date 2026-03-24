@@ -29,7 +29,6 @@ use crate::{
 include!(concat!(env!("OUT_DIR"), "/wazuh_dashboards.rs"));
 
 const LOGSTASH_WAZUH_CONF: &str = include_str!("elk/pipeline-wazuh.conf");
-const CLAMAV_CONF: &str = include_str!("wazuh/clamav.linux.conf");
 
 #[derive(Parser, Debug)]
 #[command(about)]
@@ -2565,9 +2564,7 @@ output.logstash:
     }
 
     if !args.dont_install_clamav {
-        let distro = get_distro()?;
-
-        install_clamav(&distro, args.use_download_shell, args.sneaky_ip)?;
+        install_clamav(args.use_download_shell, args.sneaky_ip)?;
     }
 
     Ok(())
@@ -2738,49 +2735,22 @@ fn install_agents(bb: &Busybox, distro: &Distro, args: &WazuhAgentCommandArgs) -
     }
 
     if !args.dont_install_clamav {
-        install_clamav(&distro, args.use_download_shell, args.sneaky_ip)?;
+        install_clamav(args.use_download_shell, args.sneaky_ip)?;
     }
 
     Ok(())
 }
 
-fn install_clamav(
-    distro: &Distro,
-    download_shell: bool,
-    sneaky_ip: Option<Ipv4Addr>,
-) -> eyre::Result<()> {
+fn install_clamav(download_shell: bool, sneaky_ip: Option<Ipv4Addr>) -> eyre::Result<()> {
     use super::Command;
 
-    super::clamav::ClamAv {
-        cmd: super::clamav::ClamAvCmd::Update {
+    super::clamav_linux::ClamAv {
+        cmd: super::clamav_linux::ClamAvCmd::Update {
             use_download_shell: download_shell,
             sneaky_ip: sneaky_ip,
         },
     }
     .execute()?;
-
-    if distro.is_rhel_based() {
-        std::fs::write("/etc/clamd.d/scan.conf", CLAMAV_CONF)?;
-        std::fs::write("/var/log/clamd.log", "")?;
-
-        std::fs::set_permissions("/var/log/clamd.log", PermissionsExt::from_mode(0o640))?;
-
-        if let Ok(user) = passwd::load_users("clamscan")
-            && let Some(user) = user.get(0)
-        {
-            chown("/var/log/clamd.log", Some(user.uid), None)?;
-        }
-
-        system("systemctl enable --now clamd@scan")?;
-    } else {
-        let config = std::fs::read_to_string("/etc/clamav/clamd.conf")?;
-
-        let config = crate::pcre!(
-            &config =~ s/r"LogSyslog [^\n]+"/r"LogSyslog yes"/xms
-        );
-
-        std::fs::write("/etc/clamav/clamd.conf", config)?;
-    }
 
     Ok(())
 }

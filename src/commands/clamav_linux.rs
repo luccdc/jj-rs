@@ -1,4 +1,7 @@
-use std::net::Ipv4Addr;
+use std::{
+    net::Ipv4Addr,
+    os::unix::fs::{PermissionsExt, chown},
+};
 
 use clap::{Parser, Subcommand};
 use eyre::Context;
@@ -7,8 +10,10 @@ use crate::utils::{
     download_container::DownloadContainer,
     os_version::get_distro,
     packages::{DownloadSettings, install_apt_packages, install_dnf_packages},
-    qx, system,
+    passwd, qx, system,
 };
+
+const CLAMAV_CONF: &str = include_str!("wazuh/clamav.linux.conf");
 
 #[derive(Parser, Debug)]
 pub struct ClamAv {
@@ -183,10 +188,54 @@ fn update_defs(settings: DownloadSettings) -> eyre::Result<()> {
         install_clamav(settings.clone(), true)?;
     }
 
+    let distro = get_distro()?;
+
+    if distro.is_deb_based() {
+        system("systemctl stop clamav-freshclam")?;
+    }
+
     run_in_settings(&settings, || -> eyre::Result<()> {
         system("freshclam").context("freshclam failed")?;
         Ok(())
-    })
+    })?;
+
+    if distro.is_rhel_based() {
+        std::fs::write("/etc/clamd.d/scan.conf", CLAMAV_CONF)?;
+        std::fs::write("/var/log/clamd.log", "")?;
+
+        std::fs::set_permissions("/var/log/clamd.log", PermissionsExt::from_mode(0o640))?;
+
+        if let Ok(user) = passwd::load_users("clamscan")
+            && let Some(user) = user.get(0)
+        {
+            chown("/var/log/clamd.log", Some(user.uid), None)?;
+        }
+
+        system("systemctl enable --now clamd@scan")?;
+        system("systemctl start clamav-clamonacc")?;
+    } else {
+        let config = std::fs::read_to_string("/etc/clamav/clamd.conf")?;
+
+        let config = crate::pcre!(
+            &config =~ s/r"LogSyslog [^\n]+"/r"LogSyslog yes"/xms
+        );
+
+        let config = config
+            + "
+
+OnAccessIncludePath /tmp
+OnAccessIncludePath /usr/bin
+OnAccessExcludeUname clamav
+OnAccessPrevention yes
+";
+
+        std::fs::write("/etc/clamav/clamd.conf", config)?;
+
+        system("systemctl start clamav-freshclam")?;
+        system("systemctl start clamav-clamonacc")?;
+    }
+
+    Ok(())
 }
 
 impl super::Command for ClamAv {

@@ -6,9 +6,6 @@ use eyre::Context;
 
 use crate::utils::download_file;
 
-const CLAMAV_CONF: &str = include_str!("wazuh/clamav.windows.conf");
-const FRESHCLAM_CONF: &str = include_str!("wazuh/freshclam.windows.conf");
-
 #[derive(Parser, Clone, Debug)]
 #[command(version, about)]
 pub struct WazuhAgentsArgs {
@@ -203,45 +200,9 @@ impl super::Command for WinAgents {
         }
 
         if !args.dont_install_clamav {
-            install_clamav(args.clamav_url)?;
+            super::clamav_windows::install_clamav(args.clamav_url)?;
         }
 
         Ok(())
     }
-}
-
-fn install_clamav(clamav_url: String) -> eyre::Result<()> {
-    let working_dir = std::env::temp_dir();
-    let target_path = working_dir.join("clamav.zip");
-    download_file(&clamav_url, &target_path)?;
-
-    let archive =
-        std::io::BufReader::new(std::fs::OpenOptions::new().read(true).open(target_path)?);
-    let mut archive = zip::read::ZipArchive::new(archive)?;
-
-    archive.extract_unwrapped_root_dir(
-        r"C:\Program Files\ClamAV",
-        zip::read::root_dir_common_filter,
-    )?;
-
-    std::fs::write(r"C:\Program Files\ClamAV\freshclam.conf", FRESHCLAM_CONF)?;
-    std::fs::write(r"C:\Program Files\ClamAV\clamd.conf", CLAMAV_CONF)?;
-
-    Command::new(r"C:\Program Files\ClamAV\clamd.exe")
-        .arg("--install")
-        .current_dir(r"C:\Program Files\ClamAV")
-        .spawn()?
-        .wait()?;
-
-    Command::new(r"C:\Program Files\ClamAV\freshclam.exe")
-        .current_dir(r"C:\Program Files\ClamAV")
-        .spawn()?
-        .wait()?;
-
-    Command::new("net")
-        .args(["start", "clamd"])
-        .spawn()?
-        .wait()?;
-
-    Ok(())
 }

@@ -48,7 +48,9 @@ define_commands! {
         [unix] DnfInstall, di => dnf::DnfInstall,
         [unix] Ssh => ssh::Ssh,
         Smtp => smtp::Smtp,
-        [unix] ClamAv, cav => clamav::ClamAv,
+        [unix] ClamAv, cav => clamav_linux::ClamAv,
+        [windows] ClamAv, cav => clamav_windows::ClamAv,
+
         // Embedded binaries
         [unix] Nft => nft::Nft,
         [unix] Zsh => zsh::Zsh,
