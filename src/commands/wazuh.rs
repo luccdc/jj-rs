@@ -2237,34 +2237,40 @@ fn install_jj_logstash(bb: &Busybox, args: &WazuhSubcommandArgs) -> eyre::Result
         &ls_home.join("data"),
     )?;
 
-    println!("Configuring TLS for Logstash...");
-    let (ca_crt, ls_crt, ls_privkey) = {
-        use rcgen::{
-            BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, PKCS_ECDSA_P256_SHA256,
+    if !ls_path_conf.join("logstash.key").exists() {
+        println!("Configuring TLS for Logstash...");
+        let (ca_crt, ls_crt, ls_privkey) = {
+            use rcgen::{
+                BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, PKCS_ECDSA_P256_SHA256,
+            };
+
+            let ca_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
+            let ls_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
+
+            let ips = Some(public_ip.to_string())
+                .into_iter()
+                .chain(args.public_nat_ip.as_ref().map(Ipv4Addr::to_string))
+                .collect::<Vec<_>>();
+
+            let mut ca_params = CertificateParams::new(ips.clone())?;
+            ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+
+            let ca_crt = ca_params.self_signed(&ca_pair)?;
+
+            let ls_params = CertificateParams::new(ips)?;
+            let ls_cert = ls_params.signed_by(&ls_pair, &Issuer::new(ca_params, ca_pair))?;
+
+            (ca_crt.pem(), ls_cert.pem(), ls_pair.serialize_pem())
         };
 
-        let ca_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-        let ls_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
+        std::fs::write(args.jj_elastic_share_location.join("http_ca.crt"), ca_crt)?;
+        std::fs::write(ls_path_conf.join("logstash.crt"), ls_crt)?;
+        std::fs::write(ls_path_conf.join("logstash.key"), ls_privkey)?;
 
-        let ips = Some(public_ip.to_string())
-            .into_iter()
-            .chain(args.public_nat_ip.as_ref().map(Ipv4Addr::to_string))
-            .collect::<Vec<_>>();
-
-        let mut ca_params = CertificateParams::new(ips.clone())?;
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-
-        let ca_crt = ca_params.self_signed(&ca_pair)?;
-
-        let ls_params = CertificateParams::new(ips)?;
-        let ls_cert = ls_params.signed_by(&ls_pair, &Issuer::new(ca_params, ca_pair))?;
-
-        (ca_crt.pem(), ls_cert.pem(), ls_pair.serialize_pem())
-    };
-
-    std::fs::write(args.jj_elastic_share_location.join("http_ca.crt"), ca_crt)?;
-    std::fs::write(ls_path_conf.join("logstash.crt"), ls_crt)?;
-    std::fs::write(ls_path_conf.join("logstash.key"), ls_privkey)?;
+        println!("TLS for logstash configured!");
+    } else {
+        println!("TLS for logstash already configured, skipping");
+    }
 
     let logstash_user = passwd::load_users("jj-logstash")
         .ok()
@@ -2411,7 +2417,7 @@ fn install_beats(bb: &Busybox, args: &WazuhSubcommandArgs) -> eyre::Result<()> {
     std::fs::write(
         "/usr/lib/systemd/system/jj-metricbeat.service",
         super::elk::METRICBEAT_SERVICE.replace(
-            "$FB_HOME",
+            "$MB_HOME",
             &format!("{}/metricbeat", args.jj_elastic_location.display()),
         ),
     )
