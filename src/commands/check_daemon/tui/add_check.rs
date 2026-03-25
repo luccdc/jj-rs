@@ -2293,8 +2293,6 @@ fn handle_wizard<'scope, 'env: 'scope>(
                                 )
                                 .await?;
 
-                                dbg!(&hashes);
-
                                 for line in hashes {
                                     let _ = file.write(line.as_bytes()).await?;
                                     let _ = file.write("\n".as_bytes()).await?;
