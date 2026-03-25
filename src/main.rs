@@ -50,6 +50,7 @@ define_commands! {
         Smtp => smtp::Smtp,
         [unix] ClamAv, cav => clamav_linux::ClamAv,
         [windows] ClamAv, cav => clamav_windows::ClamAv,
+        [windows] ActivateDefender, shieldsup => activatedefender::ShieldsUp,
 
         // Embedded binaries
         [unix] Nft => nft::Nft,
