@@ -96,79 +96,27 @@ impl super::Command for WinAgents {
             .spawn()?
             .wait()?;
 
-        println!("Waiting for msiexec.exe to exit...");
+        println!("Waiting for Wazuh service to appear");
 
-        unsafe {
-            use windows::Win32::{
-                Foundation::CloseHandle,
-                System::{
-                    ProcessStatus::{EnumProcesses, GetModuleBaseNameA},
-                    Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
-                },
-            };
-
-            let mut count = 0;
-
-            loop {
-                count += 1;
-                if count % 10 == 0 {
-                    println!("msiexec.exe still found...");
-                }
-
-                std::thread::sleep(std::time::Duration::from_secs(1));
-
-                let mut pids = [0u32; 1024];
-                let mut bytes_returned = 0;
-
-                if EnumProcesses(
-                    pids.as_mut_ptr(),
-                    (pids.len() * std::mem::size_of::<u32>()) as u32,
-                    &mut bytes_returned,
-                )
-                .is_err()
-                {
-                    continue;
-                }
-
-                let count = bytes_returned as usize / std::mem::size_of::<u32>();
-
-                let mut found = false;
-                for &pid in &pids[..count] {
-                    if pid == 0 {
-                        continue;
-                    }
-
-                    let Ok(handle) =
-                        OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid)
-                    else {
-                        continue;
-                    };
-
-                    if handle.is_invalid() {
-                        continue;
-                    }
-
-                    let mut name_buf = [0; 260];
-
-                    let len = GetModuleBaseNameA(handle, None, &mut name_buf) as usize;
-
-                    if len > 0 {
-                        let exe_name = String::from_utf8_lossy(&name_buf[..len]);
-
-                        if exe_name.eq_ignore_ascii_case("msiexec.exe") {
-                            CloseHandle(handle);
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    CloseHandle(handle);
-                }
-
-                if !found {
-                    break;
-                }
+        // go to jj-logstash and fix certificate handling. Maybe check if certificates exist
+        // then don't generate
+        let mut count = 0;
+        loop {
+            count += 1;
+            if count % 10 == 0 {
+                println!("Waiting for WazuhSvc to become available...");
             }
+
+            // change to
+            let output = Command::new("sc.exe")
+                .args(["query", "WazuhSvc"])
+                .output()?;
+
+            if !String::from_utf8_lossy(&output.stdout).contains("FAILED") {
+                break;
+            }
+
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
 
         println!("Installed! Starting...");
