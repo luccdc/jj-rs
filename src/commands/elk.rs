@@ -45,6 +45,7 @@ pub const AUDITBEAT_YML: &str = include_str!("elk/auditbeat.linux.yml");
 pub const PACKETBEAT_YML: &str = include_str!("elk/packetbeat.linux.yml");
 pub const METRICBEAT_YML: &str = include_str!("elk/metricbeat.yml");
 pub const LOGSTASH_CONF: &str = include_str!("elk/pipeline.conf");
+pub const LOGSTASH_FILTER_CONF: &str = include_str!("elk/pipeline-filter.conf");
 pub const ELASTICSEARCH_SERVICE: &str = include_str!("elk/elasticsearch.service");
 pub const KIBANA_SERVICE: &str = include_str!("elk/kibana.service");
 pub const LOGSTASH_SERVICE: &str = include_str!("elk/logstash.service");
@@ -1535,6 +1536,10 @@ Environment="ES_API_KEY={}:{}"
             .replace("$ELK_IP", &get_public_ip(&bb)?)
             .replace("$LS_HOME", &format!("{}", ls_path_conf.display())),
     )?;
+    std::fs::write(
+        cpaths!(ls_path_conf, "conf.d", "pipeline-filter.conf"),
+        LOGSTASH_FILTER_CONF,
+    )?;
 
     system("systemctl daemon-reload")?;
     system("systemctl enable jj-logstash")?;
@@ -1870,7 +1875,7 @@ fn setup_metricbeat(password: &mut Option<String>, args: &ElkSubcommandArgs) -> 
     std::fs::write(
         "/usr/lib/systemd/system/jj-metricbeat.service",
         METRICBEAT_SERVICE.replace(
-            "$FB_HOME",
+            "$MB_HOME",
             &format!("{}/metricbeat", args.elastic_install_directory.display()),
         ),
     )

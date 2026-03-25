@@ -2306,6 +2306,10 @@ input {{
             ls_path_conf.display()
         ),
     )?;
+    std::fs::write(
+        ls_path_conf.join("conf.d").join("pipeline-filter.conf"),
+        super::elk::LOGSTASH_FILTER_CONF,
+    )?;
 
     system("systemctl daemon-reload")?;
     system("systemctl enable jj-logstash")?;
