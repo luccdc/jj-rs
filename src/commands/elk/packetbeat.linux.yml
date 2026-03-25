@@ -41,6 +41,8 @@ packetbeat.protocols:
 
 setup.template.settings.index.number_of_shards: 1
 
+logging.level: warning
+
 processors:
   - if.contains.tags: forwarded
     then:

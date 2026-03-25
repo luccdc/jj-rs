@@ -3,6 +3,7 @@ winlogbeat.event_logs:
     ignore_older: 72h
   - name: System
   - name: Security
+  - name: Microsoft-Windows-Windows Defender/Operational
   - name: Microsoft-Windows-Sysmon/Operational
   - name: Windows PowerShell
     event_id: 400, 403, 600, 800
@@ -13,6 +14,8 @@ winlogbeat.event_logs:
 
 setup.template.settings:
   index.number_of_shards: 1
+
+logging.level: warning
 
 processors:
   - add_host_metadata:

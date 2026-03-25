@@ -15,13 +15,10 @@ auditbeat.modules:
     -a always,exit -F arch=b64 -S open,creat,truncate,ftruncate,openat,open_by_handle_at -F exit=-EPERM -k access
 
     # Networking info
-    ## handled by socket dataset
-    -a never,exit -S socket -F a0=2
-    ## unix socket path is not recorded
-    -a never,exit -S socket -F a0=1
     -a always,exit -F arch=b64 -S socket -F a0=17 -F a1=3 -k raw_sockets
     -a always,exit -F arch=b64 -S socket -F a0=17 -F a1=10 -k raw_sockets
-    -a always,exit -F arch=b64 -S socket -k sockets
+    ## only record netlink sockets
+    -a always,exit -F arch=b64 -S socket -F a0=10 -k sockets
 
     # Process injection
     -a always,exit -F arch=b64 -S ptrace -k ptrace
@@ -56,6 +53,8 @@ auditbeat.modules:
   login.btmp_file_pattern: /var/log/btmp*
 
 setup.template.settings.index.number_of_shards: 1
+
+logging.level: warning
 
 processors:
   - add_host_metadata: ~

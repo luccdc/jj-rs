@@ -21,4 +21,6 @@ setup.template.settings.index.number_of_shards: 1
 
 filebeat.config.modules.path: $FILEBEAT_PATH/modules.d/*.yml
 
+logging.level: warning
+
 filebeat.modules: []
