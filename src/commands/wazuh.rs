@@ -325,6 +325,13 @@ impl Wazuh {
             download_files(&args, distro)?;
         }
 
+        if let WC::Install(args) | WC::ForwardJjLogstash(args) = &self.command {
+            if args.independent_logstash_install {
+                install_jj_logstash(busybox, args)?;
+            }
+            forward_jj_logstash_stage1(busybox, args, new_pass)?;
+        }
+
         if let WC::Install(args) | WC::GenerateBundle(args) = &self.command {
             generate_bundle(&args, busybox)?;
         }
@@ -335,6 +342,10 @@ impl Wazuh {
 
         if let WC::Install(args) | WC::InstallIndexer(args) = &self.command {
             install_indexer(&args, distro)?;
+        }
+
+        if let WC::Install(args) | WC::ForwardJjLogstash(args) = &self.command {
+            forward_jj_logstash_stage2(args)?;
         }
 
         if let WC::Install(args) | WC::InstallServer(args) = &self.command {
@@ -359,13 +370,6 @@ impl Wazuh {
             } else {
                 import_direct_from_beats(busybox, args, new_pass)?;
             }
-        }
-
-        if let WC::Install(args) | WC::ForwardJjLogstash(args) = &self.command {
-            if args.independent_logstash_install {
-                install_jj_logstash(busybox, args)?;
-            }
-            forward_jj_logstash(busybox, args, new_pass)?;
         }
 
         if let WC::Install(args) = &self.command
@@ -2039,7 +2043,7 @@ fn import_direct_from_beats(
     Ok(())
 }
 
-fn forward_jj_logstash(
+fn forward_jj_logstash_stage1(
     bb: &Busybox,
     args: &WazuhSubcommandArgs,
     wazuh_password: &str,
@@ -2063,6 +2067,9 @@ fn forward_jj_logstash(
             args.jj_elastic_location.display()
         ))?;
 
+        bb.command("ip").args(["addr"]).spawn()?.wait()?;
+        bb.command("ip").args(["route"]).spawn()?.wait()?;
+
         Ok(())
     };
 
@@ -2075,14 +2082,6 @@ fn forward_jj_logstash(
     }
 
     println!("--- Successfully installed opensearch output plugin for logstash!");
-
-    std::fs::copy(
-        "/etc/wazuh-indexer/certs/root-ca.pem",
-        &format!(
-            "{}/wazuh_http_ca.crt",
-            args.jj_elastic_share_location.display()
-        ),
-    )?;
 
     let mut previous_pipeline_config = serde_yaml_ng::from_slice::<serde_json::Value>(
         &std::fs::read(
@@ -2112,14 +2111,6 @@ fn forward_jj_logstash(
             serde_yaml_ng::to_string(&previous_pipeline_config)?,
         )?;
     }
-
-    std::fs::set_permissions(
-        &format!(
-            "{}/wazuh_http_ca.crt",
-            args.jj_elastic_share_location.display()
-        ),
-        PermissionsExt::from_mode(0o644),
-    )?;
 
     std::fs::create_dir_all(&format!(
         "{}/logstash/config/wazuh.conf.d",
@@ -2155,6 +2146,26 @@ fn forward_jj_logstash(
         "--- Successfully configured logstash to duplicate records to Wazuh!".green()
     );
 
+    Ok(())
+}
+
+fn forward_jj_logstash_stage2(args: &WazuhSubcommandArgs) -> eyre::Result<()> {
+    print!("--- Copying Wazuh indexer certificates for logstash...");
+    std::fs::copy(
+        "/etc/wazuh-indexer/certs/root-ca.pem",
+        &format!(
+            "{}/wazuh_http_ca.crt",
+            args.jj_elastic_share_location.display()
+        ),
+    )?;
+    std::fs::set_permissions(
+        &format!(
+            "{}/wazuh_http_ca.crt",
+            args.jj_elastic_share_location.display()
+        ),
+        PermissionsExt::from_mode(0o644),
+    )?;
+    println!(" Done");
     Ok(())
 }
 
@@ -2314,6 +2325,12 @@ input {{
     system("systemctl daemon-reload")?;
     system("systemctl enable jj-logstash")?;
     system("systemctl restart jj-logstash")?;
+
+    if qx("getenforce")?.1.trim() == "Enforcing" {
+        system("restorecon -R /etc")?;
+    }
+
+    system("echo 'Agents can now be installed' | wall")?;
 
     println!("{}", "--- Base logstash configured!".green());
 
