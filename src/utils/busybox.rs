@@ -134,7 +134,7 @@ impl Busybox {
         let output = self
             .command(cmd)
             .args(&command[1..])
-            .stderr(Stdio::piped())
+            .stderr(Stdio::inherit())
             .output()?;
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
