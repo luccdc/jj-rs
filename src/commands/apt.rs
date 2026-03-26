@@ -6,10 +6,6 @@ use crate::utils::packages::{DownloadSettings, install_apt_packages};
 /// a download container
 #[derive(clap::Parser, Debug)]
 pub struct AptInstall {
-    /// Use the download shell
-    #[arg(long, short = 'd')]
-    use_download_shell: bool,
-
     /// Sneaky IP to use when downloading packages
     #[arg(long, short)]
     sneaky_ip: Option<Ipv4Addr>,
@@ -20,15 +16,12 @@ pub struct AptInstall {
 
 impl super::Command for AptInstall {
     fn execute(self) -> eyre::Result<()> {
-        let settings = if self.use_download_shell {
+        install_apt_packages(
             DownloadSettings::Container {
                 name: None,
                 sneaky_ip: self.sneaky_ip,
-            }
-        } else {
-            DownloadSettings::NoContainer
-        };
-
-        install_apt_packages(settings, &self.packages)
+            },
+            &self.packages,
+        )
     }
 }
