@@ -65,7 +65,7 @@ impl super::Command for Zsh {
                 .read_link()
                 .context("Could not find current jj binary")?;
 
-            writeln!(file, "#!{} zsh", current_file.display())?;
+            writeln!(file, "#!/bin/sh")?;
             if let Some(parent) = current_file.parent() {
                 writeln!(
                     file,
@@ -75,7 +75,14 @@ impl super::Command for Zsh {
             } else {
                 writeln!(file, r#"export PATH="$PATH:/usr/local/sbin:/usr/sbin""#)?;
             }
-            writeln!(file, "exec {} zsh $@", current_file.display())?;
+            writeln!(file, "exec {} zsh -- $@", current_file.display())?;
+
+            let shells = std::fs::read_to_string("/etc/shells")?;
+            let install_path_string = format!("{}", self.install_path.display());
+            if !shells.contains(&install_path_string) {
+                let shells = shells + &install_path_string + "\n";
+                std::fs::write("/etc/shells", shells)?;
+            }
 
             println!("Successfully installed!");
         }
