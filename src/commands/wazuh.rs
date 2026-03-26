@@ -378,12 +378,12 @@ impl Wazuh {
             install_beats(busybox, args)?;
         }
 
-        if let WC::InstallBeats(args) = &self.command {
-            install_beats(busybox, args)?;
-        }
-
         if let WC::Install(_) | WC::LoadWazuhDashboards = &self.command {
             load_wazuh_dashboards(busybox, new_pass)?;
+        }
+
+        if let WC::InstallBeats(args) = &self.command {
+            install_beats(busybox, args)?;
         }
 
         if let WC::TweakSctiptCompilationLimit(args) = &self.command {
@@ -2628,6 +2628,30 @@ fn load_wazuh_dashboards(bb: &Busybox, wazuh_password: &str) -> eyre::Result<()>
         }
         Err(_) => {
             eprintln!("Could not set dark mode in Wazuh dashboards!");
+        }
+    }
+
+    println!("--- Changing time zone to UTC in wazuh dashboards...");
+
+    let response = client
+        .post(format!(
+            "https://{public_ip}:443/api/opensearch-dashboards/settings"
+        ))
+        .header("content-type", "application/json")
+        .header("osd-xsrf", "true")
+        .basic_auth("admin", Some(&wazuh_password))
+        .body(r#"{"changes":{"dateFormat:tz":"UTC"}}"#)
+        .send()
+        .map_err(eyre::Report::from)
+        .and_then(|r| r.json::<serde_json::Value>().map_err(eyre::Report::from));
+
+    match response {
+        Ok(v) => {
+            println!("{v}");
+            println!("--- Changed time zone in wazuh dashboards");
+        }
+        Err(_) => {
+            eprintln!("Could not change time zone in Wazuh dashboards!");
         }
     }
 
