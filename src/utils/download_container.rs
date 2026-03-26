@@ -114,7 +114,23 @@ impl DownloadContainer {
             &format!("{ns_name}.1"),
         ])
         .context("Could not add veth pair")?;
-        let child = get_namespace(&bb)?;
+
+        let tunnel_net = find_tunnel_net(&bb)?;
+
+        let wan_ip = Ipv4Addr::from(u32::from(tunnel_net) + 1);
+        let lan_ip = Ipv4Addr::from(u32::from(tunnel_net) + 2);
+
+        bb.execute(&[
+            "ip",
+            "addr",
+            "add",
+            &format!("{wan_ip}/30"),
+            "dev",
+            &format!("{ns_name}.0"),
+        ])
+        .context("Could not add IP address to WAN interface")?;
+
+        let child = get_namespace(&bb, wan_ip)?;
 
         let original_net_ns = open(
             &*format!("/proc/{}/ns/net", getpid()),
@@ -178,21 +194,6 @@ impl DownloadContainer {
             &format!("{child}"),
         ])
         .context("Could not move interface to child namespace")?;
-
-        let tunnel_net = find_tunnel_net(&bb)?;
-
-        let wan_ip = Ipv4Addr::from(u32::from(tunnel_net) + 1);
-        let lan_ip = Ipv4Addr::from(u32::from(tunnel_net) + 2);
-
-        bb.execute(&[
-            "ip",
-            "addr",
-            "add",
-            &format!("{wan_ip}/30"),
-            "dev",
-            &format!("{ns_name}.0"),
-        ])
-        .context("Could not add IP address to WAN interface")?;
 
         setns(&child_net_ns, CloneFlags::CLONE_NEWNET)
             .context("Could not change to child namespace to set up local networking")?;
@@ -395,7 +396,7 @@ impl Drop for DownloadContainer {
 /// This will also create a new mount namespace that bind mounts a new file over
 /// /etc/resolv.conf to enable outbound, external DNS that doesn't depend on the domain
 /// controller
-fn get_namespace(bb: &Busybox) -> eyre::Result<Pid> {
+fn get_namespace(bb: &Busybox, wan_ip: Ipv4Addr) -> eyre::Result<Pid> {
     // Semaphores are nasty but one of the simplest ways to communicate across
     // processes. We have to wait for the process to finish initializing, hence
     // shared memory and a shared semaphore
@@ -431,6 +432,14 @@ fn get_namespace(bb: &Busybox) -> eyre::Result<Pid> {
         let nsswitch_path_raw = bb.execute(&["mktemp"])?;
         let nsswitch_path = nsswitch_path_raw.trim();
         std::fs::write(nsswitch_path, nsswitch_lines.join("\n"))?;
+        std::fs::set_permissions(nsswitch_path, PermissionsExt::from_mode(0o555))?;
+
+        let hosts_path_raw = bb.execute(&["mktemp"])?;
+        let hosts_path = hosts_path_raw.trim();
+        let old_hosts_contents = std::fs::read_to_string("/etc/hosts")?;
+        let hosts_contents = old_hosts_contents + &format!("\n{wan_ip}    dshost\n");
+        std::fs::write(hosts_path, hosts_contents)?;
+        std::fs::set_permissions(hosts_path, PermissionsExt::from_mode(0o555))?;
 
         nix::mount::mount(
             None::<&str>,
@@ -451,6 +460,14 @@ fn get_namespace(bb: &Busybox) -> eyre::Result<Pid> {
         nix::mount::mount(
             Some(nsswitch_path),
             "/etc/nsswitch.conf",
+            None::<&str>,
+            nix::mount::MsFlags::MS_BIND,
+            None::<&str>,
+        )?;
+
+        nix::mount::mount(
+            Some(hosts_path),
+            "/etc/hosts",
             None::<&str>,
             nix::mount::MsFlags::MS_BIND,
             None::<&str>,
