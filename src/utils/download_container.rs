@@ -27,6 +27,7 @@ use std::{
     os::{fd::OwnedFd, unix::fs::PermissionsExt},
     path::PathBuf,
     process::Stdio,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use eyre::{Context, bail, eyre};
@@ -45,6 +46,8 @@ use crate::{
     pcre,
     utils::{busybox::Busybox, nft::Nft},
 };
+
+static SHELL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const IP_ADDR_REGEX: &str = concat!(
     "(?:[0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]|25[0-5])",
@@ -94,7 +97,13 @@ impl DownloadContainer {
             bail!("You must be root to make use of download container capabilities");
         }
 
-        let ns_name = name.unwrap_or_else(|| format!("jjsh{}", getpid()));
+        let ns_name = name.unwrap_or_else(|| {
+            format!(
+                "jj{}.{}",
+                getpid(),
+                SHELL_COUNTER.fetch_add(1, Ordering::SeqCst)
+            )
+        });
 
         let bb = Busybox::new().context("Could not prepare busybox for download container")?;
 
