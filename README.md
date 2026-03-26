@@ -1,6 +1,6 @@
 # jiujitsu-rs
 
-Grapple your Linux systems
+Grapple your systems
 
 A generic swiss army knife tool that is meant to be easily deployed to a system and allows for administering a system with a single binary
 
@@ -9,8 +9,10 @@ A generic swiss army knife tool that is meant to be easily deployed to a system 
 - System enumeration and verification
 - Manage backups
 - Firewall management
-- Quick ELK setup and management
+- Quick ELK or Wazuh setup and management
 - Integrated service uptime checks
+
+Documentation for using this program is primarily provided by running with `--help`, or running subcommands with `--help`
 
 ## Installing
 
@@ -238,6 +240,6 @@ Documentation for libraries frequently used:
 - clap: https://docs.rs/clap/latest/clap/
 - tokio: https://docs.rs/tokio/latest/tokio/
 
-## Kibana dashboards
+## Dashboards
 
-To contribute Kibana dashboards, follow the setup commands from before and just add the new Kibana dashboards to `src/commands/elk/dashboards`. It will be included the next time the project is built
+To contribute Kibana or Wazuh dashboards, follow the setup commands from before. Then just add the new Kibana dashboards to `src/commands/elk/dashboards`, and Wazuh dashboards to `src/commands/wazuh/dashboards`. It will be included the next time the project is built
