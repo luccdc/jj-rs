@@ -2610,8 +2610,13 @@ fn load_wazuh_dashboards(bb: &Busybox, wazuh_password: &str) -> eyre::Result<()>
     println!("--- Enabling dark mode in wazuh dashboards...");
 
     let response = client
-        .get(format!("https://{public_ip}:443/api/status"))
+        .post(format!(
+            "https://{public_ip}:443/api/opensearch-dashboards/settings"
+        ))
+        .header("content-type", "application/json")
+        .header("osd-xsrf", "true")
         .basic_auth("admin", Some(&wazuh_password))
+        .body(r#"{"changes":{"theme:darkMode":true}}"#)
         .send()
         .map_err(eyre::Report::from)
         .and_then(|r| r.json::<serde_json::Value>().map_err(eyre::Report::from));
