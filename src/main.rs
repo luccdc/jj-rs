@@ -23,6 +23,7 @@ define_commands! {
         // utility commands
         Check, c => check::Check,
         CheckDaemon, cd => check_daemon::CheckDaemon,
+        Durkee => durkee::Durkee,
         Serve, s => serve::Serve,
         Get, g => get::Get,
         [unix] DownloadShell, ds => download_shell::DownloadShell,
