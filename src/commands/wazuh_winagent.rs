@@ -143,7 +143,7 @@ impl super::Command for WinAgents {
 
         super::elk_winbeats::enable_scriptblock_logging()?;
 
-        super::activatedefender::ShieldsUp.execute()?;
+        super::activatedefender::ShieldsUp::default().execute()?;
 
         if !args.dont_install_sysmon {
             super::elk_winbeats::install_configure_sysmon(args.sysmon_path)?;
