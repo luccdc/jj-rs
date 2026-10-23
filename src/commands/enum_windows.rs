@@ -62,6 +62,17 @@ pub enum EnumSubcommands {
     Winrm,
     /// Enumerate local administrators and privileged local accounts
     LocalAdmins,
+    /// Enumerate Microsoft SQL Server (MSSQL) instances, databases, logins, and security configuration
+    #[command(visible_alias("sql"))]
+    Mssql {
+        /// Show all database tables including system database tables (master, msdb)
+        #[arg(long)]
+        all_tables: bool,
+
+        /// Specify a target SQL Server instance name (e.g. BINGUS or MSSQLSERVER)
+        #[arg(short, long)]
+        instance: Option<String>,
+    },
 }
 
 impl super::Command for Enum {
@@ -86,6 +97,9 @@ impl super::Command for Enum {
             }
             Some(EnumSubcommands::Winrm) => enum_winrm(&mut ob)?,
             Some(EnumSubcommands::LocalAdmins) => enum_local_admins(&mut ob)?,
+            Some(EnumSubcommands::Mssql { all_tables, instance }) => {
+                enum_mssql(&mut ob, all_tables, instance.as_deref())?
+            }
             
             None => {
                 enum_ports(&mut ob, super::ports::Ports::default())?; 
@@ -102,6 +116,7 @@ impl super::Command for Enum {
 
                 enum_winrm(&mut ob)?;
                 enum_local_admins(&mut ob)?;
+                enum_mssql(&mut ob, false, None)?;
             }
         }
 
@@ -1276,3 +1291,1161 @@ fn enum_local_admins(out: &mut impl PagerOutput) -> eyre::Result<()> {
     Ok(())
 }
 
+// =========================================================================
+// Microsoft SQL Server (MSSQL) Enumeration
+// =========================================================================
+
+#[derive(Debug, Clone)]
+struct MssqlInstance {
+    instance_name: String,
+    instance_id: String,
+    service_name: String,
+}
+
+struct SqlDbInfo {
+    name: String,
+    database_id: String,
+    state_desc: String,
+    recovery_model: String,
+    collation: String,
+    is_trustworthy: bool,
+    is_encrypted: bool,
+    is_read_only: bool,
+    is_auto_close: bool,
+}
+
+struct SqlFileInfo {
+    db_name: String,
+    logical_name: String,
+    type_desc: String,
+    physical_name: String,
+    state_desc: String,
+    size_mb: String,
+}
+
+struct SqlLoginInfo {
+    name: String,
+    type_desc: String,
+    is_disabled: bool,
+    is_sysadmin: bool,
+    roles: String,
+    default_db: String,
+}
+
+struct SqlTableInfo {
+    db_name: String,
+    schema: String,
+    table_name: String,
+    row_count: String,
+}
+
+fn enum_mssql(out: &mut impl PagerOutput, show_all_tables: bool, target_instance: Option<&str>) -> eyre::Result<()> {
+    writeln!(out, "\n==== MICROSOFT SQL SERVER (MSSQL) ENUMERATION")?;
+
+    let instances = find_mssql_instances();
+    if instances.is_empty() {
+        writeln!(
+            out,
+            "{}",
+            "[-] Microsoft SQL Server is not installed or no instances detected.".yellow()
+        )?;
+        return Ok(());
+    }
+
+    let computer_name = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let mut audited = 0;
+
+    for inst in &instances {
+        if let Some(target) = target_instance {
+            if !inst.instance_name.eq_ignore_ascii_case(target)
+                && !inst.instance_id.eq_ignore_ascii_case(target)
+                && !inst.service_name.eq_ignore_ascii_case(target)
+            {
+                continue;
+            }
+        }
+
+        audited += 1;
+        audit_mssql_instance(out, inst, &computer_name, show_all_tables)?;
+    }
+
+    if audited == 0 {
+        if let Some(target) = target_instance {
+            writeln!(
+                out,
+                "{}",
+                format!("[-] Specified SQL instance '{}' was not found.", target).yellow()
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn find_mssql_instances() -> Vec<MssqlInstance> {
+    let mut instances = Vec::new();
+
+    // 1. Check registry: HKLM\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL
+    let sql_inst_key = r"HKLM\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL";
+    for line in reg_query_lines(sql_inst_key) {
+        if let Some((name, _, val)) = parse_reg_value(&line) {
+            let service_name = if name.eq_ignore_ascii_case("MSSQLSERVER") {
+                "MSSQLSERVER".to_string()
+            } else {
+                format!("MSSQL${}", name)
+            };
+            instances.push(MssqlInstance {
+                instance_name: name,
+                instance_id: val,
+                service_name,
+            });
+        }
+    }
+
+    // 2. Check InstalledInstances value under HKLM\SOFTWARE\Microsoft\Microsoft SQL Server
+    if instances.is_empty() {
+        if let Some(val) = reg_query_value(r"HKLM\SOFTWARE\Microsoft\Microsoft SQL Server", "InstalledInstances") {
+            for inst_name in val.split('\0').chain(val.split_whitespace()) {
+                let inst_name = inst_name.trim();
+                if !inst_name.is_empty() && !instances.iter().any(|i| i.instance_name.eq_ignore_ascii_case(inst_name)) {
+                    let service_name = if inst_name.eq_ignore_ascii_case("MSSQLSERVER") {
+                        "MSSQLSERVER".to_string()
+                    } else {
+                        format!("MSSQL${}", inst_name)
+                    };
+                    instances.push(MssqlInstance {
+                        instance_name: inst_name.to_string(),
+                        instance_id: inst_name.to_string(),
+                        service_name,
+                    });
+                }
+            }
+        }
+    }
+
+    // 3. Fallback: Check for running/registered Windows services
+    if instances.is_empty() {
+        if sc_query_service("MSSQLSERVER").is_some() {
+            instances.push(MssqlInstance {
+                instance_name: "MSSQLSERVER".to_string(),
+                instance_id: "MSSQLSERVER".to_string(),
+                service_name: "MSSQLSERVER".to_string(),
+            });
+        }
+    }
+
+    instances
+}
+
+fn audit_mssql_instance(
+    out: &mut impl PagerOutput,
+    inst: &MssqlInstance,
+    computer_name: &str,
+    show_all_tables: bool,
+) -> eyre::Result<()> {
+    writeln!(
+        out,
+        "\n{}",
+        format!("[+] Instance: {} (ID: {})", inst.instance_name, inst.instance_id).bold()
+    )?;
+
+    // Setup and version metadata from registry
+    let setup_key = format!(r"HKLM\SOFTWARE\Microsoft\Microsoft SQL Server\{}\Setup", inst.instance_id);
+    let version = reg_query_value(&setup_key, "Version").unwrap_or_else(|| "Unknown".to_string());
+    let edition = reg_query_value(&setup_key, "Edition").unwrap_or_else(|| "Unknown".to_string());
+    let sql_data_root = reg_query_value(&setup_key, "SQLDataRoot").unwrap_or_default();
+    let sql_bin_root = reg_query_value(&setup_key, "SQLBinRoot").unwrap_or_default();
+
+    // Service inspection
+    let svc_status = sc_query_service(&inst.service_name);
+    let svc_qc = sc_qc_service(&inst.service_name);
+
+    let display_name = svc_qc
+        .get("DISPLAY_NAME")
+        .cloned()
+        .unwrap_or_else(|| format!("SQL Server ({})", inst.instance_name));
+    let service_account = svc_qc
+        .get("SERVICE_START_NAME")
+        .cloned()
+        .unwrap_or_else(|| "Unknown".to_string());
+    let start_type = svc_qc.get("START_TYPE").cloned().unwrap_or_default();
+
+    let (state_num, state_text) = svc_status.unwrap_or_else(|| ("0".to_string(), "NOT_FOUND".to_string()));
+    let is_running = state_text.eq_ignore_ascii_case("RUNNING") || state_num == "4";
+
+    writeln!(out, "    Display Name:    {}", display_name)?;
+    writeln!(out, "    Edition:         {}", edition)?;
+    writeln!(out, "    Version:         {}", version)?;
+    writeln!(out, "    Service Name:    {}", inst.service_name)?;
+
+    // Service Account security evaluation
+    let is_sys_account = service_account.to_lowercase().contains("localsystem")
+        || service_account.to_lowercase() == "system"
+        || service_account.to_lowercase().contains("administrator");
+
+    if is_sys_account {
+        writeln!(
+            out,
+            "{}",
+            format!(
+                "    Service Account: {} [!] CRITICAL: Running as SYSTEM/Administrator! Any xp_cmdshell execution has full OS privilege!",
+                service_account
+            )
+            .red()
+            .bold()
+        )?;
+    } else if service_account.to_lowercase().starts_with("nt service\\") {
+        writeln!(
+            out,
+            "{}",
+            format!("    Service Account: {} [OK: Isolated Virtual Account]", service_account).green()
+        )?;
+    } else {
+        writeln!(out, "    Service Account: {}", service_account)?;
+    }
+
+    if is_running {
+        writeln!(
+            out,
+            "{}",
+            format!("    Service Status:  RUNNING (State: {}, Start: {})", state_num, start_type).green()
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            format!("    Service Status:  {} (Start: {})", state_text, start_type).yellow()
+        )?;
+    }
+
+    // Read PID from registry uptime_pid or live processes
+    let mssql_key = format!(r"HKLM\SOFTWARE\Microsoft\Microsoft SQL Server\{}\MSSQLServer", inst.instance_id);
+    let uptime_pid_hex = reg_query_value(&mssql_key, "uptime_pid");
+    let active_pid: Option<u32> = uptime_pid_hex.and_then(|h| {
+        let clean = h.trim().trim_start_matches("0x");
+        u32::from_str_radix(clean, 16).ok()
+    });
+
+    if let Some(pid) = active_pid {
+        writeln!(out, "    Process ID:      {}", pid)?;
+    }
+
+    // ---------------------------------------------------------------------
+    // Network & Listening Endpoints
+    // ---------------------------------------------------------------------
+    writeln!(out, "\n  [Network & Listening Endpoints]")?;
+
+    let super_sock_key = format!(r"{}\SuperSocketNetLib", mssql_key);
+    let tcp_key = format!(r"{}\Tcp", super_sock_key);
+    let tcp_enabled_val = reg_query_value(&tcp_key, "Enabled").unwrap_or_default();
+    let tcp_enabled = tcp_enabled_val == "0x1" || tcp_enabled_val == "1";
+    let listen_all_val = reg_query_value(&tcp_key, "ListenOnAllIPs").unwrap_or_default();
+    let listen_all = listen_all_val == "0x1" || listen_all_val == "1";
+
+    if tcp_enabled {
+        writeln!(
+            out,
+            "{}",
+            format!("    TCP/IP Protocol:  Enabled (ListenOnAllIPs: {})", listen_all).green()
+        )?;
+    } else {
+        writeln!(out, "    TCP/IP Protocol:  Disabled in Configuration")?;
+    }
+
+    let ip_all_key = format!(r"{}\IPAll", tcp_key);
+    let ip_all_port = reg_query_value(&ip_all_key, "TcpPort").unwrap_or_default();
+    let ip_all_dyn = reg_query_value(&ip_all_key, "TcpDynamicPorts").unwrap_or_default();
+    if !ip_all_port.is_empty() {
+        writeln!(out, "    Configured Port:  Static {}", ip_all_port)?;
+    }
+    if !ip_all_dyn.is_empty() && ip_all_dyn != "0" {
+        writeln!(out, "    Dynamic Port:     {}", ip_all_dyn)?;
+    }
+
+    // Dedicated Admin Connection (DAC)
+    let dac_key = format!(r"{}\AdminConnection\Tcp", super_sock_key);
+    let dac_port = reg_query_value(&dac_key, "TcpDynamicPorts").unwrap_or_default();
+    if !dac_port.is_empty() {
+        writeln!(out, "    Dedicated Admin:  Port {} (Local DAC)", dac_port)?;
+    }
+
+    // Shared Memory & Named Pipes
+    let sm_val = reg_query_value(&format!(r"{}\Sm", super_sock_key), "Enabled").unwrap_or_default();
+    let sm_enabled = sm_val == "0x1" || sm_val == "1";
+    let np_val = reg_query_value(&format!(r"{}\Np", super_sock_key), "Enabled").unwrap_or_default();
+    let np_enabled = np_val == "0x1" || np_val == "1";
+    let np_pipe = reg_query_value(&format!(r"{}\Np", super_sock_key), "PipeName").unwrap_or_default();
+
+    if sm_enabled {
+        writeln!(out, "{}", "    Shared Memory:    Enabled [OK]".green())?;
+    }
+    if np_enabled {
+        writeln!(
+            out,
+            "{}",
+            format!("    Named Pipes:      Enabled (Pipe: {})", np_pipe).green()
+        )?;
+    } else {
+        writeln!(out, "    Named Pipes:      Disabled")?;
+    }
+
+    // ForceEncryption & HideInstance
+    let force_enc_val = reg_query_value(&super_sock_key, "ForceEncryption").unwrap_or_default();
+    let force_enc = force_enc_val == "0x1" || force_enc_val == "1";
+    if force_enc {
+        writeln!(out, "{}", "    Network Traffic:  Encryption FORCED [OK]".green())?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            "    Network Traffic:  [!] ForceEncryption is DISABLED (Traffic & credentials unencrypted on wire!)"
+                .yellow()
+        )?;
+    }
+
+    let hide_val = reg_query_value(&super_sock_key, "HideInstance").unwrap_or_default();
+    let hide_inst = hide_val == "0x1" || hide_val == "1";
+    if hide_inst {
+        writeln!(out, "    Hide Instance:    Yes (Not responding to SQL Browser requests)")?;
+    } else {
+        writeln!(out, "    Hide Instance:    No (Instance visible to network scanners)")?;
+    }
+
+    // SQL Browser Service Check (UDP 1434)
+    if let Some((_, b_state)) = sc_query_service("SQLBrowser") {
+        if b_state.eq_ignore_ascii_case("RUNNING") {
+            writeln!(
+                out,
+                "{}",
+                "    SQL Browser Svc:  [!] RUNNING on UDP 1434 (Broadcasts instance names & dynamic ports to network!)"
+                    .yellow()
+            )?;
+        } else {
+            writeln!(out, "    SQL Browser Svc:  Stopped / Inactive")?;
+        }
+    }
+
+    // Active OS Sockets via Win32 GetExtendedTcpTable/GetExtendedUdpTable
+    if let Some(pid) = active_pid {
+        let ports_res = crate::utils::ports::windows::list_ports();
+        if let Ok(records) = ports_res {
+            let listening: Vec<_> = records
+                .into_iter()
+                .filter(|r| r.pid == Some(pid) && r.state == crate::utils::ports::SocketState::Listen)
+                .collect();
+
+            if !listening.is_empty() {
+                writeln!(out, "    Active OS Listening Sockets (PID {}):", pid)?;
+                for s in listening {
+                    let desc = if s.local_port == 1433 {
+                        "Default SQL Port"
+                    } else if !dac_port.is_empty() && s.local_port.to_string() == dac_port {
+                        "Dedicated Admin Connection (DAC)"
+                    } else {
+                        "SQL Engine"
+                    };
+                    writeln!(
+                        out,
+                        "{}",
+                        format!(
+                            "      - {}:{} ({} Listen - {})",
+                            s.local_address, s.local_port, s.socket_type, desc
+                        )
+                        .green()
+                    )?;
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Authentication & Storage Configuration
+    // ---------------------------------------------------------------------
+    writeln!(out, "\n  [Authentication & Storage Configuration]")?;
+
+    let login_mode_val = reg_query_value(&mssql_key, "LoginMode").unwrap_or_default();
+    if login_mode_val == "0x2" || login_mode_val == "2" {
+        writeln!(
+            out,
+            "{}",
+            "    Authentication:   [!] Mixed Mode (SQL Server & Windows Authentication) - SQL logins active & vulnerable to brute-force!"
+                .yellow()
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            "    Authentication:   Windows Authentication Only [OK: Integrated Security Only]".green()
+        )?;
+    }
+
+    // FILESTREAM Configuration
+    let fs_key = format!(r"{}\Filestream", mssql_key);
+    let fs_level = reg_query_value(&fs_key, "EnableLevel").unwrap_or_default();
+    let fs_share = reg_query_value(&fs_key, "ShareName").unwrap_or_default();
+    match fs_level.as_str() {
+        "0x3" | "3" => {
+            writeln!(
+                out,
+                "{}",
+                format!(
+                    "    FILESTREAM Level: [!] Level 3 (T-SQL, Local FS, and Remote Clients enabled via SMB share '\\\\{}\\{}')",
+                    computer_name, fs_share
+                )
+                .yellow()
+            )?;
+        }
+        "0x2" | "2" => {
+            writeln!(out, "    FILESTREAM Level: Level 2 (T-SQL and Local File System)")?;
+        }
+        "0x1" | "1" => {
+            writeln!(out, "    FILESTREAM Level: Level 1 (T-SQL only)")?;
+        }
+        _ => {
+            writeln!(out, "{}", "    FILESTREAM Level: Disabled [OK]".green())?;
+        }
+    }
+
+    let backup_dir = reg_query_value(&mssql_key, "BackupDirectory").unwrap_or_default();
+    let err_log = reg_query_value(&format!(r"{}\Parameters", mssql_key), "SQLArg1")
+        .map(|s| s.trim_start_matches("-e").to_string())
+        .unwrap_or_default();
+
+    if !sql_data_root.is_empty() {
+        writeln!(out, "    SQL Data Root:    {}", sql_data_root)?;
+    }
+    if !sql_bin_root.is_empty() {
+        writeln!(out, "    SQL Binary Root:  {}", sql_bin_root)?;
+    }
+    if !err_log.is_empty() {
+        writeln!(out, "    Error Log Path:   {}", err_log)?;
+    }
+    if !backup_dir.is_empty() {
+        writeln!(out, "    Backup Directory: {}", backup_dir)?;
+    }
+
+    // ---------------------------------------------------------------------
+    // Live Database Engine Enumeration (Databases, Files, Tables, Logins, Security)
+    // ---------------------------------------------------------------------
+    if !is_running {
+        writeln!(
+            out,
+            "\n  {}",
+            format!(
+                "  [!] Instance service '{}' is not running. Start service to query databases and logins.",
+                inst.service_name
+            )
+            .yellow()
+        )?;
+        return Ok(());
+    }
+
+    let conn_target = if inst.instance_name.eq_ignore_ascii_case("MSSQLSERVER") {
+        "localhost".to_string()
+    } else {
+        format!(r"localhost\{}", inst.instance_name)
+    };
+
+    let tsql_query = r#"
+SET NOCOUNT ON;
+SELECT 'SERVER_INFO', CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(128)), CAST(SERVERPROPERTY('Edition') AS NVARCHAR(128)), CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128)), CAST(SERVERPROPERTY('ProductLevel') AS NVARCHAR(128)), CAST(SERVERPROPERTY('ProcessID') AS INT);
+SELECT 'CONFIG', name, CAST(value AS INT), CAST(value_in_use AS INT) FROM sys.configurations WHERE name IN ('xp_cmdshell', 'Ole Automation Procedures', 'clr enabled', 'clr strict security', 'cross db ownership chaining', 'remote admin connections', 'Database Mail XPs', 'default trace enabled', 'scan for startup procs', 'remote access') ORDER BY name;
+SELECT 'STARTUP_PROC', DB_NAME(), name FROM sys.procedures WHERE is_auto_executed = 1;
+SELECT 'DB', name, database_id, state_desc, recovery_model_desc, ISNULL(collation_name, 'None'), is_trustworthy_on, is_encrypted, is_read_only, is_auto_close_on FROM sys.databases ORDER BY database_id;
+SELECT 'FILE', DB_NAME(database_id), name, type_desc, physical_name, state_desc, size * 8 / 1024 FROM sys.master_files ORDER BY database_id, file_id;
+SELECT 'LOGIN', p.name, p.type_desc, p.is_disabled, ISNULL(IS_SRVROLEMEMBER('sysadmin', p.name), 0), ISNULL(STRING_AGG(r.name, ', '), 'None'), ISNULL(p.default_database_name, 'master') FROM sys.server_principals p LEFT JOIN sys.server_role_members m ON p.principal_id = m.member_principal_id LEFT JOIN sys.server_principals r ON m.role_principal_id = r.principal_id WHERE p.type IN ('S', 'U', 'G') GROUP BY p.name, p.type_desc, p.is_disabled, p.default_database_name ORDER BY ISNULL(IS_SRVROLEMEMBER('sysadmin', p.name), 0) DESC, p.name;
+SELECT 'SA_CHECK', name, is_disabled, is_policy_checked, is_expiration_checked, PWDCOMPARE('', password_hash) FROM sys.sql_logins WHERE name = 'sa';
+EXEC sp_MSforeachdb 'USE [?]; SELECT ''TABLE'', DB_NAME(), s.name, t.name, SUM(p.rows) FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.schema_id JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1) GROUP BY s.name, t.name';
+EXEC sp_MSforeachdb 'USE [?]; IF DB_ID() > 4 SELECT ''GUEST_PERM'', DB_NAME(), dp.name, perm.permission_name, perm.state_desc FROM sys.database_permissions perm JOIN sys.database_principals dp ON perm.grantee_principal_id = dp.principal_id WHERE dp.name = ''guest'' AND perm.permission_name = ''CONNECT''';
+"#;
+
+    let query_result = run_sql_query(&conn_target, tsql_query);
+    let sql_output = match query_result {
+        Some(res) => res,
+        None => {
+            writeln!(
+                out,
+                "\n  {}",
+                "  [!] Could not connect to database engine via Windows Authentication."
+                    .yellow()
+            )?;
+            writeln!(
+                out,
+                "      Ensure current Windows user or BUILTIN\\Administrators is provisioned as sysadmin in SQL Server."
+            )?;
+            return Ok(());
+        }
+    };
+
+    // Parse the output sections
+    let mut configs: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    let mut startup_procs: Vec<(String, String)> = Vec::new();
+    let mut sa_check: Option<(bool, bool, bool, bool)> = None; // (is_disabled, policy_checked, expire_checked, is_blank)
+    let mut guest_perms: Vec<(String, String, String, String)> = Vec::new();
+    let mut dbs: Vec<SqlDbInfo> = Vec::new();
+    let mut files: Vec<SqlFileInfo> = Vec::new();
+    let mut logins: Vec<SqlLoginInfo> = Vec::new();
+    let mut tables: Vec<SqlTableInfo> = Vec::new();
+
+    for line in sql_output.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("Msg ") || line.starts_with("(") {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split('|').map(|s| s.trim()).collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        match parts[0] {
+            "CONFIG" if parts.len() >= 4 => {
+                configs.insert(parts[1].to_string(), (parts[2].to_string(), parts[3].to_string()));
+            }
+            "STARTUP_PROC" if parts.len() >= 3 => {
+                startup_procs.push((parts[1].to_string(), parts[2].to_string()));
+            }
+            "SA_CHECK" if parts.len() >= 6 => {
+                sa_check = Some((
+                    parts[2] == "1",
+                    parts[3] == "1",
+                    parts[4] == "1",
+                    parts[5] == "1",
+                ));
+            }
+            "GUEST_PERM" if parts.len() >= 5 => {
+                guest_perms.push((
+                    parts[1].to_string(),
+                    parts[2].to_string(),
+                    parts[3].to_string(),
+                    parts[4].to_string(),
+                ));
+            }
+            "DB" if parts.len() >= 10 => {
+                dbs.push(SqlDbInfo {
+                    name: parts[1].to_string(),
+                    database_id: parts[2].to_string(),
+                    state_desc: parts[3].to_string(),
+                    recovery_model: parts[4].to_string(),
+                    collation: parts[5].to_string(),
+                    is_trustworthy: parts[6] == "1",
+                    is_encrypted: parts[7] == "1",
+                    is_read_only: parts[8] == "1",
+                    is_auto_close: parts[9] == "1",
+                });
+            }
+            "FILE" if parts.len() >= 7 => {
+                files.push(SqlFileInfo {
+                    db_name: parts[1].to_string(),
+                    logical_name: parts[2].to_string(),
+                    type_desc: parts[3].to_string(),
+                    physical_name: parts[4].to_string(),
+                    state_desc: parts[5].to_string(),
+                    size_mb: parts[6].to_string(),
+                });
+            }
+            "LOGIN" if parts.len() >= 7 => {
+                logins.push(SqlLoginInfo {
+                    name: parts[1].to_string(),
+                    type_desc: parts[2].to_string(),
+                    is_disabled: parts[3] == "1",
+                    is_sysadmin: parts[4] == "1",
+                    roles: parts[5].to_string(),
+                    default_db: parts[6].to_string(),
+                });
+            }
+            "TABLE" if parts.len() >= 5 => {
+                tables.push(SqlTableInfo {
+                    db_name: parts[1].to_string(),
+                    schema: parts[2].to_string(),
+                    table_name: parts[3].to_string(),
+                    row_count: parts[4].to_string(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Engine Security Posture & Threat Hunting Checks
+    // ---------------------------------------------------------------------
+    writeln!(out, "\n  [Engine Security Posture & Threat Hunting]")?;
+
+    // 1. xp_cmdshell
+    if let Some((_, in_use)) = configs.get("xp_cmdshell") {
+        if in_use == "1" {
+            writeln!(
+                out,
+                "{}",
+                "    [!!!] CRITICAL: xp_cmdshell is ENABLED (Allows arbitrary OS command execution via SQL!)"
+                    .red()
+                    .bold()
+            )?;
+        } else {
+            writeln!(out, "{}", "    xp_cmdshell:                 Disabled [OK]".green())?;
+        }
+    }
+
+    // 2. OLE Automation Procedures (sp_OACreate)
+    if let Some((_, in_use)) = configs.get("Ole Automation Procedures") {
+        if in_use == "1" {
+            writeln!(
+                out,
+                "{}",
+                "    [!!!] CRITICAL: OLE Automation Procedures are ENABLED (sp_OACreate allows executing arbitrary binaries & COM objects!)"
+                    .red()
+                    .bold()
+            )?;
+        } else {
+            writeln!(out, "{}", "    Ole Automation Procedures:   Disabled [OK]".green())?;
+        }
+    }
+
+    // 3. CLR Integration & Strict Security
+    if let Some((_, in_use)) = configs.get("clr enabled") {
+        if in_use == "1" {
+            writeln!(
+                out,
+                "{}",
+                "    [!] CLR Integration is ENABLED (Allows executing .NET assemblies inside SQL Server process)"
+                    .yellow()
+            )?;
+        } else {
+            writeln!(out, "{}", "    CLR Integration:             Disabled [OK]".green())?;
+        }
+    }
+    if let Some((_, in_use)) = configs.get("clr strict security") {
+        if in_use == "0" {
+            writeln!(
+                out,
+                "{}",
+                "    [!!!] CLR Strict Security is DISABLED (Unsafe and unsigned assemblies allowed!)"
+                    .red()
+                    .bold()
+            )?;
+        } else {
+            writeln!(out, "{}", "    CLR Strict Security:         Enabled [OK]".green())?;
+        }
+    }
+
+    // 4. Cross-DB Ownership Chaining
+    if let Some((_, in_use)) = configs.get("cross db ownership chaining") {
+        if in_use == "1" {
+            writeln!(
+                out,
+                "{}",
+                "    [!] Cross-DB Ownership Chaining is ENABLED (Potential cross-database privilege escalation)"
+                    .yellow()
+            )?;
+        } else {
+            writeln!(out, "{}", "    Cross-DB Ownership Chaining: Disabled [OK]".green())?;
+        }
+    }
+
+    // 5. Remote Admin Connections
+    if let Some((_, in_use)) = configs.get("remote admin connections") {
+        if in_use == "1" {
+            writeln!(
+                out,
+                "{}",
+                "    [!] Remote Dedicated Admin Connection (DAC) is ENABLED on port 1434".yellow()
+            )?;
+        } else {
+            writeln!(out, "{}", "    Remote Admin Connections:    Disabled [OK]".green())?;
+        }
+    }
+
+    // 6. Database Mail XPs
+    if let Some((_, in_use)) = configs.get("Database Mail XPs") {
+        if in_use == "1" {
+            writeln!(
+                out,
+                "{}",
+                "    [!] Database Mail XPs are ENABLED (Can be abused for exfiltration via email)".yellow()
+            )?;
+        } else {
+            writeln!(out, "{}", "    Database Mail XPs:           Disabled [OK]".green())?;
+        }
+    }
+
+    // 7. Default Trace Auditing
+    if let Some((_, in_use)) = configs.get("default trace enabled") {
+        if in_use == "0" {
+            writeln!(
+                out,
+                "{}",
+                "    [!] Default System Audit Trace is DISABLED (Activity is not being logged!)".yellow()
+            )?;
+        } else {
+            writeln!(out, "{}", "    Default Trace Auditing:      Enabled [OK]".green())?;
+        }
+    }
+
+    // 8. Startup Stored Procedures
+    if startup_procs.is_empty() {
+        writeln!(out, "{}", "    Startup Stored Procedures:   None [OK]".green())?;
+    } else {
+        for (db, proc_name) in &startup_procs {
+            writeln!(
+                out,
+                "{}",
+                format!(
+                    "    [!!!] Startup Stored Procedure Detected: '{}.{}' (Persistence mechanism - executes on SQL Server restart!)",
+                    db, proc_name
+                )
+                .red()
+                .bold()
+            )?;
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Logins & Privileges
+    // ---------------------------------------------------------------------
+    writeln!(out, "\n  [Logins & Privileges]")?;
+
+    let mut sysadmins = Vec::new();
+    let mut other_logins = Vec::new();
+
+    for l in logins {
+        if l.is_sysadmin {
+            sysadmins.push(l);
+        } else {
+            other_logins.push(l);
+        }
+    }
+
+    writeln!(out, "    Sysadmin Accounts:")?;
+    for l in &sysadmins {
+        let class = classify_principal(&l.name, &l.type_desc, computer_name);
+        let status_str = if l.is_disabled { " [Disabled]".yellow() } else { "".normal() };
+        writeln!(
+            out,
+            "      - {} {} (Roles: {}) {}{}",
+            l.name.bold(),
+            class.cyan(),
+            l.roles,
+            "[SYSADMIN]".red().bold(),
+            status_str
+        )?;
+    }
+
+    if !other_logins.is_empty() {
+        writeln!(out, "    Standard Logins:")?;
+        for l in &other_logins {
+            let class = classify_principal(&l.name, &l.type_desc, computer_name);
+            let status_str = if l.is_disabled { " [Disabled]" } else { "" };
+            let role_info = if l.roles == "None" {
+                String::new()
+            } else {
+                format!(" (Roles: {})", l.roles)
+            };
+            writeln!(out, "      - {} {}{}{}", l.name, class, role_info, status_str)?;
+        }
+    }
+
+    // SA Account Security Checks
+    if let Some((is_disabled, pol_chk, exp_chk, is_blank)) = sa_check {
+        if is_blank {
+            writeln!(
+                out,
+                "{}",
+                "    [!!!] CRITICAL: 'sa' (System Administrator) SQL Login has a BLANK PASSWORD!"
+                    .red()
+                    .bold()
+            )?;
+        }
+        if !is_disabled {
+            writeln!(
+                out,
+                "{}",
+                "    [!] Default 'sa' (System Administrator) SQL Login is ENABLED!".yellow()
+            )?;
+        }
+        if !pol_chk {
+            writeln!(
+                out,
+                "{}",
+                "    [!] 'sa' Password Policy Enforcement (complexity/lockout) is DISABLED".yellow()
+            )?;
+        }
+        if !exp_chk {
+            writeln!(out, "    'sa' Password Expiration: Disabled")?;
+        }
+    }
+
+    // Guest / Anonymous Permissions
+    for (db, _, perm, state) in &guest_perms {
+        if perm == "CONNECT" && state == "GRANT" {
+            writeln!(
+                out,
+                "{}",
+                format!(
+                    "    [!] ANONYMOUS/GUEST ACCESS: Database '{}' allows 'guest' user CONNECT access!",
+                    db
+                )
+                .red()
+                .bold()
+            )?;
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Databases & Files
+    // ---------------------------------------------------------------------
+    writeln!(out, "\n  [Databases & File Paths]")?;
+
+    let mut files_by_db: std::collections::HashMap<String, Vec<&SqlFileInfo>> = std::collections::HashMap::new();
+    for f in &files {
+        files_by_db.entry(f.db_name.clone()).or_default().push(f);
+    }
+
+    for db in &dbs {
+        let is_user_db = db.database_id.parse::<u32>().unwrap_or(0) > 4;
+        let prefix = if is_user_db { "[User DB]".cyan() } else { "[System DB]".normal() };
+
+        writeln!(
+            out,
+            "    {} Database: {} (ID: {}, State: {}, Recovery: {})",
+            prefix,
+            db.name.bold(),
+            db.database_id,
+            db.state_desc,
+            db.recovery_model
+        )?;
+
+        if db.is_trustworthy && is_user_db {
+            writeln!(
+                out,
+                "{}",
+                format!(
+                    "      [!!!] PRIVILEGE ESCALATION RISK: Database '{}' has TRUSTWORTHY = ON (Allows db_owner to elevate to sysadmin!)",
+                    db.name
+                )
+                .red()
+                .bold()
+            )?;
+        }
+
+        if db.is_encrypted {
+            writeln!(out, "      TDE Encryption: Enabled [OK]")?;
+        }
+        if db.is_auto_close {
+            writeln!(
+                out,
+                "{}",
+                format!("      [!] Auto-Close is ON for database '{}'", db.name).yellow()
+            )?;
+        }
+
+        if let Some(db_files) = files_by_db.get(&db.name) {
+            for f in db_files {
+                let exists = std::path::Path::new(&f.physical_name).exists();
+                let exists_str = if exists {
+                    "Exists: Yes".green()
+                } else {
+                    "Exists: NO [!]".red().bold()
+                };
+                writeln!(
+                    out,
+                    "      - [{}] Logical: {} | Size: {} MB | {}",
+                    f.type_desc, f.logical_name, f.size_mb, exists_str
+                )?;
+                writeln!(out, "        Windows Path: {}", f.physical_name)?;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Database Tables
+    // ---------------------------------------------------------------------
+    writeln!(out, "\n  [Database Tables]")?;
+
+    let mut tables_by_db: std::collections::HashMap<String, Vec<&SqlTableInfo>> = std::collections::HashMap::new();
+    for t in &tables {
+        tables_by_db.entry(t.db_name.clone()).or_default().push(t);
+    }
+
+    let user_db_names: Vec<String> = dbs
+        .iter()
+        .filter(|d| d.database_id.parse::<u32>().unwrap_or(0) > 4)
+        .map(|d| d.name.clone())
+        .collect();
+
+    let mut user_tables_found = false;
+    for db_name in &user_db_names {
+        if let Some(t_list) = tables_by_db.get(db_name) {
+            user_tables_found = true;
+            writeln!(
+                out,
+                "    Database '{}' ({} tables):",
+                db_name.bold(),
+                t_list.len()
+            )?;
+            for t in t_list {
+                writeln!(out, "      - {}.{} ({} rows)", t.schema, t.table_name, t.row_count)?;
+            }
+        } else {
+            writeln!(out, "    Database '{}': (No user tables)", db_name)?;
+        }
+    }
+
+    if !user_tables_found && user_db_names.is_empty() {
+        writeln!(out, "    (No user databases exist on this instance)")?;
+    }
+
+    // System database table summary
+    let sys_summary: Vec<String> = ["master", "msdb", "model", "tempdb"]
+        .iter()
+        .map(|sys_db| {
+            let count = tables_by_db.get(*sys_db).map(|v| v.len()).unwrap_or(0);
+            format!("{} ({} tables)", sys_db, count)
+        })
+        .collect();
+
+    if show_all_tables {
+        for sys_db in &["master", "msdb", "model", "tempdb"] {
+            if let Some(t_list) = tables_by_db.get(*sys_db) {
+                writeln!(out, "\n    System Database '{}' ({} tables):", sys_db, t_list.len())?;
+                for t in t_list {
+                    writeln!(out, "      - {}.{} ({} rows)", t.schema, t.table_name, t.row_count)?;
+                }
+            }
+        }
+    } else {
+        writeln!(
+            out,
+            "    System Databases: {} (Use --all-tables to list all system tables)",
+            sys_summary.join(", ")
+        )?;
+    }
+
+    Ok(())
+}
+
+fn classify_principal(name: &str, type_desc: &str, computer_name: &str) -> String {
+    let lower_name = name.to_lowercase();
+    if type_desc == "SQL_LOGIN" {
+        "[SQL Login]".to_string()
+    } else if type_desc == "WINDOWS_GROUP" {
+        if lower_name.starts_with("builtin")
+            || lower_name.starts_with("nt authority")
+            || lower_name.starts_with("nt service")
+        {
+            "[Local Windows Group]".to_string()
+        } else if let Some((prefix, _)) = name.split_once('\\') {
+            if prefix.eq_ignore_ascii_case(computer_name) {
+                "[Local Windows Group]".to_string()
+            } else {
+                "[Active Directory Group]".to_string()
+            }
+        } else {
+            "[Windows Group]".to_string()
+        }
+    } else if type_desc == "WINDOWS_LOGIN" {
+        if lower_name.starts_with("nt service") {
+            "[Virtual Service Account]".to_string()
+        } else if lower_name.starts_with("nt authority") {
+            "[Local System Account]".to_string()
+        } else if let Some((prefix, _)) = name.split_once('\\') {
+            if prefix.eq_ignore_ascii_case(computer_name) {
+                "[Local Windows Login]".to_string()
+            } else {
+                "[Active Directory / Domain Login]".to_string()
+            }
+        } else {
+            "[Windows Login]".to_string()
+        }
+    } else {
+        format!("[{}]", type_desc)
+    }
+}
+
+// -------------------------------------------------------------------------
+// Registry & Native Tool Helpers (No PowerShell required)
+// -------------------------------------------------------------------------
+
+fn reg_query_lines(key: &str) -> Vec<String> {
+    let output = std::process::Command::new("reg")
+        .args(["query", key])
+        .output();
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            return String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|s| s.trim_end().to_string())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn parse_reg_value(line: &str) -> Option<(String, String, String)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with("HKEY_") {
+        return None;
+    }
+
+    let types = [
+        "REG_SZ",
+        "REG_DWORD",
+        "REG_MULTI_SZ",
+        "REG_EXPAND_SZ",
+        "REG_BINARY",
+        "REG_QWORD",
+        "REG_NONE",
+    ];
+
+    for t in types {
+        if let Some(idx) = trimmed.find(t) {
+            let name = trimmed[..idx].trim().to_string();
+            let val = trimmed[idx + t.len()..].trim().to_string();
+            return Some((name, t.to_string(), val));
+        }
+    }
+    None
+}
+
+fn reg_query_value(key: &str, val_name: &str) -> Option<String> {
+    let output = std::process::Command::new("reg")
+        .args(["query", key, "/v", val_name])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some((name, _, val)) = parse_reg_value(line) {
+            if name.eq_ignore_ascii_case(val_name) {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+fn sc_query_service(service_name: &str) -> Option<(String, String)> {
+    let output = std::process::Command::new("sc")
+        .args(["query", service_name])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("STATE") {
+            if let Some(colon) = trimmed.find(':') {
+                let rest = trimmed[colon + 1..].trim();
+                let parts: Vec<&str> = rest.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    return Some((parts[0].to_string(), parts[1].to_string()));
+                } else if !parts.is_empty() {
+                    return Some((parts[0].to_string(), parts[0].to_string()));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn sc_qc_service(service_name: &str) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let output = std::process::Command::new("sc")
+        .args(["qc", service_name])
+        .output();
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                let trimmed = line.trim();
+                if let Some(colon) = trimmed.find(':') {
+                    let key = trimmed[..colon].trim().to_string();
+                    let val = trimmed[colon + 1..].trim().to_string();
+                    map.insert(key, val);
+                }
+            }
+        }
+    }
+    map
+}
+
+fn find_sqlcmd() -> Option<std::path::PathBuf> {
+    // 1. Search PATH
+    if let Ok(path) = std::env::var("PATH") {
+        for p in std::env::split_paths(&path) {
+            let exe = p.join("sqlcmd.exe");
+            if exe.exists() {
+                return Some(exe);
+            }
+            let osql = p.join("osql.exe");
+            if osql.exists() {
+                return Some(osql);
+            }
+        }
+    }
+
+    // 2. Search well-known SQL Server install directories
+    let candidates = [
+        r"C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\180\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\130\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\110\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\160\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\150\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\140\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\130\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\120\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files\Microsoft SQL Server\110\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files (x86)\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files (x86)\Microsoft SQL Server\140\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files (x86)\Microsoft SQL Server\130\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files (x86)\Microsoft SQL Server\120\Tools\Binn\sqlcmd.exe",
+        r"C:\Program Files (x86)\Microsoft SQL Server\110\Tools\Binn\sqlcmd.exe",
+    ];
+
+    for c in candidates {
+        let p = std::path::PathBuf::from(c);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // Check wildcard instance directories
+    if let Ok(entries) = std::fs::read_dir(r"C:\Program Files\Microsoft SQL Server") {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let binn_sqlcmd = entry.path().join("MSSQL").join("Binn").join("sqlcmd.exe");
+            if binn_sqlcmd.exists() {
+                return Some(binn_sqlcmd);
+            }
+        }
+    }
+
+    None
+}
+
+fn run_sql_query(server: &str, query: &str) -> Option<String> {
+    if let Some(sqlcmd_path) = find_sqlcmd() {
+        let output = std::process::Command::new(sqlcmd_path)
+            .args(["-E", "-S", server, "-h", "-1", "-W", "-s", "|", "-Q", query])
+            .output();
+        if let Ok(out) = output {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                if !stdout.trim().is_empty() {
+                    return Some(stdout);
+                }
+            }
+        }
+    }
+
+    None
+}
