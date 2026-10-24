@@ -6,6 +6,7 @@ use crate::utils::run_powershell;
 
 const SHIELDS_UP_SCRIPT: &str = include_str!("shieldsup/shieldsup.ps1");
 const CHECK_PERMS_SCRIPT: &str = include_str!("shieldsup/checkperms.ps1");
+const YOLO_SCRIPT: &str = include_str!("shieldsup/yolo.ps1");
 
 /// Harden Windows Defender, Firewall, and security registry settings
 #[derive(clap::Parser, Clone, Debug, Default)]
@@ -13,13 +14,19 @@ pub struct ShieldsUp {
     /// Check permissions, existence, and ownership of Defender and Firewall registry keys
     #[arg(short = 'c', long)]
     pub checkperms: bool,
+
+    /// Audit, remediate locked permissions/ownership, and enforce Shields Up security configuration
+    #[arg(short = 'y', long)]
+    pub yolo: bool,
 }
 
 impl super::Command for ShieldsUp {
     fn execute(self) -> eyre::Result<()> {
         let mut ob = pager::get_pager_output(true);
 
-        if self.checkperms {
+        if self.yolo {
+            run_yolo_remediation(&mut ob)?;
+        } else if self.checkperms {
             check_registry_permissions(&mut ob)?;
         } else {
             activate_shields_up(&mut ob)?;
@@ -259,6 +266,165 @@ fn activate_shields_up(out: &mut impl PagerOutput) -> eyre::Result<()> {
             "  [!] Permissions may be locked. Run 'jj shieldsup --checkperms' to inspect registry permissions."
                 .yellow()
         )?;
+    }
+
+    Ok(())
+}
+
+/// Audit, remediate locked permissions/ownership, and enforce Shields Up security configuration
+fn run_yolo_remediation(out: &mut impl PagerOutput) -> eyre::Result<()> {
+    writeln!(
+        out,
+        "\n==== YOLO MODE: AUDITING & REMEDIATING WINDOWS DEFENDER & FIREWALL ===="
+    )?;
+
+    let output = run_powershell(YOLO_SCRIPT)?;
+    let result = String::from_utf8_lossy(&output.stdout);
+    let trimmed = result.trim();
+
+    let mut current_category = String::new();
+    let mut audit_issues = Vec::new();
+    let mut repaired_perms = Vec::new();
+    let mut settings_applied = Vec::new();
+    let mut service_states = Vec::new();
+    let mut error_messages = Vec::new();
+    let mut stats = None;
+
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if line.starts_with("AUDIT_ISSUE:") {
+            let data = line.replace("AUDIT_ISSUE:", "");
+            let parts: Vec<&str> = data.split('|').collect();
+            if parts.len() >= 4 {
+                audit_issues.push((
+                    parts[0].trim().to_string(),
+                    parts[1].trim().to_string(),
+                    parts[2].trim().to_string(),
+                    parts[3].trim().to_string(),
+                ));
+            }
+        } else if line.starts_with("REPAIRED_PERMS:") {
+            let data = line.replace("REPAIRED_PERMS:", "");
+            let parts: Vec<&str> = data.split('|').collect();
+            if parts.len() >= 2 {
+                repaired_perms.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
+            }
+        } else if line.starts_with("SETTING_APPLIED:") {
+            let desc = line.replace("SETTING_APPLIED:", "").trim().to_string();
+            settings_applied.push(desc);
+        } else if line.starts_with("SERVICE_STATE:") {
+            let data = line.replace("SERVICE_STATE:", "");
+            let parts: Vec<&str> = data.split('|').collect();
+            if parts.len() >= 2 {
+                service_states.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
+            }
+        } else if line.starts_with("ERROR:") {
+            let err = line.replace("ERROR:", "").trim().to_string();
+            error_messages.push(err);
+        } else if line.starts_with("YOLO_DONE:") {
+            let data = line.replace("YOLO_DONE:", "");
+            let parts: Vec<&str> = data.split('|').collect();
+            if parts.len() >= 4 {
+                let total: usize = parts[0].trim().parse().unwrap_or(0);
+                let bad: usize = parts[1].trim().parse().unwrap_or(0);
+                let fixed: usize = parts[2].trim().parse().unwrap_or(0);
+                let errs: usize = parts[3].trim().parse().unwrap_or(0);
+                stats = Some((total, bad, fixed, errs));
+            }
+        }
+    }
+
+    // Phase 1: Audit Report
+    writeln!(out, "\n[*] Phase 1: Registry Audit Findings")?;
+    if audit_issues.is_empty() {
+        writeln!(
+            out,
+            "{}",
+            "  [+] All target registry keys exist with clean permissions and trusted ownership."
+                .green()
+        )?;
+    } else {
+        for (cat, path, desc, issue) in &audit_issues {
+            if *cat != current_category {
+                current_category = cat.clone();
+                writeln!(out, "\n  [Category] {}", current_category.cyan().bold())?;
+            }
+            writeln!(out, "{}", format!("    [!] {} [{}]", path, desc).yellow().bold())?;
+            writeln!(out, "{}", format!("        Issue: {}", issue).yellow())?;
+        }
+    }
+
+    // Phase 2: Remediation Report
+    writeln!(out, "\n[*] Phase 2: Permission & Ownership Remediation")?;
+    if repaired_perms.is_empty() {
+        writeln!(
+            out,
+            "{}",
+            "  [+] No permission remediation was required; administrators already had write access."
+                .green()
+        )?;
+    } else {
+        for (path, fixes) in &repaired_perms {
+            writeln!(out, "{}", format!("  [+] Fixed: {}", path).green().bold())?;
+            writeln!(out, "{}", format!("      Actions: {}", fixes).green())?;
+        }
+    }
+
+    // Phase 3: Enforced Hardening Policies
+    writeln!(out, "\n[*] Phase 3: Applied Hardening Policies & Settings")?;
+    for setting in &settings_applied {
+        writeln!(out, "{}", format!("  [+] {}", setting).green())?;
+    }
+
+    // Phase 4: Service States
+    writeln!(out, "\n[*] Phase 4: Security Services Verification")?;
+    for (svc, state) in &service_states {
+        if state.eq_ignore_ascii_case("Running") {
+            writeln!(out, "{}", format!("  [+] Service '{}': {}", svc, state).green().bold())?;
+        } else {
+            writeln!(out, "{}", format!("  [!] Service '{}': {}", svc, state).yellow().bold())?;
+        }
+    }
+
+    // Errors (if any)
+    if !error_messages.is_empty() {
+        writeln!(
+            out,
+            "\n{}",
+            "  [!] Errors encountered during execution:".red().bold()
+        )?;
+        for err in &error_messages {
+            writeln!(out, "{}", format!("      [!] {}", err).red())?;
+        }
+    }
+
+    // Summary Section
+    writeln!(out, "\n==== YOLO REMEDIATION SUMMARY")?;
+    if let Some((total, bad, fixed, errs)) = stats {
+        writeln!(out, "  Total Keys Audited: {}", total)?;
+        writeln!(out, "{}", format!("  Issues Detected:    {}", bad).yellow())?;
+        writeln!(out, "{}", format!("  Keys Remediated:    {}", fixed).green().bold())?;
+        if errs == 0 {
+            writeln!(out, "{}", "  Errors:             0".green())?;
+            writeln!(
+                out,
+                "\n{}",
+                "[+] SHIELDS UP ACTIVE: All registry permissions, Defender, and Firewall services are restored!"
+                    .green()
+                    .bold()
+            )?;
+        } else {
+            writeln!(out, "{}", format!("  Errors:             {}", errs).red().bold())?;
+            writeln!(
+                out,
+                "\n{}",
+                "  [!] Completed with warnings. Inspect the errors above."
+                    .yellow()
+                    .bold()
+            )?;
+        }
+    } else {
+        writeln!(out, "{}", "[+] YOLO execution finished.".green().bold())?;
     }
 
     Ok(())
