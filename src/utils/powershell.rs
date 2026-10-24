@@ -29,11 +29,36 @@ pub fn powershell_command(script: &str) -> Command {
     cmd
 }
 
-/// Executes a PowerShell script using `-NoProfile`, `-ExecutionPolicy Bypass`, and `-EncodedCommand`.
+/// Executes a PowerShell script using `-NoProfile` and `-ExecutionPolicy Bypass`.
+///
+/// If the encoded script is small enough (under 8,192 characters), it uses `-EncodedCommand`.
+/// For larger scripts (to avoid Windows `CreateProcess` 32,767 character command-line limit,
+/// which causes OS error 206 "The filename or extension is too long"), it writes the script to
+/// a temporary `.ps1` file, executes via `-File`, and ensures the temporary file is deleted.
 ///
 /// Returns the process `Output` (exit status, stdout, stderr).
 pub fn run_powershell(script: &str) -> std::io::Result<Output> {
-    powershell_command(script).output()
+    let encoded = encode_powershell_command(script);
+    if encoded.len() <= 8192 {
+        powershell_command(script).output()
+    } else {
+        struct TempFileGuard(std::path::PathBuf);
+        impl Drop for TempFileGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+
+        let temp_dir = std::env::temp_dir();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_path = temp_dir.join(format!("jj_ps_{}_{}.ps1", std::process::id(), timestamp));
+        std::fs::write(&temp_path, script)?;
+        let _guard = TempFileGuard(temp_path.clone());
+        powershell_file_command(&temp_path).output()
+    }
 }
 
 /// Constructs a `Command` configured to execute a PowerShell script file:
