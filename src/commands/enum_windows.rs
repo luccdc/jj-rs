@@ -1036,9 +1036,7 @@ fn enum_startup_items(out: &mut impl PagerOutput) -> eyre::Result<()> {
             }
         }
     "#;
-    let output = std::process::Command::new("powershell.exe")
-        .args(&["-NoProfile", "-Command", script])
-        .output()?;
+    let output = crate::utils::run_powershell(script)?;
     
     let res = String::from_utf8_lossy(&output.stdout);
     if res.trim().is_empty() {
@@ -1178,9 +1176,7 @@ fn enum_system32_unsigned(out: &mut impl PagerOutput, detailed: bool) -> eyre::R
         "#
     );
 
-    let output = std::process::Command::new("powershell.exe")
-        .args(&["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
-        .output()?;
+    let output = crate::utils::run_powershell(&script)?;
 
     if output.status.success() {
         let result = String::from_utf8_lossy(&output.stdout);

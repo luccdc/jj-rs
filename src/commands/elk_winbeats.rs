@@ -224,19 +224,12 @@ output.logstash:
     println!("--- Configured beats! Installing as services...");
 
     for beat in ["winlogbeat", "filebeat", "packetbeat", "metricbeat"] {
-        Command::new("powershell.exe")
-            .args(&[
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                &format!(
-                    "{}\\{beat}\\install-service-{beat}.ps1",
-                    args.elastic_install_directory.display()
-                ),
-            ])
-            .spawn()?
-            .wait()?;
+        crate::utils::powershell_file_command(format!(
+            "{}\\{beat}\\install-service-{beat}.ps1",
+            args.elastic_install_directory.display()
+        ))
+        .spawn()?
+        .wait()?;
     }
 
     println!("Installing npcap by starting packetbeat... (should fail!)");
