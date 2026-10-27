@@ -35,6 +35,7 @@ pub mod powershell;
 #[allow(unused_imports)]
 pub use powershell::{
     encode_powershell_command, powershell_command, powershell_file_command, run_powershell,
+    run_powershell_with_args,
 };
 #[allow(dead_code)]
 pub mod regex;
