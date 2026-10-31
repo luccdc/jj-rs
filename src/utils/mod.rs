@@ -31,6 +31,12 @@ pub mod pamtester;
 #[cfg(unix)]
 pub mod passwd;
 pub mod ports;
+pub mod powershell;
+#[allow(unused_imports)]
+pub use powershell::{
+    encode_powershell_command, powershell_command, powershell_file_command, run_powershell,
+    run_powershell_with_args,
+};
 #[allow(dead_code)]
 pub mod regex;
 #[cfg(unix)]
@@ -106,15 +112,7 @@ pub fn qx(command: &str) -> eyre::Result<(ExitStatus, String)> {
 /// Runs the commands provided with PowerShell
 #[cfg(windows)]
 pub fn qxp(command: &str) -> eyre::Result<(ExitStatus, String)> {
-    use base64::prelude::*;
-
-    let command = command
-        .encode_utf16()
-        .flat_map(|c| c.to_le_bytes())
-        .collect::<Vec<_>>();
-
-    let output = std::process::Command::new("powershell")
-        .args(["-EncodedCommand", &BASE64_STANDARD.encode(command)])
+    let output = powershell_command(command)
         .stderr(std::process::Stdio::piped())
         .output()?;
 

@@ -55,15 +55,9 @@ pub fn install_clamav(clamav_url: String) -> eyre::Result<()> {
         .spawn()?
         .wait()?;
 
-    Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "Invoke-WebRequest -Uri 'https://database.clamav.net/daily.cvd' -Method HEAD",
-        ])
-        .output()?;
+    crate::utils::run_powershell(
+        "Invoke-WebRequest -Uri 'https://database.clamav.net/daily.cvd' -Method HEAD",
+    )?;
 
     println!("--- Downloading ClamAV definitions");
 

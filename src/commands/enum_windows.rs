@@ -1,11 +1,15 @@
+use std::fs;
 use std::io::Write;
 
 use clap::{Parser, Subcommand};
+use colored::*;
+use regex::Regex;
+use walkdir::WalkDir;
 
 use crate::utils::{
-    logs::{ellipsize, truncate},
+    logs::ellipsize,
     pager::{self, PagerOutput},
-    qx,
+    qx, run_powershell,
 };
 
 /// Perform system enumeration or target specific subsystems
@@ -154,15 +158,7 @@ fn enum_wsl_docker(out: &mut impl PagerOutput) -> eyre::Result<()> {
 fn enum_iis_sites(out: &mut impl PagerOutput, extended_scan: bool) -> eyre::Result<()> {
     writeln!(out, "\n==== IIS SITES")?;
     let script = "Import-Module WebAdministration; Get-Website | ForEach-Object { $_.PhysicalPath }";
-    let output = std::process::Command::new("powershell.exe")
-        .args(&[
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ])
-        .output()?; 
+    let output = run_powershell(script)?; 
 
     if output.status.success() {
         let result = String::from_utf8_lossy(&output.stdout);
@@ -186,11 +182,6 @@ fn enum_iis_sites(out: &mut impl PagerOutput, extended_scan: bool) -> eyre::Resu
     }
     Ok(())
 }
-
-use walkdir::WalkDir;
-use colored::*;
-use regex::Regex;
-use std::fs;
 
 pub fn scan_web_files(out: &mut impl PagerOutput, root: &str, extended_scan: bool) -> eyre::Result<()> {
     let clean_root = root.trim_matches(|c| c == '\"' || c == ' ');
@@ -362,9 +353,7 @@ fn enum_startup_items(out: &mut impl PagerOutput) -> eyre::Result<()> {
             }
         }
     "#;
-    let output = std::process::Command::new("powershell.exe")
-        .args(&["-NoProfile", "-Command", script])
-        .output()?;
+    let output = run_powershell(script)?;
     
     let res = String::from_utf8_lossy(&output.stdout);
     if res.trim().is_empty() {
@@ -404,9 +393,7 @@ fn enum_ftp_sites(out: &mut impl PagerOutput) -> eyre::Result<()> {
 
     let combined_script = format!("{}\n{}", iis_script, fz_script);
 
-    let output = std::process::Command::new("powershell.exe")
-        .args(&["-NoProfile", "-Command", &combined_script])
-        .output()?;
+    let output = run_powershell(&combined_script)?;
 
     let res = String::from_utf8_lossy(&output.stdout);
     let mut found = false;
@@ -469,9 +456,7 @@ fn enum_system32_unsigned(out: &mut impl PagerOutput, detailed: bool) -> eyre::R
         "#
     );
 
-    let output = std::process::Command::new("powershell.exe")
-        .args(&["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
-        .output()?;
+    let output = run_powershell(&script)?;
 
     if output.status.success() {
         let result = String::from_utf8_lossy(&output.stdout);
@@ -500,9 +485,7 @@ fn enum_winrm(out: &mut impl PagerOutput) -> eyre::Result<()> {
             "No WinRM listeners found or WinRM is not configured."
         }
     "#;
-    let output = std::process::Command::new("powershell.exe")
-        .args(&["-NoProfile", "-Command", script])
-        .output()?;
+    let output = run_powershell(script)?;
     let result = String::from_utf8_lossy(&output.stdout);
     writeln!(out, "{}", result.trim())?;
     Ok(())
@@ -526,9 +509,7 @@ fn enum_local_admins(out: &mut impl PagerOutput) -> eyre::Result<()> {
             }
         }
     "#;
-    let output = std::process::Command::new("powershell.exe")
-        .args(&["-NoProfile", "-Command", script])
-        .output()?;
+    let output = run_powershell(script)?;
     let result = String::from_utf8_lossy(&output.stdout);
     if result.trim().is_empty() {
         writeln!(out, "No local privileged accounts found (or script ran without sufficient permissions).")?;

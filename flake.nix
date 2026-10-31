@@ -183,6 +183,7 @@
               (craneLib.fileset.commonCargoSources ./.)
               ./src/commands/elk
               ./src/commands/wazuh
+              ./src/commands/shieldsup
               ./src/utils/curl.h
               ./src/commands/proxy/core_ruleset.conf
             ];
